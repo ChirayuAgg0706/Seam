@@ -27,6 +27,9 @@ EXPORT volatile long seam_resp_len = 0;
 EXPORT volatile long seam_req_cap = SEAM_REQ_CAP;
 EXPORT char seam_pend_buf[SEAM_REQ_CAP];
 EXPORT volatile long seam_pend_len = 0;
+/* Bumped by the adapter (a plain memory write, legal at any stop) to cancel whatever
+ * Python-level step is armed: the agent drops a step whose generation is stale. */
+EXPORT volatile long seam_step_gen = 0;
 
 static PyObject *g_dispatch = NULL; /* agent.dispatch(bytes) -> bytes */
 static PyObject *g_bps = NULL;      /* dict: id(code) -> set of line numbers */
@@ -206,7 +209,15 @@ trap_set_slow(PyObject *mod, PyObject *arg)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+trap_step_gen(PyObject *mod, PyObject *noargs)
+{
+    (void)mod; (void)noargs;
+    return PyLong_FromLong(seam_step_gen);
+}
+
 static PyMethodDef methods[] = {
+    {"step_gen", trap_step_gen, METH_NOARGS, "Current step generation."},
     {"configure", trap_configure, METH_VARARGS, "configure(bps, DISABLE, py_line, dispatch)"},
     {"set_slow", trap_set_slow, METH_O, "Route every LINE event through the Python handler."},
     {"wrap", trap_wrap, METH_O, "Wrap a Python handler so the trap fires from C."},

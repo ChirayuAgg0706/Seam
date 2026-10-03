@@ -54,10 +54,15 @@ class Layout:
     float_value = 16
     cell_ref = 16
     dict_used = 16
+    # GIL: 3.12 reaches it through interp->ceval.gil; 3.13+ publish offsets within interp
+    gil_ptr = None
+    gil_holder = 8
+    gil_locked = 16
 
 
 def _layout_312():
     L = Layout()
+    L.gil_ptr = 384           # offsetof(_is, ceval) + offsetof(_ceval_state, gil)
     L.runtime_interp_head = 40
     L.interp_next = 0
     L.interp_threads_head = 72
@@ -199,6 +204,8 @@ def _layout_from_debug_offsets(read, runtime_addr, version):
     L.long_tag = t["long_object.lv_tag"]
     L.long_digit = t["long_object.ob_digit"]
     L.float_value = t["float_object.ob_fval"]
+    L.gil_holder = t["interpreter_state.gil_runtime_state_holder"]
+    L.gil_locked = t["interpreter_state.gil_runtime_state_locked"]
     if version >= (3, 14):
         L.ref_tag_mask = 3
         # 3.14 renumbered the owners: the per-eval-loop entry frame is

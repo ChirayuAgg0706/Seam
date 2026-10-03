@@ -7,6 +7,7 @@ in the target. At every other stop it only reads memory.
 import collections
 import json
 import os
+import re
 import shutil
 import struct
 import termios
@@ -28,7 +29,24 @@ R_RETURN_NATIVE = 3
 HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",
     "seam_resp_ptr", "seam_resp_len", "seam_req_cap", "seam_pend_buf", "seam_pend_len",
+    "seam_step_gen",
 )
+
+# Source paths that mark a native frame as binding-layer glue rather than user code.
+FRAMEWORK_PATHS = (
+    "/include/pybind11/", "/include/nanobind/", "/nanobind/src/", "/.cargo/registry/",
+    "/rustc/", "/usr/include/", "/usr/lib/", "/usr/local/include/",
+)
+# Function names that are glue even when their line info points into user files
+# (macro-generated trampolines, Cython argument-parsing wrappers, module init).
+FRAMEWORK_FUNCTIONS = re.compile(
+    r"^(__pyx_pw_|__pyx_pymod_|__Pyx_|__pyx_tp_|PyInit_|_GLOBAL__sub_I_|pybind11::|"
+    r"nanobind::|pyo3::|core::|alloc::|std::)"
+    r"|__pyfunction_|__pymethod_|__pyo3_|_PYO3_DEF|::trampoline")
+SYSTEM_LIB_PREFIXES = ("/usr/lib/", "/lib/", "/usr/lib64/", "/lib64/", "[")
+# Frame classes a step never ends in: Seam keeps going until user code or Python.
+GLUE = ("framework", "nodebug", "system")
+MAX_STEP_IN_LOCATIONS = 20000
 
 UNSAFE_MESSAGE = (
     "Seam cannot run Python here: the process is stopped in native code, where the "
@@ -80,6 +98,11 @@ class Adapter:
         self.pending_sync = False
         self.pause_requested = False
         self.output_thread = None
+        self.framework_paths = FRAMEWORK_PATHS
+        self.user_bps = {}            # module path -> breakpoint on all its user functions
+        self.user_bps_on = False
+        self.native_stepping = None   # {"tid", "hops"} while an LLDB step plan is running
+        self.py_step_armed = False    # the agent has a Python-level step armed
 
     # ------------------------------------------------------------ plumbing
 
@@ -289,33 +312,195 @@ class Adapter:
                     self.log("refresh failed:", exc)
                 return
 
+    # ----------------------------------------------- stepping across the boundary
+
+    def _classify_address(self, address):
+        """'user', 'framework' (binding glue) or 'nodebug' for a code address."""
+        entry = address.GetLineEntry()
+        spec = entry.GetFileSpec()
+        if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
+            return "nodebug"
+        path = spec.fullpath or ""
+        if any(part in path for part in self.framework_paths):
+            return "framework"
+        name = address.GetFunction().GetName() or address.GetSymbol().GetName() or ""
+        if FRAMEWORK_FUNCTIONS.search(name):
+            return "framework"
+        return "user"
+
+    def _classify_frame(self, frame):
+        module = frame.GetModule().GetFileSpec().fullpath
+        if module == self.interp_module:
+            return "interp"
+        if module == self.helper_module:
+            return "seam"
+        if not module or module.startswith(SYSTEM_LIB_PREFIXES):
+            return "system"  # libc and friends, even when their debug info is installed
+        return self._classify_address(frame.GetPCAddress())
+
+    def _user_modules(self):
+        """Loaded modules that carry debug info and are not the interpreter or system libs."""
+        for module in self.target.module_iter():
+            path = module.GetFileSpec().fullpath or ""
+            if (path in (self.interp_module, self.helper_module)
+                    or not path.startswith("/")  # LLDB's own JIT modules have no file
+                    or path.startswith(SYSTEM_LIB_PREFIXES)
+                    or module.GetNumCompileUnits() == 0):
+                continue
+            yield path, module
+
+    def _enable_user_bps(self, tid):
+        """Arm a breakpoint on every user function of every user module, for one thread.
+
+        This is how "step in" from Python lands in user native code whatever the binding
+        layer: the first user function this thread enters wins, and glue is never a
+        candidate. The breakpoints are created once per module and kept disabled.
+        """
+        for path, module in self._user_modules():
+            bp = self.user_bps.get(path)
+            if bp is None:
+                modules = lldb.SBFileSpecList()
+                modules.Append(module.GetFileSpec())
+                bp = self.target.BreakpointCreateByRegex(
+                    ".", lldb.eLanguageTypeUnknown, modules, lldb.SBFileSpecList())
+                count = bp.GetNumLocations()
+                usable = 0
+                for i in range(count):
+                    location = bp.GetLocationAtIndex(i)
+                    if (count <= MAX_STEP_IN_LOCATIONS
+                            and self._classify_address(location.GetAddress()) == "user"):
+                        usable += 1
+                    else:
+                        location.SetEnabled(False)
+                if count > MAX_STEP_IN_LOCATIONS:
+                    self.event("output", {"category": "console", "output":
+                               "Seam: %s has %d functions; stepping into it from Python is "
+                               "disabled (limit %d).\n" % (path, count, MAX_STEP_IN_LOCATIONS)})
+                self.log("user breakpoints for", path, usable, "of", count)
+                self.user_bps[path] = bp
+            bp.SetThreadID(tid)
+            bp.SetEnabled(True)
+        self.user_bps_on = True
+
+    def _discard_plans(self, thread):
+        """Drop LLDB step plans so a later `continue` does not stop where a step would."""
+        self.process.SetSelectedThread(thread)
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand("thread plan discard 1", result)
+
+    def _cancel_py_step(self):
+        """Cancel the agent's armed step with a memory write (legal at any stop)."""
+        addr = self.sym["seam_step_gen"]
+        gen = struct.unpack("<q", self._read(addr, 8))[0]
+        self._write(addr, struct.pack("<q", gen + 1))
+        self.py_step_armed = False
+
+    def _finish_steps(self, thread, cancel_py=True):
+        """Tear down everything a step may have armed. Called at every reported stop."""
+        if self.user_bps_on:
+            for bp in self.user_bps.values():
+                bp.SetEnabled(False)
+            self.user_bps_on = False
+        if self.native_stepping:
+            self._discard_plans(thread)
+            self.native_stepping = None
+        if cancel_py and self.py_step_armed:
+            self._cancel_py_step()
+        self.py_step_armed = False
+
+    def _control_safe(self, thread):
+        """True if Seam may run its own control requests on this thread right now.
+
+        The thread must hold the GIL and be stopped at a statement boundary in user
+        native code, where calling into the interpreter is as legal as it would be for
+        the user's own function. User-supplied Python is never run here.
+        """
+        return (self._classify_frame(thread.GetFrameAtIndex(0)) == "user"
+                and self.py.holds_gil(thread.GetThreadID()))
+
+    def _resume_in_python(self, thread):
+        """Native code has returned into the interpreter: stop when its Python caller resumes."""
+        tid = thread.GetThreadID()
+        if not self.py.holds_gil(tid):
+            return False
+        self.safe_tid = tid
+        try:
+            self.agent("step", mode="caller", tid=tid)
+        except DapError as exc:
+            self.log("cannot hand the step to Python:", exc)
+            self.safe_tid = None
+            return False
+        self._finish_steps(thread, cancel_py=False)
+        self.py_step_armed = True
+        self._new_stop()
+        self._continue()
+        return True
+
+    def _on_trap(self, thread):
+        frame = thread.GetFrameAtIndex(0)
+        reason = frame.FindRegister("rdx").GetValueAsUnsigned()
+        tid = thread.GetThreadID()
+        self.safe_tid = tid
+        self.stop_is_trap = True
+        self.process.SetSelectedThread(thread)
+        if self.pending_sync:
+            self._sync_py_bps()
+        if reason == R_RETURN_NATIVE:
+            # The stepped Python function is returning to native code that called it:
+            # finish with a native step-out into the nearest user frame.
+            natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+            for i, native in enumerate(natives):
+                if i and self._classify_frame(native) == "user":
+                    self._finish_steps(thread, cancel_py=False)
+                    self.native_stepping = {"tid": tid, "hops": 0}
+                    self._new_stop()
+                    thread.StepOutOfFrame(natives[i - 1])
+                    self.running = True
+                    return
+        self._finish_steps(thread, cancel_py=False)
+        self.event("stopped", {
+            "reason": "breakpoint" if reason == R_BREAKPOINT else "step",
+            "threadId": tid, "allThreadsStopped": True})
+
     def _on_stop(self):
         self._new_stop()
         self._fix_stale_frames()
         self._drain_output()
         thread = self._trap_thread()
         if thread is not None:
-            frame = thread.GetFrameAtIndex(0)
-            reason = frame.FindRegister("rdx").GetValueAsUnsigned()
-            self.safe_tid = thread.GetThreadID()
-            self.stop_is_trap = True
-            self.process.SetSelectedThread(thread)
-            if self.pending_sync:
-                self._sync_py_bps()
-            self.event("stopped", {
-                "reason": "breakpoint" if reason == R_BREAKPOINT else "step",
-                "threadId": self.safe_tid, "allThreadsStopped": True})
+            self._on_trap(thread)
             return
         thread = None
+        stepping_tid = self.native_stepping["tid"] if self.native_stepping else None
         for candidate in self.process:
-            if self._interesting(candidate):
+            if self._interesting(candidate) and (
+                    thread is None or candidate.GetThreadID() == stepping_tid):
                 thread = candidate
-                break
         if thread is None:
             thread = self.process.GetSelectedThread()
         self.process.SetSelectedThread(thread)
         reason = thread.GetStopReason()
         body = {"threadId": thread.GetThreadID(), "allThreadsStopped": True}
+
+        if (reason == lldb.eStopReasonBreakpoint and thread.GetStopReasonDataAtIndex(0)
+                in [bp.GetID() for bp in self.user_bps.values()]):
+            # Step-in from Python reached the first user native function.
+            self._finish_steps(thread)
+            body["reason"] = "step"
+            self.event("stopped", body)
+            return
+        if reason == lldb.eStopReasonPlanComplete and self.native_stepping:
+            kind = self._classify_frame(thread.GetFrameAtIndex(0))
+            if kind == "interp" and self._resume_in_python(thread):
+                return
+            if kind in GLUE and self.native_stepping["hops"] < 64:
+                # Returned into binding glue: keep going until user code or the interpreter.
+                self.native_stepping["hops"] += 1
+                self._new_stop()
+                thread.StepOut()
+                self.running = True
+                return
+        self._finish_steps(thread)
         if self.pause_requested:
             self.pause_requested = False
             body["reason"] = "pause"
@@ -471,6 +656,11 @@ class Adapter:
 
         if not args.get("debugInfoLookup", True):
             self.dbg.HandleCommand("settings set symbols.enable-external-lookup false")
+        # A native step that leaves user code must stop as soon as it is back in the
+        # interpreter, so Seam can hand the step over to the Python side.
+        self.dbg.HandleCommand(
+            "settings set target.process.thread.step-out-avoid-nodebug false")
+        self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
         err = lldb.SBError()
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
         if not self.target or not self.target.IsValid():
@@ -480,8 +670,10 @@ class Adapter:
 
         info = lldb.SBLaunchInfo(argv)
         info.SetWorkingDirectory(self.cwd)
-        env = ["%s=%s" % kv for kv in (args.get("env") or {}).items()]
-        info.SetEnvironmentEntries(env, True)
+        # The program inherits the environment `seam dap` was started in, plus launch "env".
+        env = {k: v for k, v in os.environ.items() if k != "SEAM_DAP_FD"}
+        env.update({str(k): str(v) for k, v in (args.get("env") or {}).items()})
+        info.SetEnvironmentEntries(["%s=%s" % kv for kv in env.items()], False)
         info.SetListener(self.listener)
         # The target gets its own pty: LLDB's driver would otherwise swallow its output.
         master, slave = os.openpty()
@@ -514,7 +706,8 @@ class Adapter:
         self.safe_tid = thread.GetThreadID()
         self._sync_native_bps()
         if args.get("stopOnEntry"):
-            self.agent("step", mode="entry")
+            self.agent("step", mode="any")
+            self.py_step_armed = True
         return None, lambda: self.event("initialized")
 
     def _inject(self, thread):
@@ -660,11 +853,8 @@ class Adapter:
         cached = self.stacks.get(tid)
         if cached is not None:
             return cached
-        groups = []
-        for native_tid, tstate in self.py.thread_states():
-            if native_tid == tid:
-                groups = self.py.thread_groups(tstate)
-                break
+        tstate, _ = self.py.find_thread(tid)
+        groups = self.py.thread_groups(tstate) if tstate else []
         natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
         sps = [f.GetSP() for f in natives]
         if self.logfile:
@@ -721,7 +911,8 @@ class Adapter:
             path = spec.fullpath if spec.IsValid() else None
             out.append({"kind": "native", "tid": tid, "index": i,
                         "name": name or "%#x" % frame.GetPC(),
-                        "path": path, "line": entry_line.GetLine() if path else 0})
+                        "path": path, "line": entry_line.GetLine() if path else 0,
+                        "cls": self._classify_frame(frame)})
         for _, frames in groups:  # could not be matched to a C frame; show them anyway
             for pf in frames:
                 out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
@@ -749,7 +940,7 @@ class Adapter:
             if record["path"]:
                 frame["source"] = {"name": os.path.basename(record["path"]),
                                    "path": record["path"]}
-            else:
+            if not record["path"] or record.get("cls") in GLUE:
                 frame["presentationHint"] = "subtle"
             frames.append(frame)
         return {"stackFrames": frames, "totalFrames": len(stack)}
@@ -878,22 +1069,65 @@ class Adapter:
         self._require_stopped()
         thread = self._thread(args["threadId"])
         stack = self._merged_stack(thread)
-        top = stack[0] if stack else None
+        tid = thread.GetThreadID()
+        # Step relative to the newest frame the user cares about: a Python frame or user
+        # native code. System-library and glue frames above it (e.g. being paused inside
+        # nanosleep under time.sleep) do not count.
+        position = next((i for i, r in enumerate(stack)
+                         if r["kind"] == "py" or r["cls"] == "user"), None)
+        top = stack[position] if position is not None else None
         if top is not None and top["kind"] == "py":
-            if self.safe_tid is None:
-                raise DapError("stepping Python code from a native stop is not supported yet")
-            self.agent("step", mode=mode, tid=top["tid"], index=top["index"])
+            # If this Python frame was called from user native code, leaving it must end
+            # in that native frame rather than in the Python frame further down.
+            native_return = False
+            for record in stack[position + 1:]:
+                if record["kind"] == "py":
+                    break
+                if record["cls"] == "user":
+                    native_return = True
+                    break
+            request = {"mode": mode, "tid": tid, "index": top["index"],
+                       "native_return": native_return}
+            if self.safe_tid is not None:
+                self.agent("step", **request)
+            else:
+                # Stopped inside the interpreter (e.g. after a pause): arm the step at
+                # the main thread's next safe point.
+                self._agent_pending("step", **request)
+            if mode == "in":
+                self._enable_user_bps(tid)
+            self.py_step_armed = True
             self._new_stop()
             self._continue()
             return None
-        self._new_stop()
+
         self.process.SetSelectedThread(thread)
-        if mode == "over":
+        natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+        start = top["index"] if top is not None else 0
+        if mode == "in" and self._control_safe(thread):
+            # If the stepped statement calls back into Python, stop on its first line.
+            self.safe_tid = tid
+            try:
+                self.agent("step", mode="any", tid=tid)
+                self.py_step_armed = True
+            except DapError as exc:
+                self.log("cannot arm a Python step from native code:", exc)
+        self.native_stepping = {"tid": tid, "hops": 0}
+        self._new_stop()
+        if start > 0:
+            # Stopped inside a library call made by user code: any step returns to it.
+            thread.StepOutOfFrame(natives[start - 1])
+        elif mode == "over":
             thread.StepOver()
         elif mode == "in":
             thread.StepInto()
         else:
-            thread.StepOut()
+            # Step out to the next frame worth showing: skip binding glue.
+            target_index = start + 1
+            while (target_index < len(natives) - 1
+                   and self._classify_frame(natives[target_index]) in GLUE):
+                target_index += 1
+            thread.StepOutOfFrame(natives[target_index - 1])
         self.running = True
         return None
 
@@ -923,6 +1157,9 @@ class Adapter:
             + len(self.function_bps),
             "totalBreakpoints": self.target.GetNumBreakpoints(),
             "pid": self.process.GetProcessID(),
+            "stepInBreakpointsEnabled": any(bp.IsEnabled() for bp in self.user_bps.values()),
+            "nativeStepInProgress": self.native_stepping is not None,
+            "pythonStepArmed": self.py_step_armed,
         }
         if self.safe_tid is not None:
             body["agent"] = self.agent("status")

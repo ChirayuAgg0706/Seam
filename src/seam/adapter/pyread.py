@@ -179,7 +179,7 @@ class PyReader:
         return out
 
     def thread_states(self):
-        """Yield (native_thread_id, tstate_addr) for every thread of every interpreter."""
+        """Yield (native_thread_id, tstate, interp) for every thread of every interpreter."""
         L = self.L
         interp = self.u64(self.runtime + L.runtime_interp_head)
         guard = 0
@@ -187,10 +187,35 @@ class PyReader:
             tstate = self.u64(interp + L.interp_threads_head)
             while tstate and guard < 100000:
                 guard += 1
-                yield self.u64(tstate + L.tstate_native_tid), tstate
+                yield self.u64(tstate + L.tstate_native_tid), tstate, interp
                 tstate = self.u64(tstate + L.tstate_next)
             interp = self.u64(interp + L.interp_next)
             guard += 1
+
+    def find_thread(self, tid):
+        """(tstate, interp) of the Python thread with this OS thread id, or (None, None)."""
+        for native_tid, tstate, interp in self.thread_states():
+            if native_tid == tid:
+                return tstate, interp
+        return None, None
+
+    def holds_gil(self, tid):
+        """True if the OS thread `tid` is a Python thread that currently holds the GIL."""
+        L = self.L
+        try:
+            tstate, interp = self.find_thread(tid)
+            if tstate is None:
+                return False
+            if L.gil_ptr is not None:
+                gil = self.u64(interp + L.gil_ptr)
+                holder = self.u64(gil + L.gil_holder)
+                locked = struct.unpack("<i", self.read(gil + L.gil_locked, 4))[0]
+            else:
+                holder = self.u64(interp + L.gil_holder)
+                locked = struct.unpack("<i", self.read(interp + L.gil_locked, 4))[0]
+            return locked == 1 and holder == tstate
+        except (ValueError, struct.error):
+            return False
 
     def current_frame(self, tstate):
         L = self.L

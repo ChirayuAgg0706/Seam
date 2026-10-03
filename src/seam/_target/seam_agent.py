@@ -42,7 +42,7 @@ _in_dispatch = False
 
 
 class _Step:
-    __slots__ = ("mode", "ident", "frame", "glob", "native_return")
+    __slots__ = ("mode", "ident", "frame", "glob", "native_return", "gen")
 
     def __init__(self, mode, ident, frame, native_return):
         self.mode = mode
@@ -50,6 +50,16 @@ class _Step:
         self.frame = frame
         self.glob = 0
         self.native_return = native_return
+        self.gen = _t.step_gen()
+
+
+_DEBUG_LOG = os.environ.get("SEAM_AGENT_LOG")
+
+
+def _debug(*parts):
+    if _DEBUG_LOG:
+        with open(_DEBUG_LOG, "a") as fh:
+            fh.write(" ".join(str(p) for p in parts) + "\n")
 
 
 def _canon(filename):
@@ -180,7 +190,7 @@ def _on_line(code, line):
         if _step is not None:
             _finish_step()
         return (None, code, line, R_BREAKPOINT)
-    st = _step
+    st = _current()
     if st is None:
         return mon.DISABLE if not lines or line not in lines else None
     if st.ident != get_ident() or _internal(code):
@@ -191,16 +201,26 @@ def _on_line(code, line):
     return None
 
 
+def _current():
+    """The armed step, unless the adapter cancelled it by bumping the generation."""
+    st = _step
+    if st is not None and st.gen != _t.step_gen():
+        _finish_step()
+        return None
+    return st
+
+
 def _leave_frame(code, unwinding):
     """The frame being stepped is finishing: retarget the step at its caller."""
-    st = _step
+    st = _current()
+    _debug("leave", code.co_qualname, "unwinding" if unwinding else "return", st and st.mode)
     if st is None or _in_dispatch or st.ident != get_ident():
         return None
     frame = sys._getframe(2)
     if frame is not st.frame:
         return None
     if st.native_return:
-        line = frame.f_lineno
+        line = frame.f_lineno or 0
         _finish_step()
         return (None, code, line, R_RETURN_NATIVE)
     back = frame.f_back
@@ -235,13 +255,17 @@ def _on_unwind(code, offset, exc):
 
 
 def _on_instruction(code, offset):
-    st = _step
+    st = _current()
     if st is None or _in_dispatch or st.mode != "caller" or st.ident != get_ident():
         return None
     frame = sys._getframe(1)
     if frame is not st.frame:
         return None
     line = frame.f_lineno
+    if line is None:
+        # Artificial instructions (e.g. the entry of an exception handler) have no
+        # line; keep going until the frame is on a real one.
+        return None
     _finish_step()
     return (None, code, line, R_STEP)
 
@@ -361,8 +385,9 @@ def _cmd_step(req):
     ident = _ident_for(req.get("tid")) or get_ident()
     frames = _frames(ident)
     mode = req["mode"]
-    if mode == "entry":
-        # Stop on the first line of user code; no Python frame exists yet.
+    if mode == "any":
+        # Stop on the next line of Python this thread runs, in whatever frame: used for
+        # stop-on-entry and for stepping from native code into a Python callback.
         _step = st = _Step("in", ident, None, False)
         st.glob = E.LINE
         _update_slow()
@@ -372,6 +397,16 @@ def _cmd_step(req):
     if not frames:
         raise LookupError("no Python frame to step in")
     frame = frames[req.get("index", 0)]
+    if mode == "caller":
+        # Native code has just returned into the interpreter: stop as soon as the
+        # calling Python frame resumes (or, if the call raised, where it is handled).
+        _step = st = _Step("caller", ident, frame, bool(req.get("native_return")))
+        st.glob = E.PY_UNWIND
+        _add_step_local(frame.f_code, E.INSTRUCTION | E.PY_RETURN | E.PY_YIELD)
+        _update_slow()
+        _update_global()
+        mon.restart_events()
+        return True
     _step = st = _Step(mode, ident, frame, bool(req.get("native_return")))
     if mode == "in":
         st.glob = E.LINE | E.PY_UNWIND
