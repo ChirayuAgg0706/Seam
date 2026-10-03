@@ -456,6 +456,21 @@ def _cmd_evaluate(req):
     return _describe("", eval(code, frame.f_globals, frame.f_locals))
 
 
+def _cmd_shutdown(req):
+    """The debugger is detaching: leave no trace in the running program."""
+    if _step is not None:
+        _finish_step()
+    _bps.clear()
+    _reinstrument()
+    for code in list(_codes.values()):
+        mon.set_local_events(TOOL, code, 0)
+    _codes.clear()
+    _lines.clear()
+    mon.set_events(TOOL, 0)
+    _t.set_slow(False)
+    return True
+
+
 def _cmd_status(req):
     return {
         "pid": os.getpid(),
@@ -478,6 +493,7 @@ _COMMANDS = {
     "variables": _cmd_variables,
     "evaluate": _cmd_evaluate,
     "status": _cmd_status,
+    "shutdown": _cmd_shutdown,
 }
 
 
@@ -519,3 +535,11 @@ def _install():
 
 
 _install()
+
+R_ATTACHED = 5
+_attached_trap = _t.wrap(lambda: (None, None, 0, R_ATTACHED))
+
+
+def attached():
+    """Called by the attach bootstrap: stop in the debugger now that the agent is loaded."""
+    _attached_trap()

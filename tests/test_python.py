@@ -2,6 +2,8 @@
 import ast
 import json
 
+import pytest
+
 from conftest import marker_line, target
 
 BASIC = target("basic.py")
@@ -24,6 +26,7 @@ def py_frames(stack):
     return [(f["name"], f["line"]) for f in stack]
 
 
+@pytest.mark.smoke
 def test_breakpoint_stack_and_variables(dap):
     line = marker_line(BASIC, "inner-first")
     dap.launch(BASIC, dap.python, breakpoints={BASIC: [line]})
@@ -120,6 +123,7 @@ def test_breakpoint_on_a_line_without_code_moves_to_the_next_line(dap):
     assert dap.wait_exit() == 0
 
 
+@pytest.mark.smoke
 def test_stepping(dap, iteration):
     call = marker_line(BASIC, "outer-call")
     dap.launch(BASIC, dap.python, breakpoints={BASIC: [call]})

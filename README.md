@@ -31,8 +31,9 @@ On Ubuntu 24.04:
 
 ```bash
 sudo apt-get install -y lldb gcc python3-dev python3-venv git
+git clone https://github.com/ChirayuAgg0706/Seam.git
 python3 -m venv ~/.venvs/seam
-~/.venvs/seam/bin/pip install git+https://github.com/ChirayuAgg0706/Seam.git
+~/.venvs/seam/bin/pip install ./Seam
 ~/.venvs/seam/bin/seam --version
 ```
 
@@ -96,6 +97,7 @@ call stack. **Step Out** returns to the Python line.
 | `stopOnEntry` | Stop on the first line of Python. |
 | `debugInfoLookup` | Let LLDB find separate debug-info files (default true). |
 | `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
+| `showGlueFrames` | Show binding-layer trampoline frames in the call stack (default false). |
 
 ### Attach
 

@@ -3,8 +3,12 @@ import ast
 import json
 import time
 
-from conftest import CAPI_SRC, marker_line, target
+import pytest
+
+from conftest import CAPI_SRC, at_line, marker_line, target
 from test_python import ground_truth, py_frames
+
+pytestmark = pytest.mark.smoke
 
 MIXED = target("mixed.py")
 RUNNING = target("running.py")
@@ -23,7 +27,7 @@ def test_native_breakpoint_shows_one_merged_stack(dap, capi):
     stack = dap.stack(stop["threadId"])
     assert names(stack) == ["add_impl", "st_add", "leaf", "st_call_back", "middle", "main",
                             "<module>"]
-    assert [f["line"] for f in stack] == [
+    expected = [
         line,
         marker_line(CAPI_SRC, "add-call"),
         marker_line(MIXED, "leaf-add"),
@@ -32,6 +36,11 @@ def test_native_breakpoint_shows_one_merged_stack(dap, capi):
         marker_line(MIXED, "main-middle"),
         marker_line(MIXED, "module-main"),
     ]
+    for frame, want in zip(stack, expected):
+        if frame["source"]["path"] == MIXED:
+            assert frame["line"] == want, frame  # Python lines are exact at any -O level
+        else:
+            assert at_line(capi, frame["line"], want), frame
     assert stack[0]["source"]["path"] == CAPI_SRC and stack[2]["source"]["path"] == MIXED
 
     if capi.opt == "O0":
@@ -66,7 +75,7 @@ def test_python_breakpoint_below_native_frames(dap, capi):
     assert names(stack) == ["leaf", "st_call_back", "middle", "main", "<module>"]
     python_part = [(f["name"], f["line"]) for f in stack if f["name"] != "st_call_back"]
     assert python_part == ground_truth(dap, stack[0]["id"])
-    assert stack[1]["line"] == marker_line(CAPI_SRC, "callback-call")
+    assert at_line(capi, stack[1]["line"], marker_line(CAPI_SRC, "callback-call"))
     assert dap.evaluate("doubled", stack[0]["id"])["result"] == "40"
     assert dap.scope(stack[2]["id"])["label"]["value"] == "'middle'"
     if capi.opt == "O0":
@@ -82,7 +91,8 @@ def test_python_and_native_breakpoints_in_one_session(dap, capi):
                breakpoints={CAPI_SRC: [native], MIXED: [python]})
     stop = dap.wait_stopped()
     stack = dap.stack(stop["threadId"])
-    assert names(stack)[:2] == ["st_call_back", "middle"] and stack[0]["line"] == native
+    assert names(stack)[:2] == ["st_call_back", "middle"]
+    assert at_line(capi, stack[0]["line"], native)
     dap.cont()
     stop = dap.wait_stopped()
     stack = dap.stack(stop["threadId"])

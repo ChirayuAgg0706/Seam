@@ -13,14 +13,14 @@ def fib(n):
 
 
 def cpu():
-    total = fib(29)
-    for i in range(1_500_000):
+    total = fib(32)
+    for i in range(6_000_000):
         total += i * i % 7
     return total
 
 
 def threads():
-    for _ in range(300):
+    for _ in range(2000):
         t = threading.Thread(target=fib, args=(8,))
         t.start()
         t.join()
@@ -30,8 +30,8 @@ def native():
     import seamtest
 
     total = 0
-    for i in range(1_500_000):
-        total = seamtest.add(total, i)
+    for i in range(12_000_000):
+        total = seamtest.add(total & 0xFFFF, i)
     return total
 
 

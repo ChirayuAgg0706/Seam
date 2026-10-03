@@ -99,6 +99,11 @@
                 "description": "Let LLDB look for separate debug-info files for system libraries.",
                 "default": true
               },
+              "showGlueFrames": {
+                "type": "boolean",
+                "description": "Show binding-layer trampoline frames (pybind11, PyO3, ...) in the call stack.",
+                "default": false
+              },
               "frameworkPaths": {
                 "type": "array",
                 "items": { "type": "string" },

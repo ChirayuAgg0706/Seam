@@ -3,7 +3,11 @@
 "Lands in user code" means: the top frame's source file is the extension's own source
 (not a framework header or generated glue) and it is the user's function.
 """
-from conftest import marker_line, target
+import pytest
+
+from conftest import at_line, marker_line, target
+
+pytestmark = pytest.mark.smoke
 
 BINDING = target("binding.py")
 ADD_MARKER = {"capi": "add-first"}
@@ -34,9 +38,13 @@ def test_step_in_lands_in_user_code_and_step_out_returns(dap, binding, iteration
     assert top.get("source", {}).get("path") == binding.source, describe(stack)
     assert "add" in top["name"], describe(stack)
     body = marker_line(binding.source, ADD_MARKER.get(binding.layer, "add-body"))
-    assert body - 2 <= top["line"] <= body, describe(stack)
+    assert binding.opt != "O0" or body - 2 <= top["line"] <= body, describe(stack)
     assert python_frames(stack) == [("main", call),
                                     ("<module>", marker_line(BINDING, "module-main"))]
+    if binding.opt == "O0":
+        # Binding glue (dispatchers, trampolines, argument-parsing wrappers) is hidden:
+        # the user's function sits directly on top of the Python frame that called it.
+        assert [f["name"] for f in stack[1:]] == ["main", "<module>"], describe(stack)
 
     dap.step("stepOut", tid)
     stack = dap.stack(tid)
@@ -57,26 +65,47 @@ def test_step_in_lands_in_user_code_and_step_out_returns(dap, binding, iteration
 
 def test_native_breakpoint_then_into_and_out_of_a_python_callback(dap, binding, iteration):
     line = marker_line(binding.source, "callback-call")
-    tid = launch(dap, binding, {binding.source: [line]})
+    dap.launch(BINDING, dap.python, args=[binding.module], env=binding.env,
+               breakpoints={binding.source: [line]})
+    event, body = dap.wait_any(("stopped", "exited"))
+    resolved = [e["body"]["breakpoint"] for e in dap.events
+                if e["event"] == "breakpoint" and e["body"]["breakpoint"]["verified"]]
+    if event == "exited":
+        # Only legitimate with optimisation: the compiler left the statement with no code
+        # of its own (it is a single inlined library call), so no breakpoint can be placed
+        # on it. Seam must say so rather than pretend, and the program must run normally.
+        assert binding.opt != "O0", "breakpoint on the call line was never hit"
+        assert not resolved and body["exitCode"] == 0
+        pytest.skip("the %s -%s build has no code on the call line; Seam reported the "
+                    "breakpoint as unverified" % (binding.layer, binding.opt))
+    tid = body["threadId"]
     stack = dap.stack(tid)
     top = stack[0]
     assert top.get("source", {}).get("path") == binding.source, describe(stack)
-    assert top["line"] == line and "call_back" in top["name"], describe(stack)
+    assert at_line(binding, top["line"], line) and "call_back" in top["name"], describe(stack)
+    if top["line"] > line:
+        # Optimised build: the call line has no code of its own, so the breakpoint was
+        # moved to the next line that has, which is after the callback already ran.
+        assert resolved and resolved[-1]["line"] == top["line"], (resolved, top)
+        pytest.skip("the %s -%s build moved the breakpoint past the call (line %d -> %d); "
+                    "Seam reported the new line" % (binding.layer, binding.opt, line, top["line"]))
     assert python_frames(stack) == [("main", marker_line(BINDING, "bind-callback")),
                                     ("<module>", marker_line(BINDING, "module-main"))]
 
-    # One "step in" enters the callback. Cython is the exception (a known limitation, see
-    # STATUS.md): its generated C spreads one .pyx line over many small line-table ranges
-    # that alternate with the `def` line, so several presses are needed to reach the call.
+    # One "step in" enters the callback at -O0. Two known exceptions (see STATUS.md):
+    # Cython's generated C spreads one .pyx line over many small line-table ranges that
+    # alternate with the `def` line, and optimised code of any layer has the same shape,
+    # so there several presses are needed before the call itself is reached.
     presses = 0
-    for presses in range(1, 13 if binding.layer == "cython" else 2):
+    several = binding.layer == "cython" or binding.opt != "O0"
+    for presses in range(1, 13 if several else 2):
         stop = dap.step("stepIn", tid)
-        assert stop["reason"] == "step"
+        assert stop["reason"] == "step", (stop, describe(dap.stack(tid)))
         stack = dap.stack(tid)
         if stack[0]["name"] == "cb":
             break
         assert "call_back" in stack[0]["name"], describe(stack)
-    assert presses == 1 or binding.layer == "cython", "took %d presses" % presses
+    assert presses == 1 or several, "took %d presses" % presses
     assert (stack[0]["name"], stack[0]["line"]) == ("cb", marker_line(BINDING, "cb-body")), \
         describe(stack)
     assert dap.evaluate("v", stack[0]["id"])["result"] == "5"

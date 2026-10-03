@@ -1,7 +1,11 @@
 """Attach to a running process, debug it, detach, and check it carries on unharmed."""
 import subprocess
 
+import pytest
+
 from conftest import marker_line, pid_alive, target
+
+pytestmark = pytest.mark.smoke
 
 ATTACH = target("attach_target.py")
 
@@ -13,13 +17,16 @@ def start_target(python):
     return proc
 
 
-def test_attach_break_inspect_detach(dap, python):
+def test_attach_break_inspect_detach(dap, python, pyinfo):
     proc = start_target(python)
     try:
         line = marker_line(ATTACH, "tick-body")
         dap.request("initialize", {"adapterID": "seam"})
         dap.request("attach", {"pid": proc.pid})
         dap.wait_event("initialized")
+        # 3.14 uses PEP 768 (memory writes only); older versions need a pending call.
+        expected = "PEP 768" if pyinfo["tag"] >= "cp314" else "a pending call"
+        assert expected in dap.output, dap.output
         dap.set_breakpoints(ATTACH, [line])
         dap.request("configurationDone")
 

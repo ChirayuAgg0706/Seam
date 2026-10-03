@@ -15,15 +15,18 @@ class DapFailure(AssertionError):
 
 
 class DapClient:
-    def __init__(self, log_path=None):
+    def __init__(self, log_path=None, command=None):
+        """`command` runs an installed adapter; by default the source tree's is used."""
         env = dict(os.environ)
-        env["PYTHONPATH"] = os.path.join(ROOT, "src") + os.pathsep + env.get("PYTHONPATH", "")
+        if command is None:
+            command = [sys.executable, "-m", "seam", "dap"]
+            env["PYTHONPATH"] = (os.path.join(ROOT, "src") + os.pathsep
+                                 + env.get("PYTHONPATH", ""))
         if log_path:
             env["SEAM_LOG"] = log_path
         self.log_path = log_path
-        self.proc = subprocess.Popen(
-            [sys.executable, "-m", "seam", "dap"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, env=env)
+        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, env=env)
         self.seq = 0
         self.inbox = queue.Queue()
         self.events = []
@@ -99,6 +102,16 @@ class DapClient:
                 if ev["event"] == name:
                     del self.events[i]
                     return ev["body"]
+            self._next(deadline)
+
+    def wait_any(self, names, timeout=30):
+        """Wait for the first of several events; returns (name, body)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            for i, ev in enumerate(self.events):
+                if ev["event"] in names:
+                    del self.events[i]
+                    return ev["event"], ev["body"]
             self._next(deadline)
 
     def drain(self, seconds, name):

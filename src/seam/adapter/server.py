@@ -10,8 +10,10 @@ import os
 import re
 import shutil
 import struct
+import tempfile
 import termios
 import threading
+import time
 import traceback
 
 import lldb
@@ -25,6 +27,8 @@ EVAL_FRAME = "_PyEval_EvalFrameDefault"
 R_BREAKPOINT = 1
 R_STEP = 2
 R_RETURN_NATIVE = 3
+R_ATTACHED = 5
+EVAL_PLEASE_STOP_BIT = 1 << 5   # _PY_EVAL_PLEASE_STOP_BIT in CPython 3.14's pycore_ceval.h
 
 HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",
@@ -36,6 +40,7 @@ HELPER_SYMBOLS = (
 FRAMEWORK_PATHS = (
     "/include/pybind11/", "/include/nanobind/", "/nanobind/src/", "/.cargo/registry/",
     "/rustc/", "/usr/include/", "/usr/lib/", "/usr/local/include/",
+    "/include/python3",  # CPython's own header inlines (Py_INCREF, vectorcall helpers)
 )
 # Function names that are glue even when their line info points into user files
 # (macro-generated trampolines, Cython argument-parsing wrappers, module init).
@@ -43,6 +48,7 @@ FRAMEWORK_FUNCTIONS = re.compile(
     r"^(__pyx_pw_|__pyx_pymod_|__Pyx_|__pyx_tp_|PyInit_|_GLOBAL__sub_I_|pybind11::|"
     r"nanobind::|pyo3::|core::|alloc::|std::)"
     r"|__pyfunction_|__pymethod_|__pyo3_|_PYO3_DEF|::trampoline")
+CYTHON_GLUE = re.compile(r"^(__pyx_pw_|__pyx_pymod_|__Pyx_|__pyx_tp_)")
 SYSTEM_LIB_PREFIXES = ("/usr/lib/", "/lib/", "/usr/lib64/", "/lib64/", "[")
 # Frame classes a step never ends in: Seam keeps going until user code or Python.
 GLUE = ("framework", "nodebug", "system")
@@ -99,8 +105,14 @@ class Adapter:
         self.pause_requested = False
         self.output_thread = None
         self.framework_paths = FRAMEWORK_PATHS
+        self.show_glue_frames = False
         self.user_bps = {}            # module path -> breakpoint on all its user functions
         self.user_bps_on = False
+        self.last_native_stop = {}    # tid -> (line key, pc) of the last reported stop
+        self.native_bp_lines = {}     # breakpoint id -> line the user asked for
+        self.native_bp_state = {}     # breakpoint id -> (verified, line) last reported
+        self.attached = False         # attached to an existing process (detach, don't kill)
+        self.temp_files = []
         self.native_stepping = None   # {"tid", "hops"} while an LLDB step plan is running
         self.py_step_armed = False    # the agent has a Python-level step armed
 
@@ -185,6 +197,9 @@ class Adapter:
     # ------------------------------------------------------ process events
 
     def _on_event(self, ev):
+        if lldb.SBBreakpoint.EventIsBreakpointEvent(ev):
+            self._refresh_native_bp_status()
+            return
         if not lldb.SBProcess.EventIsProcessEvent(ev):
             return
         kind = ev.GetType()
@@ -201,7 +216,18 @@ class Adapter:
             if lldb.SBProcess.GetRestartedFromEvent(ev) or not self.running:
                 return
             if self.process.GetState() != lldb.eStateStopped:
-                return  # stale event from an internal interrupt
+                # LLDB can deliver a stop event a moment before its public process state
+                # says "stopped" (seen about once in 30 step-ins on large modules).
+                # Dropping the event here loses a real stop and hangs the session, so
+                # give the state a moment to catch up before deciding it is stale.
+                deadline = time.monotonic() + 1.0
+                while (time.monotonic() < deadline
+                       and self.process.GetState() != lldb.eStateStopped):
+                    time.sleep(0.01)
+                self.log("stop event arrived before the public state; state is now",
+                         self.process.GetState())
+                if self.process.GetState() != lldb.eStateStopped:
+                    return
             self.running = False
             self._on_stop()
 
@@ -323,10 +349,23 @@ class Adapter:
         path = spec.fullpath or ""
         if any(part in path for part in self.framework_paths):
             return "framework"
-        name = address.GetFunction().GetName() or address.GetSymbol().GetName() or ""
-        if FRAMEWORK_FUNCTIONS.search(name):
+        if FRAMEWORK_FUNCTIONS.search(self._function_name(address)):
             return "framework"
         return "user"
+
+    @staticmethod
+    def _function_name(address):
+        """Name of the innermost function at `address`, looking through inlining.
+
+        With optimisation a user function is often inlined into binding glue; the code is
+        still the user's, so judge it by the inlined function's name, not its host's.
+        """
+        block = address.GetBlock()
+        if block.IsValid():
+            inlined = block if block.IsInlined() else block.GetContainingInlinedBlock()
+            if inlined.IsValid() and inlined.GetInlinedName():
+                return inlined.GetInlinedName()
+        return address.GetFunction().GetName() or address.GetSymbol().GetName() or ""
 
     def _classify_frame(self, frame):
         module = frame.GetModule().GetFileSpec().fullpath
@@ -382,30 +421,39 @@ class Adapter:
             bp.SetEnabled(True)
         self.user_bps_on = True
 
-    def _dedupe_locations(self, bp):
-        """Keep one location per function for a source-line breakpoint, and none in glue.
+    def _drop_glue_locations(self, bp):
+        """Disable locations of a source-line breakpoint that sit in Cython's generated glue.
 
-        LLDB resolves a line to every address range that carries it. In Rust (`?`) and in
-        Cython-generated code one line has several ranges inside one function, so a step
-        out of a call on that line would hit the same breakpoint again; and Cython's
-        module-init glue carries user line numbers. Like gdb, stop once per function, at
-        the lowest address.
+        With line directives Cython attributes parts of its module-init and argument-
+        parsing code to the user's .pyx lines, so a breakpoint on a statement would also
+        stop during import. Those functions are never the user's code.
         """
-        best = {}
-        keyed = []
         for i in range(bp.GetNumLocations()):
             location = bp.GetLocationAtIndex(i)
-            address = location.GetAddress()
-            name = address.GetFunction().GetName() or address.GetSymbol().GetName() or ""
-            key = (address.GetModule().GetFileSpec().fullpath, name)
-            load = location.GetLoadAddress()
-            keyed.append((location, key, name))
-            if key not in best or load < best[key][0]:
-                best[key] = (load, location.GetID())
-        for location, key, name in keyed:
-            keep = best[key][1] == location.GetID() and not FRAMEWORK_FUNCTIONS.search(name)
-            if location.IsEnabled() != keep:
-                location.SetEnabled(keep)
+            if (location.IsEnabled()
+                    and CYTHON_GLUE.search(self._function_name(location.GetAddress()))):
+                location.SetEnabled(False)
+
+    @staticmethod
+    def _line_key(frame):
+        """Identity of "this invocation of this function, on this line"."""
+        entry = frame.GetLineEntry()
+        return (frame.GetCFA(), frame.GetFunctionName(), entry.GetFileSpec().fullpath,
+                entry.GetLine())
+
+    def _is_same_line_rehit(self, thread):
+        """True if a breakpoint hit is just another address range of the line we were on.
+
+        LLDB resolves a line to every address range that carries it. Rust's `?`, Cython's
+        generated code and optimised C give one line several ranges in one function, so
+        continuing or stepping from a stop on that line would hit "the same" breakpoint
+        again without the program having gone anywhere. Coming back to the *same* address
+        (a loop) is a real hit.
+        """
+        last = self.last_native_stop.get(thread.GetThreadID())
+        frame = thread.GetFrameAtIndex(0)
+        return (last is not None and last[0] == self._line_key(frame)
+                and last[1] != frame.GetPC())
 
     def _step_out_to(self, thread, natives, target_index):
         """Run until natives[target_index] is the newest frame.
@@ -414,11 +462,22 @@ class Adapter:
         changes which inlined scope is shown), so step out of the nearest real frame
         above the target instead.
         """
+        # Artificial frames (tail calls reconstructed from call-site info, common in
+        # optimised Rust) are not on the real stack either.
         for j in range(target_index - 1, -1, -1):
-            if not natives[j].IsInlined():
+            if not natives[j].IsInlined() and not natives[j].IsArtificial():
                 thread.StepOutOfFrame(natives[j])
                 return
         thread.StepOutOfFrame(natives[max(target_index - 1, 0)])
+
+    def _step_out_of_glue(self, thread):
+        """Step out to the nearest frame that is user code or the interpreter."""
+        natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+        target_index = 1
+        while (target_index < len(natives) - 1
+               and self._classify_frame(natives[target_index]) in GLUE):
+            target_index += 1
+        self._step_out_to(thread, natives, target_index)
 
     def _discard_plans(self, thread):
         """Drop LLDB step plans so a later `continue` does not stop where a step would."""
@@ -496,6 +555,7 @@ class Adapter:
                     self.running = True
                     return
         self._finish_steps(thread, cancel_py=False)
+        self.last_native_stop.pop(tid, None)
         self.event("stopped", {
             "reason": "breakpoint" if reason == R_BREAKPOINT else "step",
             "threadId": tid, "allThreadsStopped": True})
@@ -504,6 +564,7 @@ class Adapter:
         self._new_stop()
         self._fix_stale_frames()
         self._drain_output()
+        self._refresh_native_bp_status()
         thread = self._trap_thread()
         if thread is not None:
             self._on_trap(thread)
@@ -525,7 +586,7 @@ class Adapter:
             # Step-in from Python reached the first user native function.
             self._finish_steps(thread)
             body["reason"] = "step"
-            self.event("stopped", body)
+            self._report_native_stop(thread, body)
             return
         if reason == lldb.eStopReasonBreakpoint and not self.pause_requested:
             # A source-line breakpoint can also resolve into generated glue that carries
@@ -538,9 +599,10 @@ class Adapter:
                 # Read the hit location first: LLDB derives it from the live site owners,
                 # so it reads as 0 once the location has been disabled.
                 location = bp.FindLocationByID(thread.GetStopReasonDataAtIndex(1))
-                self._dedupe_locations(bp)
-                if location.IsValid() and not location.IsEnabled():
-                    self.log("skipping redundant breakpoint location",
+                self._drop_glue_locations(bp)
+                if ((location.IsValid() and not location.IsEnabled())
+                        or self._is_same_line_rehit(thread)):
+                    self.log("skipping redundant breakpoint hit in",
                              thread.GetFrameAtIndex(0).GetFunctionName())
                     self._new_stop()
                     self._continue()
@@ -553,7 +615,7 @@ class Adapter:
                 # Returned into binding glue: keep going until user code or the interpreter.
                 self.native_stepping["hops"] += 1
                 self._new_stop()
-                thread.StepOut()
+                self._step_out_of_glue(thread)
                 self.running = True
                 return
         self._finish_steps(thread)
@@ -570,6 +632,11 @@ class Adapter:
             body["text"] = body["description"]
         else:
             body["reason"] = "pause"
+        self._report_native_stop(thread, body)
+
+    def _report_native_stop(self, thread, body):
+        frame = thread.GetFrameAtIndex(0)
+        self.last_native_stop[thread.GetThreadID()] = (self._line_key(frame), frame.GetPC())
         self.event("stopped", body)
 
     def _continue(self):
@@ -596,9 +663,19 @@ class Adapter:
         return True
 
     def _kill(self):
+        """End the session: kill a program Seam launched, detach from one it attached to."""
         if self.process is not None and self.process.IsValid() and not self.exited:
-            self.process.Kill()
-            self.exited = True
+            if self.attached:
+                self._detach()
+            else:
+                self.process.Kill()
+                self.exited = True
+        for path in self.temp_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self.temp_files = []
 
     # ------------------------------------------------------ target access
 
@@ -698,6 +775,16 @@ class Adapter:
             "supportsTerminateRequest": True,
         }
 
+    def _apply_settings(self, args):
+        if not args.get("debugInfoLookup", True):
+            self.dbg.HandleCommand("settings set symbols.enable-external-lookup false")
+        # A native step that leaves user code must stop as soon as it is back in the
+        # interpreter, so Seam can hand the step over to the Python side.
+        self.dbg.HandleCommand(
+            "settings set target.process.thread.step-out-avoid-nodebug false")
+        self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
+        self.show_glue_frames = bool(args.get("showGlueFrames"))
+
     def req_launch(self, args):
         python = self._resolve_python(args.get("python") or "python3")
         self.cwd = args.get("cwd") or os.getcwd()
@@ -710,13 +797,7 @@ class Adapter:
             raise DapError("launch needs either 'program' or 'module'")
         argv += [str(a) for a in args.get("args") or []]
 
-        if not args.get("debugInfoLookup", True):
-            self.dbg.HandleCommand("settings set symbols.enable-external-lookup false")
-        # A native step that leaves user code must stop as soon as it is back in the
-        # interpreter, so Seam can hand the step over to the Python side.
-        self.dbg.HandleCommand(
-            "settings set target.process.thread.step-out-avoid-nodebug false")
-        self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
+        self._apply_settings(args)
         err = lldb.SBError()
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
         if not self.target or not self.target.IsValid():
@@ -766,36 +847,199 @@ class Adapter:
             self.py_step_armed = True
         return None, lambda: self.event("initialized")
 
-    def _inject(self, thread):
-        """Load the agent. The caller guarantees `thread` is at a safe point."""
+    def _watch_breakpoints(self):
+        """Receive LLDB's breakpoint events (locations resolving when a module loads)."""
+        if os.environ.get("SEAM_NO_BP_EVENTS"):
+            return
+        self.target.GetBroadcaster().AddListener(
+            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
+
+    def _find_python(self):
+        """Locate the interpreter in the process and set up the raw-memory reader."""
+        self._watch_breakpoints()
         run, module = self._symbol("PyRun_SimpleStringFlags")
         runtime, _ = self._symbol("_PyRuntime")
         version_addr, _ = self._symbol("Py_Version")
         if not run or not runtime or not version_addr:
-            raise DapError("this does not look like CPython 3.12+: required symbols are missing")
+            raise DapError("this does not look like a CPython 3.12+ process: the "
+                           "interpreter's symbols are missing")
         self.interp_module = module.GetFileSpec().fullpath
         hexversion = struct.unpack("<I", self._read(version_addr, 4))[0]
         version = (hexversion >> 24, (hexversion >> 16) & 0xFF)
         if version < (3, 12):
             raise DapError("Seam needs CPython 3.12 or newer; this is %d.%d" % version)
-        code = ("import sys; sys.path.insert(0, %r)\n"
-                "try:\n    import seam_agent\n"
-                "finally:\n    sys.path.remove(%r)\n" % (TARGET_DIR, TARGET_DIR))
-        rc = self._call(thread, "((int(*)(const char*, void*))%d)(%s, (void*)0)"
-                        % (run, json.dumps(code)))
-        self._drain_output()
-        if rc != 0:
-            raise DapError("could not load the Seam agent into the process (see its output)")
+        self.sym["PyRun_SimpleStringFlags"] = run
+        self.sym["PyRun_SimpleString"] = self._symbol("PyRun_SimpleString")[0]
+        self.sym["Py_AddPendingCall"] = self._symbol("Py_AddPendingCall")[0]
+        self.sym["getpid"] = self._symbol("getpid")[0]
+        try:
+            self.py = pyread.PyReader(self._read, runtime, version)
+        except (ValueError, NotImplementedError) as exc:
+            raise DapError("unsupported interpreter: %s" % exc)
+
+    def _load_helper(self):
+        """Resolve the helper's symbols once the agent has been imported."""
+        module = None
         for name in HELPER_SYMBOLS:
             addr, module = self._symbol(name)
             if not addr:
                 raise DapError("Seam helper symbol %s not found after injection" % name)
             self.sym[name] = addr
         self.helper_module = module.GetFileSpec().fullpath
-        self.sym["Py_AddPendingCall"] = self._symbol("Py_AddPendingCall")[0]
-        self.sym["getpid"] = self._symbol("getpid")[0]
         self.sym["cap"] = struct.unpack("<q", self._read(self.sym["seam_req_cap"], 8))[0]
-        self.py = pyread.PyReader(self._read, runtime, version)
+
+    def _inject(self, thread):
+        """Load the agent. The caller guarantees `thread` is at a safe point."""
+        self._find_python()
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "try:\n    import seam_agent\n"
+                "finally:\n    sys.path.remove(%r)\n" % (TARGET_DIR, TARGET_DIR))
+        rc = self._call(thread, "((int(*)(const char*, void*))%d)(%s, (void*)0)"
+                        % (self.sym["PyRun_SimpleStringFlags"], json.dumps(code)))
+        self._drain_output()
+        if rc != 0:
+            raise DapError("could not load the Seam agent into the process (see its output)")
+        self._load_helper()
+
+    # --------------------------------------------------------------- attach
+
+    def req_attach(self, args):
+        pid = int(args.get("pid") or 0)
+        if pid <= 0:
+            raise DapError("attach needs a 'pid'")
+        self._apply_settings(args)
+        err = lldb.SBError()
+        self.target = self.dbg.CreateTarget("")
+        self.process = self.target.AttachToProcessWithID(self.listener, pid, err)
+        if not err.Success() or not self.process or not self.process.IsValid():
+            self.process = None
+            raise DapError("cannot attach to pid %d: %s (is ptrace allowed? see "
+                           "/proc/sys/kernel/yama/ptrace_scope)" % (pid, err.GetCString()))
+        self.attached = True
+        try:
+            if self._wait_stop() != lldb.eStateStopped:
+                raise DapError("pid %d exited while attaching" % pid)
+            try:
+                self.cwd = os.readlink("/proc/%d/cwd" % pid)
+            except OSError:
+                pass
+            self._find_python()
+            self.bp_trap = self.target.BreakpointCreateByName("seam_trap")
+            method = self._request_agent_load()
+            thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
+        except DapError:
+            self._abandon()
+            raise
+        self._load_helper()
+        self.safe_tid = thread.GetThreadID()
+        self.stop_is_trap = True
+        self.event("output", {"category": "console", "output":
+                   "Seam: attached to pid %d (helper loaded via %s).\n" % (pid, method)})
+        return None, lambda: self.event("initialized")
+
+    def _request_agent_load(self):
+        """Ask the stopped process to import the agent at its main thread's next safe point."""
+        code = (
+            "import sys\n"
+            "try:\n"
+            "    sys.path.insert(0, %r)\n"
+            "    try:\n"
+            "        import seam_agent\n"
+            "    finally:\n"
+            "        sys.path.remove(%r)\n"
+            "    seam_agent.attached()\n"
+            "except BaseException:\n"
+            "    import traceback\n"
+            "    traceback.print_exc()\n" % (TARGET_DIR, TARGET_DIR))
+        remote = self.py.L.remote
+        if remote is not None:
+            # PEP 768 (3.14+): three memory writes, no code run by the debugger.
+            interp = self.py.u64(self.py.runtime + self.py.L.runtime_interp_head)
+            enabled = struct.unpack("<i", self._read(interp + remote["enabled"], 4))[0]
+            tstate = self.py.u64(interp + remote["threads_main"])
+            if enabled and tstate:
+                fd, script = tempfile.mkstemp(prefix="seam-attach-", suffix=".py")
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(code)
+                self.temp_files.append(script)
+                path = script.encode() + b"\0"
+                if len(path) <= remote["path_size"]:
+                    support = tstate + remote["support"]
+                    self._write(support + remote["path"], path)
+                    self._write(support + remote["pending"], struct.pack("<i", 1))
+                    breaker = self.py.u64(tstate + remote["eval_breaker"])
+                    self._write(tstate + remote["eval_breaker"],
+                                struct.pack("<Q", breaker | EVAL_PLEASE_STOP_BIT))
+                    return "PEP 768 remote exec"
+        # 3.12/3.13 (or remote debugging disabled): queue a pending call. This runs
+        # Py_AddPendingCall in the stopped process, which is not a safe point; the call
+        # only takes a short internal lock, and it is abandoned if it does not return.
+        if not self.sym.get("PyRun_SimpleString") or not self.sym.get("Py_AddPendingCall"):
+            raise DapError("this interpreter does not export the functions attach needs")
+        err = lldb.SBError()
+        data = code.encode() + b"\0"
+        addr = self.process.AllocateMemory(
+            len(data), lldb.ePermissionsReadable | lldb.ePermissionsWritable, err)
+        if not err.Success():
+            raise DapError("cannot allocate memory in the process: %s" % err.GetCString())
+        self._write(addr, data)
+        self._call(self.process.GetSelectedThread(),
+                   "((int(*)(int(*)(void*), void*))%d)((int(*)(void*))%d, (void*)%d)"
+                   % (self.sym["Py_AddPendingCall"], self.sym["PyRun_SimpleString"], addr),
+                   timeout_s=3)
+        return "a pending call"
+
+    def _wait_for_attach_trap(self, timeout):
+        """Run until the agent reports in from `seam_agent.attached()`."""
+        deadline = time.monotonic() + timeout
+        while True:
+            err = self.process.Continue()
+            if not err.Success():
+                raise DapError("could not resume the process: %s" % err.GetCString())
+            remaining = int(max(1, deadline - time.monotonic()))
+            try:
+                state = self._wait_stop(remaining)
+            except DapError:
+                self.process.SendAsyncInterrupt()
+                self._wait_stop(10)
+                raise DapError(
+                    "the process did not load the Seam helper within %d s. Its main "
+                    "thread never reached a safe point; it is probably blocked in a "
+                    "system call or a long native call." % timeout)
+            if state != lldb.eStateStopped:
+                raise DapError("the process exited while attaching")
+            thread = self._trap_thread()
+            if thread is not None:
+                return thread
+            if time.monotonic() > deadline:
+                raise DapError("the process did not load the Seam helper in time")
+
+    def _abandon(self):
+        """Give up on a process we attached to, leaving it running."""
+        if self.process is not None and self.process.IsValid():
+            self.target.DeleteAllBreakpoints()
+            self.process.Detach()
+        self.exited = True
+
+    def _detach(self):
+        """Remove everything Seam armed and let the process carry on."""
+        if self.exited or self.process is None:
+            return
+        try:
+            if self.running:
+                self._interrupt()
+            self._finish_steps(self.process.GetSelectedThread())
+            if self.helper_module:
+                self.py_bps = {}
+                if self.safe_tid is not None:
+                    self.agent("shutdown")
+                else:
+                    self._agent_pending("shutdown")
+        except (DapError, ValueError) as exc:
+            self.log("detach clean-up failed:", exc)
+        self.target.DeleteAllBreakpoints()
+        self.process.Detach()
+        self.exited = True
 
     def req_configurationDone(self, args):
         if self.process is None:
@@ -839,14 +1083,42 @@ class Adapter:
                 bp = self.target.BreakpointCreateByLocation(path, b["line"])
                 if b.get("condition"):
                     bp.SetCondition(b["condition"])
-                self._dedupe_locations(bp)
+                self._drop_glue_locations(bp)
                 created.append(bp)
-                answer = {"verified": bp.GetNumLocations() > 0, "line": b["line"]}
-                if not answer["verified"]:
-                    answer["message"] = "pending: no loaded module contains this line yet"
+                self.native_bp_lines[bp.GetID()] = b["line"]
+                answer = self._native_bp_answer(bp)
+                self.native_bp_state[bp.GetID()] = (answer["verified"], answer["line"])
                 answers.append(answer)
             self.native_bps[path] = created
         return {"breakpoints": answers}
+
+    def _native_bp_answer(self, bp):
+        """DAP description of a native breakpoint: where it really is, if anywhere."""
+        line = self.native_bp_lines.get(bp.GetID(), 0)
+        best = None
+        for i in range(bp.GetNumLocations()):
+            location = bp.GetLocationAtIndex(i)
+            if location.IsEnabled():
+                address = location.GetAddress()
+                if best is None or address.GetFileAddress() < best.GetFileAddress():
+                    best = address
+        answer = {"id": bp.GetID(), "verified": best is not None, "line": line}
+        if best is None:
+            answer["message"] = ("no code for this line yet: its module is not loaded, or "
+                                 "the compiler left the line with no code of its own")
+        elif best.GetLineEntry().IsValid() and best.GetLineEntry().GetLine():
+            answer["line"] = best.GetLineEntry().GetLine()
+        return answer
+
+    def _refresh_native_bp_status(self):
+        """Tell the client when a pending native breakpoint resolves (or moves)."""
+        for group in self.native_bps.values():
+            for bp in group:
+                answer = self._native_bp_answer(bp)
+                state = (answer["verified"], answer["line"])
+                if self.native_bp_state.get(bp.GetID()) != state:
+                    self.native_bp_state[bp.GetID()] = state
+                    self.event("breakpoint", {"reason": "changed", "breakpoint": answer})
 
     def req_setFunctionBreakpoints(self, args):
         with self._paused():
@@ -988,6 +1260,11 @@ class Adapter:
     def req_stackTrace(self, args):
         self._require_stopped()
         stack = self._merged_stack(self._thread(args["threadId"]))
+        if not self.show_glue_frames:
+            # Binding-layer trampolines between user code and Python are noise (PyO3 puts
+            # ten of them under every function). The newest frame is always shown.
+            stack = [r for i, r in enumerate(stack)
+                     if i == 0 or r.get("cls") not in ("framework", "nodebug")]
         start = args.get("startFrame") or 0
         levels = args.get("levels") or len(stack)
         frames = []
@@ -1180,11 +1457,7 @@ class Adapter:
             thread.StepInto()
         else:
             # Step out to the next frame worth showing: skip binding glue.
-            target_index = start + 1
-            while (target_index < len(natives) - 1
-                   and self._classify_frame(natives[target_index]) in GLUE):
-                target_index += 1
-            self._step_out_to(thread, natives, target_index)
+            self._step_out_of_glue(thread)
         self.running = True
         return None
 

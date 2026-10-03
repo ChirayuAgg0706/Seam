@@ -59,6 +59,16 @@ def marker_line(path, marker):
     raise AssertionError("marker %r not found in %s" % (marker, path))
 
 
+def at_line(ext, actual, *expected):
+    """Exact native line check at -O0 only.
+
+    With -O2 the compiler merges and reorders lines (a breakpoint on a statement whose
+    variable was optimised away moves to the next line with code, a function's first
+    stop is its opening line, and so on), so those cells assert the function, not the line.
+    """
+    return ext.opt != "O0" or actual in expected
+
+
 class Extension:
     def __init__(self, directory, opt, source=None, module=None, layer="capi"):
         self.dir = directory

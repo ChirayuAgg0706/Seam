@@ -25,3 +25,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "smoke: the subset run on every cell of the Python version x optimisation matrix",
+]

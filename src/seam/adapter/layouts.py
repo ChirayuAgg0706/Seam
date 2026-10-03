@@ -58,6 +58,7 @@ class Layout:
     gil_ptr = None
     gil_holder = 8
     gil_locked = 16
+    remote = None             # 3.14+: PEP 768 remote-exec offsets
 
 
 def _layout_312():
@@ -208,6 +209,16 @@ def _layout_from_debug_offsets(read, runtime_addr, version):
     L.gil_locked = t["interpreter_state.gil_runtime_state_locked"]
     if version >= (3, 14):
         L.ref_tag_mask = 3
+        # PEP 768: fields a debugger writes to ask the interpreter to run a script.
+        L.remote = {
+            "threads_main": t["interpreter_state.threads_main"],
+            "enabled": t["debugger_support.remote_debugging_enabled"],   # in the interp
+            "eval_breaker": t["debugger_support.eval_breaker"],          # in the tstate
+            "support": t["debugger_support.remote_debugger_support"],    # in the tstate
+            "pending": t["debugger_support.debugger_pending_call"],      # in the support
+            "path": t["debugger_support.debugger_script_path"],          # in the support
+            "path_size": t["debugger_support.debugger_script_path_size"],
+        }
         # 3.14 renumbered the owners: the per-eval-loop entry frame is
         # FRAME_OWNED_BY_INTERPRETER (3); FRAME_OWNED_BY_CSTACK (4) is not Python code.
         L.owner_entry = 3

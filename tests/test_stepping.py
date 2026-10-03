@@ -1,6 +1,10 @@
 """Stepping across the Python/native boundary, in every direction."""
-from conftest import CAPI_SRC, marker_line, target
+import pytest
+
+from conftest import CAPI_SRC, at_line, marker_line, target
 from test_mixed import names
+
+pytestmark = pytest.mark.smoke
 
 MIXED = target("mixed.py")
 RUNNING = target("running.py")
@@ -32,7 +36,7 @@ def test_step_in_from_python_to_native_and_back_out(dap, capi, iteration):
     stack = dap.stack(tid)
     assert names(stack)[:2] == ["st_add", "leaf"]
     assert stack[0]["source"]["path"] == CAPI_SRC
-    assert stack[0]["line"] == marker_line(CAPI_SRC, "add-first")
+    assert at_line(capi, stack[0]["line"], marker_line(CAPI_SRC, "add-first"))
     assert_nothing_armed(dap)
 
     # Step out of native code: back on the Python line that made the call.
@@ -87,7 +91,7 @@ def test_step_in_from_native_to_python_callback_and_back_out(dap, capi, iteratio
     assert stop["reason"] == "step"
     name, at = top(dap, tid)
     assert name == "st_call_back"
-    assert at in (line, marker_line(CAPI_SRC, "callback-after"))
+    assert at_line(capi, at, line, marker_line(CAPI_SRC, "callback-after"))
     assert_nothing_armed(dap)
 
     # Keep stepping over in C until it returns: lands on the Python line that called it.
@@ -111,7 +115,8 @@ def test_stepping_over_the_end_of_a_python_callback_returns_to_native(dap, capi,
     assert stop["reason"] == "step"
     name, at = top(dap, tid)
     assert name == "st_call_back"
-    assert at in (marker_line(CAPI_SRC, "callback-call"), marker_line(CAPI_SRC, "callback-after"))
+    assert at_line(capi, at, marker_line(CAPI_SRC, "callback-call"),
+                   marker_line(CAPI_SRC, "callback-after"))
     assert_nothing_armed(dap)
     dap.set_breakpoints(MIXED, [])
     dap.cont()
@@ -125,7 +130,8 @@ def test_native_exception_does_not_break_stepping(dap, capi, iteration):
     tid = dap.wait_stopped()["threadId"]
 
     dap.step("stepIn", tid)
-    assert top(dap, tid) == ("st_fail", marker_line(CAPI_SRC, "fail-first"))
+    name, at = top(dap, tid)
+    assert name == "st_fail" and at_line(capi, at, marker_line(CAPI_SRC, "fail-first"))
     # The C function returns NULL with an exception set. Stepping out must follow the
     # exception to where Python handles it, not run away.
     stop = dap.step("stepOut", tid)
