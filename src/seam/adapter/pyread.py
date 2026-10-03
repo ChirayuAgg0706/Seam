@@ -74,17 +74,109 @@ class PyReader:
             self._codes[addr] = info
         return info
 
-    def _decode_frame(self, addr, raw, is_top):
+    def _decode_frame(self, addr, raw):
         L = self.L
-        code = struct.unpack_from("<Q", raw, L.frame_code)[0] & ~L.code_tag_mask
+        code = struct.unpack_from("<Q", raw, L.frame_code)[0] & ~L.ref_tag_mask
         instr = struct.unpack_from("<Q", raw, L.frame_instr)[0]
         filename, qualname, firstlineno, table = self.code_info(code)
+        # 3.12: prev_instr is the last instruction executed. 3.13+: instr_ptr is the
+        # instruction being executed (a caller's CALL). Either way it is on the right line.
         offset = instr - (code + L.code_adaptive)
-        if not L.instr_is_prev and not is_top:
-            # instr_ptr of a caller points just after its CALL; step back into it.
-            offset -= 2
         line = linetable.line_at(table, firstlineno, max(offset, 0))
         return PyFrame(addr, code, qualname, filename, line)
+
+    # ------------------------------------------------- values, without running code
+
+    def type_name(self, obj):
+        tp = self.u64(obj + self.L.ob_type)
+        name = self.u64(tp + self.L.tp_name)
+        raw = self.read(name, 64)
+        return raw.split(b"\0", 1)[0].decode("utf-8", "replace")
+
+    def _int(self, obj):
+        L = self.L
+        tag = self.u64(obj + L.long_tag)
+        ndigits = tag >> 3
+        sign = 1 - (tag & 3)
+        if ndigits > 64:
+            return None
+        value = 0
+        if ndigits:
+            digits = struct.unpack("<%dI" % ndigits, self.read(obj + L.long_digit, 4 * ndigits))
+            for i, digit in enumerate(digits):
+                value |= digit << (30 * i)
+        return sign * value
+
+    def describe(self, obj, depth=1):
+        """(repr-like text, type name) for the object at `obj`, read from memory only."""
+        L = self.L
+        try:
+            tname = self.type_name(obj)
+            if tname == "NoneType":
+                return "None", tname
+            if tname == "bool":
+                return ("True" if self._int(obj) else "False"), tname
+            if tname == "int":
+                value = self._int(obj)
+                return ("<int too large to decode>" if value is None else str(value)), tname
+            if tname == "float":
+                return repr(struct.unpack("<d", self.read(obj + L.float_value, 8))[0]), tname
+            if tname == "str":
+                return repr(self.read_str(obj)), tname
+            if tname == "bytes":
+                return repr(self.read_bytes(obj)[:200]), tname
+            if tname in ("list", "tuple"):
+                size = struct.unpack("<q", self.read(obj + L.var_size, 8))[0]
+                if depth <= 0 or size > 1 << 24:
+                    return "<%s, %d items>" % (tname, size), tname
+                items = obj + L.tuple_item if tname == "tuple" else self.u64(obj + L.list_item)
+                shown = min(size, 10)
+                ptrs = struct.unpack("<%dQ" % shown, self.read(items, 8 * shown)) if shown else ()
+                parts = [self.describe(p, depth - 1)[0] for p in ptrs]
+                if size > shown:
+                    parts.append("...")
+                if tname == "tuple":
+                    return "(%s%s)" % (", ".join(parts), "," if size == 1 else ""), tname
+                return "[%s]" % ", ".join(parts), tname
+            if tname == "dict":
+                used = struct.unpack("<q", self.read(obj + L.dict_used, 8))[0]
+                return "<dict, %d items>" % used, tname
+            return "<%s object at %#x>" % (tname, obj), tname
+        except (ValueError, struct.error, UnicodeError):
+            return "<unreadable object at %#x>" % obj, "?"
+
+    def frame_locals(self, frame):
+        """[(name, text, type)] for a PyFrame, decoded from memory only."""
+        L = self.L
+        hdr = self.read(frame.code, L.code_adaptive)
+        names_obj = struct.unpack_from("<Q", hdr, L.code_localsplusnames)[0]
+        kinds = self.read_bytes(struct.unpack_from("<Q", hdr, L.code_localspluskinds)[0])
+        count = struct.unpack("<q", self.read(names_obj + L.var_size, 8))[0]
+        if count <= 0 or count > 4096:
+            return []
+        names = struct.unpack("<%dQ" % count, self.read(names_obj + L.tuple_item, 8 * count))
+        slots = struct.unpack("<%dQ" % count,
+                              self.read(frame.addr + L.frame_localsplus, 8 * count))
+        out = []
+        for i in range(count):
+            ref = slots[i]
+            if L.ref_tag_mask and ref & L.ref_tag_mask == L.ref_tag_mask:
+                out.append((self.read_str(names[i]), str(ref >> 2), "int"))  # tagged int
+                continue
+            obj = ref & ~L.ref_tag_mask
+            if not obj:
+                continue  # unbound
+            if i < len(kinds) and kinds[i] & 0xC0:  # CO_FAST_CELL | CO_FAST_FREE
+                try:
+                    if self.type_name(obj) == "cell":
+                        obj = self.u64(obj + L.cell_ref)
+                except ValueError:
+                    pass
+                if not obj:
+                    continue
+            text, tname = self.describe(obj)
+            out.append((self.read_str(names[i]), text, tname))
+        return out
 
     def thread_states(self):
         """Yield (native_thread_id, tstate_addr) for every thread of every interpreter."""
@@ -119,7 +211,6 @@ class PyReader:
         current = []
         frame = self.current_frame(tstate)
         guard = 0
-        first = True
         while frame and guard < 20000:
             guard += 1
             raw = self.read(frame, L.frame_size)
@@ -129,10 +220,9 @@ class PyReader:
                 current = []
             elif owner in L.owner_python:
                 try:
-                    current.append(self._decode_frame(frame, raw, first))
+                    current.append(self._decode_frame(frame, raw))
                 except (ValueError, struct.error, UnicodeError):
                     current.append(PyFrame(frame, 0, "<unreadable frame>", "", 0))
-                first = False
             frame = struct.unpack_from("<Q", raw, L.frame_previous)[0]
         if current:
             groups.append((None, current))

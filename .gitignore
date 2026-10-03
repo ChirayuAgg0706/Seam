@@ -11,4 +11,5 @@ target/
 node_modules/
 *.vsix
 .seam-build/
+tests/build/
 .claude/settings.local.json

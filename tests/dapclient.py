@@ -101,6 +101,26 @@ class DapClient:
                     return ev["body"]
             self._next(deadline)
 
+    def drain(self, seconds, name):
+        """Read messages for `seconds`; return the queued events called `name`."""
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                msg = self.inbox.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if msg is None:
+                raise DapFailure("the adapter closed the connection\n" + self.tail_log())
+            if msg.get("type") == "event":
+                if msg["event"] == "output":
+                    self.output += msg["body"].get("output", "")
+                else:
+                    self.events.append(msg)
+        return [e for e in self.events if e["event"] == name]
+
     # ------------------------------------------------------------ helpers
 
     def launch(self, program, python, args=(), breakpoints=None, **extra):

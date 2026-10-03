@@ -13,11 +13,15 @@ from dapclient import ROOT, DapClient  # noqa: E402
 TARGETS = os.path.join(ROOT, "tests", "targets")
 HELPER_SRC = os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.c")
 HELPER_SO = os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.abi3.so")
+CAPI_SRC = os.path.join(ROOT, "tests", "ext", "capi", "seamtest.c")
+BUILD = os.environ.get("SEAM_TEST_BUILD", os.path.join(ROOT, "tests", "build"))
 
 
 def pytest_addoption(parser):
     parser.addoption("--target-python", default=os.environ.get("SEAM_TEST_PYTHON", "/usr/bin/python3.12"),
                      help="interpreter to debug")
+    parser.addoption("--opt", default=os.environ.get("SEAM_TEST_OPT", "O0"),
+                     choices=["O0", "O2"], help="optimisation level of the native test code")
     parser.addoption("--repeat", type=int, default=int(os.environ.get("SEAM_TEST_REPEAT", "1")),
                      help="run each stepping scenario this many times")
 
@@ -45,12 +49,34 @@ def python(request):
 
 
 def marker_line(path, marker):
-    """Line number of the line carrying `# <marker>` in `path`."""
+    """Line number of the line ending in `# <marker>`, `/* <marker> */` or `// <marker>`."""
+    endings = ("# " + marker, "/* %s */" % marker, "// " + marker)
     with open(path) as fh:
         for number, text in enumerate(fh, 1):
-            if text.rstrip().endswith("# " + marker):
+            if text.rstrip().endswith(endings):
                 return number
     raise AssertionError("marker %r not found in %s" % (marker, path))
+
+
+class Extension:
+    def __init__(self, directory, opt):
+        self.dir = directory
+        self.opt = opt
+        self.env = {"PYTHONPATH": directory}
+
+
+@pytest.fixture(scope="session")
+def capi(request):
+    """The plain C-API test extension, built at the requested optimisation level."""
+    opt = request.config.getoption("--opt")
+    out_dir = os.path.join(BUILD, "capi-" + opt)
+    out = os.path.join(out_dir, "seamtest.abi3.so")
+    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(CAPI_SRC):
+        os.makedirs(out_dir, exist_ok=True)
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-Wall",
+             "-I", sysconfig.get_paths()["include"], CAPI_SRC, "-o", out], check=True)
+    return Extension(out_dir, opt)
 
 
 def target(name):

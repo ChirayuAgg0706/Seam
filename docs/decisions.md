@@ -58,6 +58,30 @@ caller and stops at its next instruction, i.e. mid-line on the line that made th
 This matches what debugpy and Visual Studio show, and it is the same place a native
 step-out lands.
 
+## 4e. Python frames are matched to C frames by address only, never by function name
+
+The brief's rule was "the entry frame's address falls inside the stack area of the
+`_PyEval_EvalFrameDefault` C frame". The uv build of 3.14 uses the tail-call interpreter:
+`_PyEval_EvalFrameDefault` is inlined into its caller and the visible frames are
+`_TAIL_CALL_*` handlers, so no frame carries that name. Seam now finds the C frame whose
+stack area contains the entry frame's address, whatever it is called. Frames belonging to
+the interpreter's own module are hidden from the merged stack.
+
+## 4d. Workaround for stale frame lists in LLDB 18
+
+Found while testing "add a native breakpoint while the program runs". Once any expression
+has been evaluated in a session, the stop that follows an interrupt-and-continue shows
+the *interrupt* stop's frames; LLDB's own `bt` is wrong too, while the registers are
+right. Reproduced in pure LLDB 18.1.3 with no Seam code involved.
+
+- Detection: frame 0's PC differs from the `rip` register.
+- Repair: evaluate a call to `getpid()` on that thread, which makes LLDB rebuild the list.
+  `getpid()` is async-signal-safe and lock-free, so it is the one function Seam will call
+  at a stop that is not a Python safe point.
+- Tried and rejected: `SBProcess.Stop()` instead of `SendAsyncInterrupt()` (same bug);
+  poking a section load address to force a cache flush (no effect).
+- Not yet checked against LLDB 19/20.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

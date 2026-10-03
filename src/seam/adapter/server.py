@@ -170,6 +170,8 @@ class Adapter:
         if not kind & lldb.SBProcess.eBroadcastBitStateChanged:
             return
         state = lldb.SBProcess.GetStateFromEvent(ev)
+        self.log("event: state", state, "restarted", lldb.SBProcess.GetRestartedFromEvent(ev),
+                 "running", self.running, "stop-id", self.process.GetStopID())
         if state == lldb.eStateExited:
             self._on_exit()
         elif state == lldb.eStateStopped:
@@ -232,6 +234,9 @@ class Adapter:
             if not ev.GetType() & lldb.SBProcess.eBroadcastBitStateChanged:
                 continue
             state = lldb.SBProcess.GetStateFromEvent(ev)
+            self.log("wait: state", state, "restarted",
+                     lldb.SBProcess.GetRestartedFromEvent(ev), "stop-id",
+                     self.process.GetStopID())
             if state == lldb.eStateStopped and not lldb.SBProcess.GetRestartedFromEvent(ev):
                 return state
             if state in (lldb.eStateExited, lldb.eStateCrashed, lldb.eStateDetached):
@@ -261,8 +266,32 @@ class Adapter:
                 return thread
         return None
 
+    def _fix_stale_frames(self):
+        """Work around LLDB 18 serving the previous stop's frames after an interrupt.
+
+        Once any expression has been evaluated, the stop that follows an interrupt-and-
+        continue keeps the interrupt stop's cached frame list (LLDB's own `bt` shows it).
+        The live registers are right, so the condition is detectable, and running any
+        function call makes LLDB rebuild the list. getpid() is async-signal-safe and takes
+        no locks, so it is harmless at any stop.
+        """
+        getpid = self.sym.get("getpid")
+        if not getpid:
+            return
+        for thread in self.process:
+            frame = thread.GetFrameAtIndex(0)
+            rip = frame.FindRegister("rip")
+            if rip.IsValid() and rip.GetValueAsUnsigned() != frame.GetPC():
+                self.log("stale frame list on thread", thread.GetThreadID(), "- refreshing")
+                try:
+                    self._call(thread, "((int(*)(void))%d)()" % getpid, timeout_s=5)
+                except DapError as exc:
+                    self.log("refresh failed:", exc)
+                return
+
     def _on_stop(self):
         self._new_stop()
+        self._fix_stale_frames()
         self._drain_output()
         thread = self._trap_thread()
         if thread is not None:
@@ -310,9 +339,9 @@ class Adapter:
 
     def _interrupt(self):
         """Stop a running process for internal work. Returns False if it stopped by itself."""
-        err = self.process.Stop()
-        if not err.Success():
-            raise DapError("could not interrupt the process: %s" % err.GetCString())
+        # Not SBProcess.Stop(): on LLDB 18 the stop it produces leaves the thread's frame
+        # list cached, so the *next* stop shows the frames of this one.
+        self.process.SendAsyncInterrupt()
         state = self._wait_stop(10)
         if state != lldb.eStateStopped:
             self._on_exit()
@@ -515,6 +544,7 @@ class Adapter:
             self.sym[name] = addr
         self.helper_module = module.GetFileSpec().fullpath
         self.sym["Py_AddPendingCall"] = self._symbol("Py_AddPendingCall")[0]
+        self.sym["getpid"] = self._symbol("getpid")[0]
         self.sym["cap"] = struct.unpack("<q", self._read(self.sym["seam_req_cap"], 8))[0]
         self.py = pyread.PyReader(self._read, runtime, version)
 
@@ -637,6 +667,37 @@ class Adapter:
                 break
         natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
         sps = [f.GetSP() for f in natives]
+        if self.logfile:
+            self.log("native frames of", tid, "stop reason", thread.GetStopReason(),
+                     thread.GetStopDescription(80))
+            for f in natives:
+                self.log("   %#x sp=%#x %s [%s]" % (f.GetPC(), f.GetSP(), f.GetFunctionName(),
+                                                    f.GetModule().GetFileSpec().GetFilename()))
+            self.log("python groups", groups)
+        # Each group's entry frame lives in the C frame of the eval loop running it. Find
+        # that C frame by address only: its name is not reliable (it may be inlined into
+        # its caller, renamed by LTO, or replaced by tail-call handlers on 3.14).
+        # A frame's stack area runs from its SP to the next older frame with a higher SP.
+        uppers = [None] * len(natives)
+        for i in range(len(natives) - 2, -1, -1):
+            uppers[i] = sps[i + 1] if sps[i + 1] > sps[i] else uppers[i + 1]
+        anchors = {}
+        unmatched = []
+        search_from = 0
+        for entry, frames in groups:
+            found = None
+            if entry is not None:
+                for i in range(search_from, len(natives)):
+                    if sps[i] <= entry and (uppers[i] is None or entry < uppers[i]):
+                        found = i
+                        break
+            if found is None:
+                unmatched.append((entry, frames))
+            else:
+                anchors[found] = frames
+                search_from = found + 1
+        groups = unmatched
+
         out = []
         hide_top = self.stop_is_trap and tid == self.safe_tid
         py_index = 0
@@ -644,17 +705,14 @@ class Adapter:
         for i, frame in enumerate(natives):
             name = frame.GetFunctionName() or ""
             module = frame.GetModule().GetFileSpec().fullpath
-            if groups and name.startswith(EVAL_FRAME):
-                upper = next((sp for sp in sps[i + 1:] if sp > sps[i]), None)
-                entry = groups[0][0]
-                if entry is not None and sps[i] <= entry and (upper is None or entry < upper):
-                    for pf in groups.pop(0)[1]:
-                        out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
-                                    "path": self._py_path(pf.filename), "line": pf.line,
-                                    "filename": pf.filename})
-                        py_index += 1
-                    hide_top = False
-                    last_python = len(out)
+            if i in anchors:
+                for pf in anchors[i]:
+                    out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
+                                "path": self._py_path(pf.filename), "line": pf.line,
+                                "pf": pf})
+                    py_index += 1
+                hide_top = False
+                last_python = len(out)
                 continue
             if hide_top or module in (self.interp_module, self.helper_module):
                 continue
@@ -668,7 +726,7 @@ class Adapter:
             for pf in frames:
                 out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
                             "path": self._py_path(pf.filename), "line": pf.line,
-                            "filename": pf.filename})
+                            "pf": pf})
                 py_index += 1
             last_python = len(out)
         if last_python is not None:
@@ -720,12 +778,12 @@ class Adapter:
         self._require_stopped()
         record = self._frame_record(args["frameId"])
         if record["kind"] == "py":
-            return {"scopes": [
-                {"name": "Locals", "presentationHint": "locals", "expensive": False,
-                 "variablesReference": self._new_ref(("py", "locals", record))},
-                {"name": "Globals", "expensive": True,
-                 "variablesReference": self._new_ref(("py", "globals", record))},
-            ]}
+            scopes = [{"name": "Locals", "presentationHint": "locals", "expensive": False,
+                       "variablesReference": self._new_ref(("py", "locals", record))}]
+            if self.safe_tid is not None:
+                scopes.append({"name": "Globals", "expensive": True,
+                               "variablesReference": self._new_ref(("py", "globals", record))})
+            return {"scopes": scopes}
         return {"scopes": [
             {"name": "Locals", "presentationHint": "locals", "expensive": False,
              "variablesReference": self._new_ref(("native", record))},
@@ -752,10 +810,20 @@ class Adapter:
         kind = record[0]
         if kind == "py":
             _, scope, frame = record
-            if self.safe_tid is None:
+            if self.safe_tid is not None:
+                try:
+                    items = self.agent("variables", kind=scope, tid=frame["tid"],
+                                       index=frame["index"])
+                    return {"variables": [self._py_var(i) for i in items]}
+                except DapError:
+                    if scope != "locals":
+                        raise
+            elif scope != "locals":
                 raise DapError(UNSAFE_MESSAGE)
-            items = self.agent("variables", kind=scope, tid=frame["tid"], index=frame["index"])
-            return {"variables": [self._py_var(i) for i in items]}
+            # Native stop (or a thread the agent cannot see): decode from memory only.
+            return {"variables": [
+                {"name": name, "value": text, "type": tname, "variablesReference": 0}
+                for name, text, tname in self.py.frame_locals(frame["pf"])]}
         if kind == "pyref":
             items = self.agent("variables", kind="ref", ref=record[1])
             return {"variables": [self._py_var(i) for i in items]}
@@ -803,10 +871,7 @@ class Adapter:
         if self.process is None or not self.running:
             raise DapError("the process is not running")
         self.pause_requested = True
-        err = self.process.Stop()
-        if not err.Success():
-            self.pause_requested = False
-            raise DapError("could not pause: %s" % err.GetCString())
+        self.process.SendAsyncInterrupt()
         return None
 
     def _step(self, args, mode):
@@ -842,6 +907,12 @@ class Adapter:
         return self._step(args, "out")
 
     # ----------------------------------------------------------- test hooks
+
+    def req_seam_lldb(self, args):
+        """Run a raw LLDB command (diagnostics only)."""
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand(args["command"], result)
+        return {"output": (result.GetOutput() or "") + (result.GetError() or "")}
 
     def req_seam_status(self, args):
         """Internal state, used by the test suite to check nothing is left behind."""
