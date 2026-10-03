@@ -272,9 +272,9 @@ class Adapter:
         waited = 0
         while waited < timeout:
             if not self.listener.WaitForEvent(1, ev):
+                # Only events count. The public state is not consulted here: right after
+                # a resume it can still read "stopped" (see docs/decisions.md §10).
                 waited += 1
-                if self.process.GetState() == lldb.eStateStopped:
-                    return lldb.eStateStopped
                 continue
             if not lldb.SBProcess.EventIsProcessEvent(ev):
                 continue
@@ -975,8 +975,7 @@ class Adapter:
                            "/proc/sys/kernel/yama/ptrace_scope)" % (pid, err.GetCString()))
         self.attached = True
         try:
-            if self._wait_stop() != lldb.eStateStopped:
-                raise DapError("pid %d exited while attaching" % pid)
+            self._wait_attached(pid)
             try:
                 self.cwd = os.readlink("/proc/%d/cwd" % pid)
             except OSError:
@@ -994,6 +993,26 @@ class Adapter:
         self.event("output", {"category": "console", "output":
                    "Seam: attached to pid %d (helper loaded via %s).\n" % (pid, method)})
         return None, lambda: self.event("initialized")
+
+    def _wait_attached(self, pid, timeout=30):
+        """Wait for the stop that completes an attach.
+
+        LLDB does not always deliver a stop event for it, so the public state is polled
+        as well. That is safe only here: the process has never been resumed by Seam, so
+        "stopped" cannot be a stale reading from before a resume.
+        """
+        ev = lldb.SBEvent()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.listener.WaitForEvent(1, ev) and lldb.SBProcess.EventIsProcessEvent(ev):
+                state = lldb.SBProcess.GetStateFromEvent(ev)
+                if state in (lldb.eStateExited, lldb.eStateDetached, lldb.eStateCrashed):
+                    raise DapError("pid %d exited while attaching" % pid)
+                if state == lldb.eStateStopped:
+                    return
+            if self.process.GetState() == lldb.eStateStopped:
+                return
+        raise DapError("timed out attaching to pid %d" % pid)
 
     def _request_agent_load(self):
         """Ask the stopped process to import the agent at its main thread's next safe point."""

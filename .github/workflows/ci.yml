@@ -75,3 +75,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Follow the README on a fresh Ubuntu 24.04
         run: scripts/clean-machine-check.sh
+
+  vsix:
+    name: VS Code extension package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the .vsix
+        run: scripts/build-vsix.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seam-vscode-extension
+          path: vscode/*.vsix
+          if-no-files-found: error

@@ -170,6 +170,14 @@ modules): Seam treated a stop event as stale when `SBProcess.GetState()` did not
 moments later with a genuine breakpoint stop reason. Seam now waits up to a second for
 the state to catch up before discarding a stop event.
 
+The same lag works the other way: right after a resume the public state can still read
+"stopped". The helper that waits for a stop used to fall back to that state when no event
+had arrived for a second, which could report a stop that had not happened; this is the
+likely cause of a one-off CI failure where LLDB died during the first request after an
+attach. The wait now trusts events only. The single exception is the stop that completes
+an attach, for which LLDB does not always send an event and before which nothing has been
+resumed.
+
 ## 11. Seam does its own "run until return", not LLDB's step-out plan
 
 LLDB's step-out was used first, to leave native frames and binding glue. It failed in

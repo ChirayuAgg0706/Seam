@@ -72,10 +72,14 @@ class DapClient:
         return msg
 
     def tail_log(self, lines=40):
-        if not self.log_path or not os.path.exists(self.log_path):
-            return ""
-        with open(self.log_path) as fh:
-            return "--- adapter log ---\n" + "".join(fh.readlines()[-lines:])
+        """The end of the adapter's protocol log and of LLDB's own output (tracebacks)."""
+        out = ""
+        for title, path in (("adapter log", self.log_path),
+                            ("lldb output", (self.log_path or "") + ".lldb")):
+            if path and os.path.exists(path):
+                with open(path, errors="replace") as fh:
+                    out += "--- %s ---\n%s" % (title, "".join(fh.readlines()[-lines:]))
+        return out
 
     def send(self, command, arguments=None):
         self.seq += 1

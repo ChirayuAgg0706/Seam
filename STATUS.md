@@ -76,6 +76,11 @@ on the `def` line first; pressing it again gets there (the test allows up to 12,
   step. It has not recurred in more than 250 further runs of that scenario or in any of
   the full-suite passes since. The test now records the stop's description if it happens
   again. I do not know the cause and am not claiming it is fixed.
+- **One CI-only failure, probable cause fixed.** In one CI run, on the 3.14 -O2 cell, the
+  adapter exited during the first request after an attach. It did not recur in the next
+  CI run or in 48 local attach runs. A real defect that fits the symptom was then found
+  and removed (`docs/decisions.md` §10, second part), but since the failure was never
+  reproduced I cannot show that this was it. Test failures now include LLDB's own output.
 - **Thread-heavy programs run about 2× slower** under Seam even with no breakpoints.
 - **LLDB 19 and 20 are untested.** Only LLDB 18.1.3 is installed here. The stale-frame
   workaround (`docs/decisions.md` §4d) is specific to behaviour observed on 18.
