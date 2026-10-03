@@ -907,8 +907,6 @@ class Adapter:
 
     def _watch_breakpoints(self):
         """Receive LLDB's breakpoint events (locations resolving when a module loads)."""
-        if os.environ.get("SEAM_NO_BP_EVENTS"):
-            return
         self.target.GetBroadcaster().AddListener(
             self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
 

@@ -152,9 +152,16 @@ Known limits of what is in scope:
   frames below are still shown, decoded from memory: `int`, `float`, `str`, `bytes`,
   `bool`, `None` and shallow `list`/`tuple` show their values; other objects show their
   type and address. Step or continue to a Python line for full inspection.
-- **Step-in from Python into optimised native code** needs the user function to exist as
-  a function (or an inlined instance LLDB knows about). If the compiler removed it
-  entirely, the step behaves like step-over.
+- **Optimised native code (`-O2`, Rust release builds).** Stepping in from Python needs
+  the user function to exist as a function or as an inlined instance in the debug info;
+  if the compiler removed it entirely the step behaves like step-over. A statement that
+  is a single inlined library call can end up with no code of its own: a breakpoint on it
+  is then reported as unverified, or moved to the next line that has code (Seam tells the
+  client which). Debug builds do not have these problems.
+- **Stepping into a Python callback from Cython or from optimised code** can take several
+  presses of Step Into: the generated or optimised code spreads one source line over many
+  small ranges, and each press advances to the next one. A breakpoint in the callback is
+  the reliable alternative.
 - **Extension modules with more than 20,000 functions** are excluded from step-in from
   Python (a message says so); breakpoints in them work normally.
 - **Changing Python breakpoints while the program runs** is applied by the main thread at
@@ -164,6 +171,8 @@ Known limits of what is in scope:
   indefinitely in a system call will not get there, and the attach times out.
 - **Program input.** The program runs on a pseudo-terminal owned by the adapter; its
   stdout and stderr arrive as one stream, and typing input into it is not supported yet.
+- **Thread-heavy programs** run about twice as slowly under Seam even with no breakpoints,
+  because LLDB handles every thread start and exit. CPU-bound work is unaffected.
 - **Embedded interpreters.** Launch expects a normal `python` executable (it injects the
   helper at `Py_RunMain`). Programs that embed Python are not supported.
 - **LLDB 18 quirk.** Seam works around an LLDB bug that shows stale frames after an

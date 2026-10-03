@@ -23,7 +23,19 @@ scripted DAP client (`tests/`). Nothing is marked done on the strength of readin
 | 11 | VS Code extension as a `.vsix`; nvim-dap configuration | **partial** | `vscode/seam-debugger-0.1.0.vsix` builds with `vsce` and is on disk. **Not verified inside VS Code or Neovim**: I cannot drive either UI. Manual check below. |
 | 12 | Overhead within 10% with no breakpoints | **done** for CPU-bound and native-call workloads | `test_overhead.py`: ratios 0.95–1.01 on 3.12/3.13/3.14. A thread-creation-heavy workload is about 2× slower under Seam (LLDB handles every thread start and exit); it is measured and printed, not held to 10%. |
 | 13 | Docs: README (install, quick start, architecture, limitations) | **done** | `README.md`, `docs/decisions.md`, `docs/neovim.md`. |
-| 14 | Clean-machine check with a PyO3 project | **partial** | Locally: Seam installed as a package into a fresh environment debugs `examples/pyo3-demo` (`tools/check_demo.py`, all 12 checks pass). The fresh-container run of the README's exact commands is the `clean-machine` CI job — see "CI" below for its current result. Not possible locally: no Docker, and creating a user needs sudo. |
+| 14 | Clean-machine check with a PyO3 project | **done**, with one caveat | The `clean-machine` CI job starts from a bare `ubuntu:24.04` container, runs the README's install commands (`scripts/clean-machine-check.sh`) and then debugs `examples/pyo3-demo` with the installed `seam` (`tools/check_demo.py`, 12 checks). It passes. Caveat: the script installs from the checked-out repository instead of running the README's `git clone` line, because the repository is private. |
+
+## CI
+
+GitHub Actions, on every push (`.github/workflows/ci.yml`). Last run: all 8 jobs green.
+
+- `full suite (3.12, -O0)`: all 40 tests on the runner's system Python (no debug info there).
+- `smoke` × 5: 3.12 -O2, 3.13 -O0/-O2, 3.14 -O0/-O2, on uv's standalone interpreters.
+- `clean machine`: see item 14.
+- `VS Code extension package`: builds the `.vsix` and uploads it as an artifact.
+
+A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`). One run costs
+roughly 12 minutes of Actions time across the jobs.
 
 ## Test matrix (last local run)
 
@@ -76,6 +88,11 @@ on the `def` line first; pressing it again gets there (the test allows up to 12,
   step. It has not recurred in more than 250 further runs of that scenario or in any of
   the full-suite passes since. The test now records the stop's description if it happens
   again. I do not know the cause and am not claiming it is fixed.
+- **A second unexplained failure, not reproduced.** In the final verification pass the
+  nanobind "native breakpoint, then into a Python callback" scenario failed once on the uv
+  3.12 build at -O0. I had filtered the output of that run down to pass/fail lines and so
+  do not have the failure message. It did not recur in 40 targeted repeats, 6 full-suite
+  passes on that interpreter, or 8 further alternating full passes. Cause unknown.
 - **One CI-only failure, probable cause fixed.** In one CI run, on the 3.14 -O2 cell, the
   adapter exited during the first request after an attach. It did not recur in the next
   CI run or in 48 local attach runs. A real defect that fits the symptom was then found
