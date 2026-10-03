@@ -1,0 +1,9 @@
+# The repo lives on a Windows drive but everything runs in WSL/Linux.
+# Force LF everywhere so shell scripts and Python shebangs keep working.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.vsix binary
+*.so binary
