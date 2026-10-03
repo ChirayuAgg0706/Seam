@@ -100,7 +100,10 @@ def test_native_breakpoint_then_into_and_out_of_a_python_callback(dap, binding, 
     several = binding.layer == "cython" or binding.opt != "O0"
     for presses in range(1, 13 if several else 2):
         stop = dap.step("stepIn", tid)
-        assert stop["reason"] == "step", (stop, describe(dap.stack(tid)))
+        # When several presses are needed, one of them can land on another address
+        # range of the breakpoint's own line, which is reported as a breakpoint stop.
+        allowed = ("step", "breakpoint") if several else ("step",)
+        assert stop["reason"] in allowed, (stop, describe(dap.stack(tid)))
         stack = dap.stack(tid)
         if stack[0]["name"] == "cb":
             break

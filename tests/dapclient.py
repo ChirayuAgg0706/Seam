@@ -140,6 +140,9 @@ class DapClient:
         self.request("initialize", {"adapterID": "seam", "clientID": "tests"})
         launch = {"program": program, "python": python, "args": list(args),
                   "cwd": os.path.dirname(program)}
+        if os.environ.get("SEAM_TEST_DEBUGINFO") == "0":
+            # Matrix cell: pretend the interpreter's separate debug info is not installed.
+            launch["debugInfoLookup"] = False
         launch.update(extra)
         self.request("launch", launch)
         self.wait_event("initialized")

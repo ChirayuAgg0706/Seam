@@ -170,6 +170,25 @@ modules): Seam treated a stop event as stale when `SBProcess.GetState()` did not
 moments later with a genuine breakpoint stop reason. Seam now waits up to a second for
 the state to catch up before discarding a stop event.
 
+## 11. Seam does its own "run until return", not LLDB's step-out plan
+
+LLDB's step-out was used first, to leave native frames and binding glue. It failed in
+three ways on optimised code, the last of which only showed up in CI:
+
+- stepping out of an inlined frame executes nothing (it only changes the displayed scope);
+- `SBFrame.IsInlined()` answers for the PC, not the frame, so the real host of an inlined
+  function also reports as inlined and could not be picked as "the real frame to leave";
+- with artificial tail-call frames (optimised Rust) and with optimised Cython on 3.13/3.14,
+  the plan's return breakpoint was hit but the plan did not recognise it and the program
+  ran to completion.
+
+Seam now sets a thread-specific breakpoint at the target frame's PC (its return address)
+and accepts the hit only when the stack pointer is at or above that frame's SP, which
+rules out recursion through the same return address. Related: a frame is classified as
+user code or glue by its own name and line, not by the innermost function at its PC, and
+when the newest frame is glue inlined into a user function the stop belongs to the user
+function.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

@@ -114,6 +114,7 @@ class Adapter:
         self.attached = False         # attached to an existing process (detach, don't kill)
         self.temp_files = []
         self.native_stepping = None   # {"tid", "hops"} while an LLDB step plan is running
+        self.stepout = None           # {"bp", "sp"}: Seam's own run-until-return
         self.py_step_armed = False    # the agent has a Python-level step armed
 
     # ------------------------------------------------------------ plumbing
@@ -375,7 +376,35 @@ class Adapter:
             return "seam"
         if not module or module.startswith(SYSTEM_LIB_PREFIXES):
             return "system"  # libc and friends, even when their debug info is installed
-        return self._classify_address(frame.GetPCAddress())
+        # Judge the frame by its own name and line, not by whatever is innermost at its
+        # PC: with inlining several frames share one PC and they are not the same thing.
+        entry = frame.GetLineEntry()
+        spec = entry.GetFileSpec()
+        if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
+            return "nodebug"
+        path = spec.fullpath or ""
+        if any(part in path for part in self.framework_paths):
+            return "framework"
+        if FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or ""):
+            return "framework"
+        return "user"
+
+    def _landing_class(self, thread):
+        """Class of the place a thread is stopped at, looking through inlined glue.
+
+        If the newest frame is glue that was inlined into a user function (same PC and
+        SP), the thread is physically in user code and that is where a step should end.
+        """
+        first = thread.GetFrameAtIndex(0)
+        kind = self._classify_frame(first)
+        if kind in GLUE:
+            for i in range(1, thread.GetNumFrames()):
+                frame = thread.GetFrameAtIndex(i)
+                if frame.GetSP() != first.GetSP() or frame.GetPC() != first.GetPC():
+                    break
+                if self._classify_frame(frame) == "user":
+                    return "user"
+        return kind
 
     def _user_modules(self):
         """Loaded modules that carry debug info and are not the interpreter or system libs."""
@@ -462,13 +491,28 @@ class Adapter:
         changes which inlined scope is shown), so step out of the nearest real frame
         above the target instead.
         """
-        # Artificial frames (tail calls reconstructed from call-site info, common in
-        # optimised Rust) are not on the real stack either.
-        for j in range(target_index - 1, -1, -1):
-            if not natives[j].IsInlined() and not natives[j].IsArtificial():
-                thread.StepOutOfFrame(natives[j])
-                return
-        thread.StepOutOfFrame(natives[max(target_index - 1, 0)])
+        # LLDB's own step-out plan is not used for this. With inlined frames (where it only
+        # changes the displayed scope), artificial tail-call frames and frames whose
+        # "is inlined" answer depends on the PC rather than the frame, it either did
+        # nothing or ran the program to completion (seen with optimised Cython and Rust).
+        # A frame's PC is its return address and its SP is the stack pointer right after
+        # the return, so a breakpoint there plus a stack-depth check is exact.
+        target = natives[min(target_index, len(natives) - 1)]
+        self._clear_stepout()
+        self._discard_plans(thread)
+        bp = self.target.BreakpointCreateByAddress(target.GetPC())
+        bp.SetThreadID(thread.GetThreadID())
+        self.stepout = {"bp": bp, "sp": target.GetSP()}
+        self.log("running until return to", target.GetFunctionName(), hex(target.GetPC()))
+        err = self.process.Continue()
+        if not err.Success():
+            self._clear_stepout()
+            raise DapError("could not resume: %s" % err.GetCString())
+
+    def _clear_stepout(self):
+        if self.stepout is not None:
+            self.target.BreakpointDelete(self.stepout["bp"].GetID())
+            self.stepout = None
 
     def _step_out_of_glue(self, thread):
         """Step out to the nearest frame that is user code or the interpreter."""
@@ -494,6 +538,7 @@ class Adapter:
 
     def _finish_steps(self, thread, cancel_py=True):
         """Tear down everything a step may have armed. Called at every reported stop."""
+        self._clear_stepout()
         if self.user_bps_on:
             for bp in self.user_bps.values():
                 bp.SetEnabled(False)
@@ -512,7 +557,7 @@ class Adapter:
         native code, where calling into the interpreter is as legal as it would be for
         the user's own function. User-supplied Python is never run here.
         """
-        return (self._classify_frame(thread.GetFrameAtIndex(0)) == "user"
+        return (self._landing_class(thread) == "user"
                 and self.py.holds_gil(thread.GetThreadID()))
 
     def _resume_in_python(self, thread):
@@ -607,8 +652,21 @@ class Adapter:
                     self._new_stop()
                     self._continue()
                     return
-        if reason == lldb.eStopReasonPlanComplete and self.native_stepping:
-            kind = self._classify_frame(thread.GetFrameAtIndex(0))
+        returned = False
+        if (self.stepout is not None and reason == lldb.eStopReasonBreakpoint
+                and thread.GetStopReasonDataAtIndex(0) == self.stepout["bp"].GetID()):
+            if thread.GetFrameAtIndex(0).GetSP() < self.stepout["sp"]:
+                # The same return address, deeper in the stack (recursion): not ours yet.
+                self._new_stop()
+                self._continue()
+                return
+            self._clear_stepout()
+            returned = True
+        if (returned or reason == lldb.eStopReasonPlanComplete) and self.native_stepping:
+            reason = lldb.eStopReasonPlanComplete
+            kind = self._landing_class(thread)
+            self.log("native step ended in", thread.GetFrameAtIndex(0).GetFunctionName(),
+                     "class", kind, "hops", self.native_stepping["hops"])
             if kind == "interp" and self._resume_in_python(thread):
                 return
             if kind in GLUE and self.native_stepping["hops"] < 64:
@@ -1241,7 +1299,8 @@ class Adapter:
             out.append({"kind": "native", "tid": tid, "index": i,
                         "name": name or "%#x" % frame.GetPC(),
                         "path": path, "line": entry_line.GetLine() if path else 0,
-                        "cls": self._classify_frame(frame)})
+                        "cls": self._classify_frame(frame),
+                        "at": (frame.GetPC(), sps[i])})
         for _, frames in groups:  # could not be matched to a C frame; show them anyway
             for pf in frames:
                 out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
@@ -1251,6 +1310,15 @@ class Adapter:
             last_python = len(out)
         if last_python is not None:
             del out[last_python:]  # thread bootstrap frames below the oldest Python frame
+        # Glue inlined into a user function shares that function's PC and SP. The thread
+        # is physically in the user function, so that is the frame to show on top.
+        if out and out[0]["kind"] == "native" and out[0]["cls"] in GLUE:
+            for position, record in enumerate(out):
+                if record["kind"] != "native" or record["at"] != out[0]["at"]:
+                    break
+                if record["cls"] == "user":
+                    del out[:position]
+                    break
         for record in out:
             record["id"] = self._new_id()
             self.frames[record["id"]] = record
