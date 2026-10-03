@@ -382,6 +382,44 @@ class Adapter:
             bp.SetEnabled(True)
         self.user_bps_on = True
 
+    def _dedupe_locations(self, bp):
+        """Keep one location per function for a source-line breakpoint, and none in glue.
+
+        LLDB resolves a line to every address range that carries it. In Rust (`?`) and in
+        Cython-generated code one line has several ranges inside one function, so a step
+        out of a call on that line would hit the same breakpoint again; and Cython's
+        module-init glue carries user line numbers. Like gdb, stop once per function, at
+        the lowest address.
+        """
+        best = {}
+        keyed = []
+        for i in range(bp.GetNumLocations()):
+            location = bp.GetLocationAtIndex(i)
+            address = location.GetAddress()
+            name = address.GetFunction().GetName() or address.GetSymbol().GetName() or ""
+            key = (address.GetModule().GetFileSpec().fullpath, name)
+            load = location.GetLoadAddress()
+            keyed.append((location, key, name))
+            if key not in best or load < best[key][0]:
+                best[key] = (load, location.GetID())
+        for location, key, name in keyed:
+            keep = best[key][1] == location.GetID() and not FRAMEWORK_FUNCTIONS.search(name)
+            if location.IsEnabled() != keep:
+                location.SetEnabled(keep)
+
+    def _step_out_to(self, thread, natives, target_index):
+        """Run until natives[target_index] is the newest frame.
+
+        Stepping out of an *inlined* frame does not execute anything in LLDB (it only
+        changes which inlined scope is shown), so step out of the nearest real frame
+        above the target instead.
+        """
+        for j in range(target_index - 1, -1, -1):
+            if not natives[j].IsInlined():
+                thread.StepOutOfFrame(natives[j])
+                return
+        thread.StepOutOfFrame(natives[max(target_index - 1, 0)])
+
     def _discard_plans(self, thread):
         """Drop LLDB step plans so a later `continue` does not stop where a step would."""
         self.process.SetSelectedThread(thread)
@@ -454,7 +492,7 @@ class Adapter:
                     self._finish_steps(thread, cancel_py=False)
                     self.native_stepping = {"tid": tid, "hops": 0}
                     self._new_stop()
-                    thread.StepOutOfFrame(natives[i - 1])
+                    self._step_out_to(thread, natives, i)
                     self.running = True
                     return
         self._finish_steps(thread, cancel_py=False)
@@ -489,6 +527,24 @@ class Adapter:
             body["reason"] = "step"
             self.event("stopped", body)
             return
+        if reason == lldb.eStopReasonBreakpoint and not self.pause_requested:
+            # A source-line breakpoint can also resolve into generated glue that carries
+            # the user's line numbers (Cython's module-init code does). Never stop there.
+            # Locations are resolved lazily (the module may load after the breakpoint was
+            # set), so the clean-up happens here too.
+            bp = self.target.FindBreakpointByID(thread.GetStopReasonDataAtIndex(0))
+            if bp.IsValid() and any(bp.GetID() == b.GetID()
+                                    for group in self.native_bps.values() for b in group):
+                # Read the hit location first: LLDB derives it from the live site owners,
+                # so it reads as 0 once the location has been disabled.
+                location = bp.FindLocationByID(thread.GetStopReasonDataAtIndex(1))
+                self._dedupe_locations(bp)
+                if location.IsValid() and not location.IsEnabled():
+                    self.log("skipping redundant breakpoint location",
+                             thread.GetFrameAtIndex(0).GetFunctionName())
+                    self._new_stop()
+                    self._continue()
+                    return
         if reason == lldb.eStopReasonPlanComplete and self.native_stepping:
             kind = self._classify_frame(thread.GetFrameAtIndex(0))
             if kind == "interp" and self._resume_in_python(thread):
@@ -783,6 +839,7 @@ class Adapter:
                 bp = self.target.BreakpointCreateByLocation(path, b["line"])
                 if b.get("condition"):
                     bp.SetCondition(b["condition"])
+                self._dedupe_locations(bp)
                 created.append(bp)
                 answer = {"verified": bp.GetNumLocations() > 0, "line": b["line"]}
                 if not answer["verified"]:
@@ -1116,7 +1173,7 @@ class Adapter:
         self._new_stop()
         if start > 0:
             # Stopped inside a library call made by user code: any step returns to it.
-            thread.StepOutOfFrame(natives[start - 1])
+            self._step_out_to(thread, natives, start)
         elif mode == "over":
             thread.StepOver()
         elif mode == "in":
@@ -1127,7 +1184,7 @@ class Adapter:
             while (target_index < len(natives) - 1
                    and self._classify_frame(natives[target_index]) in GLUE):
                 target_index += 1
-            thread.StepOutOfFrame(natives[target_index - 1])
+            self._step_out_to(thread, natives, target_index)
         self.running = True
         return None
 

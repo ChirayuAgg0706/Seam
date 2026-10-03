@@ -1,0 +1,157 @@
+{
+  "name": "seam-debugger",
+  "displayName": "Seam: Python + native debugger",
+  "description": "Mixed-mode debugging for Python programs with C, C++ and Rust extensions on Linux: one call stack, breakpoints and stepping across the boundary.",
+  "version": "0.1.0",
+  "publisher": "seam",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onDebugResolve:seam",
+    "onDebugDynamicConfigurations:seam"
+  ],
+  "contributes": {
+    "breakpoints": [
+      { "language": "python" },
+      { "language": "c" },
+      { "language": "cpp" },
+      { "language": "rust" },
+      { "language": "cython" }
+    ],
+    "configuration": {
+      "title": "Seam",
+      "properties": {
+        "seam.adapterCommand": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [ "seam", "dap" ],
+          "description": "Command that starts the Seam debug adapter. Change it if `seam` is not on PATH, e.g. [\"/path/to/venv/bin/seam\", \"dap\"]."
+        },
+        "seam.logFile": {
+          "type": "string",
+          "default": "",
+          "description": "If set, the adapter writes a protocol log to this file (for bug reports)."
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "seam",
+        "label": "Seam: Python + native",
+        "languages": [ "python", "c", "cpp", "rust", "cython" ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Python script to run.",
+                "default": "${file}"
+              },
+              "module": {
+                "type": "string",
+                "description": "Python module to run with -m (instead of program)."
+              },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Arguments for the script or module.",
+                "default": []
+              },
+              "python": {
+                "type": "string",
+                "description": "Python interpreter (3.12 or newer). A name is looked up on PATH.",
+                "default": "python3"
+              },
+              "pythonArgs": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Arguments for the interpreter itself, before the script.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory.",
+                "default": "${workspaceFolder}"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Extra environment variables.",
+                "default": {}
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop on the first line of Python code.",
+                "default": false
+              },
+              "debugInfoLookup": {
+                "type": "boolean",
+                "description": "Let LLDB look for separate debug-info files for system libraries.",
+                "default": true
+              },
+              "frameworkPaths": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Extra path fragments marking native source files as glue to step through, e.g. \"/third_party/\".",
+                "default": []
+              }
+            }
+          },
+          "attach": {
+            "required": [ "pid" ],
+            "properties": {
+              "pid": {
+                "type": "number",
+                "description": "Process id of a running CPython 3.12+ process."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "seam",
+            "request": "launch",
+            "name": "Seam: current file",
+            "program": "${file}",
+            "python": "python3",
+            "cwd": "${workspaceFolder}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Seam: launch a Python script",
+            "description": "Debug a Python script and the native code it calls.",
+            "body": {
+              "type": "seam",
+              "request": "launch",
+              "name": "Seam: ${1:script}",
+              "program": "^\"\\${workspaceFolder}/${1:main.py}\"",
+              "python": "python3",
+              "cwd": "^\"\\${workspaceFolder}\""
+            }
+          },
+          {
+            "label": "Seam: attach to a process",
+            "description": "Attach to a running Python process by pid.",
+            "body": {
+              "type": "seam",
+              "request": "attach",
+              "name": "Seam: attach",
+              "pid": 0
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

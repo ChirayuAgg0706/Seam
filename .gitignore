@@ -13,3 +13,4 @@ node_modules/
 .seam-build/
 tests/build/
 .claude/settings.local.json
+vscode/LICENSE.txt

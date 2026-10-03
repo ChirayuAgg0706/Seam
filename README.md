@@ -1,15 +1,185 @@
 # Seam
 
-A mixed-mode debugger for Python programs with native (C, C++, Rust) extensions, on
-Linux x86-64. One debugger, one call stack, breakpoints on both sides of the boundary.
+A mixed-mode debugger for Python programs with native extensions (C, C++, Rust), on
+Linux x86-64.
 
-**Work in progress.** See [STATUS.md](STATUS.md) for what works today and
-[docs/decisions.md](docs/decisions.md) for why it is built the way it is.
+Python debuggers cannot see into native code, and native debuggers show CPython's
+internals instead of Python lines. Seam is one debugger that understands both sides:
 
-## Running the tests
+- breakpoints in `.py` files and in `.c`/`.cpp`/`.rs`/`.pyx` files, in one session;
+- one call stack with Python and native frames interleaved in their true order;
+- stepping from a Python line into the native function it calls, and back out;
+- Python and native variables, each in their own frames;
+- the Debug Adapter Protocol, so it works in VS Code and Neovim.
+
+See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
+[Limitations](#limitations) before relying on it.
+
+## Requirements
+
+- Linux x86-64.
+- CPython 3.12, 3.13 or 3.14 as the program being debugged. Interpreters without debug
+  info (uv-managed Pythons, `-slim` container images) are supported.
+- LLDB 18 or newer, with its Python scripting support (the normal distro package).
+- A C compiler and the CPython headers, to build Seam's small in-process helper at
+  install time.
+- Permission to `ptrace` the program (the default when Seam launches it).
+
+## Install
+
+On Ubuntu 24.04:
 
 ```bash
-scripts/test.sh -q
+sudo apt-get install -y lldb gcc python3-dev python3-venv git
+python3 -m venv ~/.venvs/seam
+~/.venvs/seam/bin/pip install git+https://github.com/ChirayuAgg0706/Seam.git
+~/.venvs/seam/bin/seam --version
 ```
 
-Requires LLDB 18+, gcc, CPython 3.12 headers and [uv](https://docs.astral.sh/uv/).
+Seam itself can live in any Python 3.12+ environment; it does not have to be the
+environment of the program you debug. Put `~/.venvs/seam/bin` on `PATH`, or use the full
+path to `seam` in the editor configuration below.
+
+## Quick start
+
+Suppose `demo.py` calls a function from your extension module:
+
+```python
+import mymodule
+
+def main():
+    total = mymodule.add(20, 22)
+    print(total)
+
+main()
+```
+
+Build the extension with debug info (`-g`; for Rust, a debug build or
+`[profile.release] debug = true`).
+
+**VS Code.** Build and install the extension, then press F5 on a Python file:
+
+```bash
+scripts/build-vsix.sh           # produces vscode/seam-debugger-0.1.0.vsix
+code --install-extension vscode/seam-debugger-0.1.0.vsix
+```
+
+or add a `launch.json` entry:
+
+```json
+{
+  "type": "seam",
+  "request": "launch",
+  "name": "Seam: demo",
+  "program": "${workspaceFolder}/demo.py",
+  "python": "${workspaceFolder}/.venv/bin/python"
+}
+```
+
+Set a breakpoint on the `total = ...` line, start the session, and use **Step Into**: the
+debugger stops inside your native `add`, with `main` and `<module>` below it in the same
+call stack. **Step Out** returns to the Python line.
+
+**Neovim.** See [docs/neovim.md](docs/neovim.md).
+
+**Any DAP client.** The adapter is `seam dap`, speaking DAP on stdin/stdout.
+
+### Launch options
+
+| Option | Meaning |
+|---|---|
+| `program` / `module` | Script to run, or module to run with `-m`. |
+| `args` | Arguments for the program. |
+| `python` | Interpreter to run (default `python3`). Use your virtualenv's. |
+| `pythonArgs` | Arguments for the interpreter itself. |
+| `cwd`, `env` | Working directory and extra environment variables. |
+| `stopOnEntry` | Stop on the first line of Python. |
+| `debugInfoLookup` | Let LLDB find separate debug-info files (default true). |
+| `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
+
+### Attach
+
+```json
+{ "type": "seam", "request": "attach", "name": "Seam: attach", "pid": 12345 }
+```
+
+Attaching needs ptrace permission for a non-child process
+(`/proc/sys/kernel/yama/ptrace_scope` must be 0, or the program must allow it). See
+[Limitations](#limitations) for what attach can and cannot do on each Python version.
+
+## How it works
+
+The usual workaround for mixed debugging attaches two debuggers that each believe they
+control the process. Seam has a single controller.
+
+1. **LLDB owns the process.** It launches it, sets native breakpoints, steps native code
+   and reads memory. Seam's adapter is a script running inside LLDB.
+2. **A small helper runs inside the Python process.** It uses `sys.monitoring` (PEP 669)
+   to watch Python-level events. When a Python breakpoint or step fires, it calls an empty
+   C function, `seam_trap()`, on which LLDB keeps a breakpoint. Every Python stop is
+   therefore a native stop at a known safe point: the GIL is held and the interpreter is
+   consistent.
+3. **Python is only executed in the target at safe points.** Evaluating expressions and
+   reading variables with `repr()` happens at Python stops. At a native stop Seam reads
+   memory and nothing else, with two narrow exceptions for its own bookkeeping, described
+   in [docs/decisions.md](docs/decisions.md).
+4. **The merged stack is built from raw memory**, without Python's debug info. Seam walks
+   `_PyRuntime` → interpreter → thread state → frames, decodes code objects and line
+   tables, and splices each run of Python frames into the native stack at the C frame
+   whose stack area contains that run's entry frame.
+5. **Stepping across the boundary** combines both sides. Stepping in from Python arms a
+   Python step *and* a one-shot breakpoint on every user function of the extension
+   modules, so the step lands in the first user code entered, Python or native, whatever
+   binding layer sits in between. A native step that returns into the interpreter is
+   handed to the helper, which stops on the calling Python line.
+
+With no breakpoints set and no step in progress, the helper has no monitoring events
+enabled, so the program runs at full speed.
+
+## Limitations
+
+Out of scope for this version: macOS, Windows, architectures other than x86-64,
+free-threaded (no-GIL) builds, the experimental JIT, PyPy, sub-interpreters, and remote or
+container debugging (Seam must run on the same machine and in the same container as the
+program).
+
+Known limits of what is in scope:
+
+- **Python expressions cannot be evaluated at native stops.** If the program is stopped
+  in C, C++ or Rust code, Seam refuses to run Python and says so. Python locals of the
+  frames below are still shown, decoded from memory: `int`, `float`, `str`, `bytes`,
+  `bool`, `None` and shallow `list`/`tuple` show their values; other objects show their
+  type and address. Step or continue to a Python line for full inspection.
+- **Step-in from Python into optimised native code** needs the user function to exist as
+  a function (or an inlined instance LLDB knows about). If the compiler removed it
+  entirely, the step behaves like step-over.
+- **Extension modules with more than 20,000 functions** are excluded from step-in from
+  Python (a message says so); breakpoints in them work normally.
+- **Changing Python breakpoints while the program runs** is applied by the main thread at
+  its next bytecode boundary. If the main thread is blocked in a long native call, the
+  change takes effect when that call returns.
+- **Attach** loads the helper at the main thread's next safe point. A main thread blocked
+  indefinitely in a system call will not get there, and the attach times out.
+- **Program input.** The program runs on a pseudo-terminal owned by the adapter; its
+  stdout and stderr arrive as one stream, and typing input into it is not supported yet.
+- **Embedded interpreters.** Launch expects a normal `python` executable (it injects the
+  helper at `Py_RunMain`). Programs that embed Python are not supported.
+- **LLDB 18 quirk.** Seam works around an LLDB bug that shows stale frames after an
+  interrupt (see [docs/decisions.md](docs/decisions.md)); the workaround calls
+  `getpid()` in the target.
+
+## Development
+
+```bash
+scripts/test.sh -q              # full suite against /usr/bin/python3.12
+SEAM_TEST_PYTHON=/path/to/python3.14 scripts/test.sh -q
+SEAM_TEST_OPT=O2 scripts/test.sh -q
+SEAM_TEST_REPEAT=20 scripts/test.sh -q -k stepping   # hunt for flakiness
+```
+
+The suite launches real programs under Seam through a scripted DAP client and needs LLDB,
+gcc/g++, [uv](https://docs.astral.sh/uv/) and, for the PyO3 scenarios, a Rust toolchain.
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE).

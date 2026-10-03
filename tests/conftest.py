@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -59,10 +60,126 @@ def marker_line(path, marker):
 
 
 class Extension:
-    def __init__(self, directory, opt):
+    def __init__(self, directory, opt, source=None, module=None, layer="capi"):
         self.dir = directory
         self.opt = opt
         self.env = {"PYTHONPATH": directory}
+        self.source = source
+        self.module = module
+        self.layer = layer
+
+
+EXT = os.path.join(ROOT, "tests", "ext")
+LAYERS = {
+    # layer: (module name, source file)
+    "capi": ("seamtest", CAPI_SRC),
+    "pybind11": ("seam_pybind11", os.path.join(EXT, "pybind11", "seam_pybind11.cpp")),
+    "nanobind": ("seam_nanobind", os.path.join(EXT, "nanobind", "seam_nanobind.cpp")),
+    "cython": ("seam_cython", os.path.join(EXT, "cython", "seam_cython.pyx")),
+    "pyo3": ("seam_pyo3", os.path.join(EXT, "pyo3", "src", "lib.rs")),
+}
+SELECTED_LAYERS = [name for name in os.environ.get("SEAM_TEST_LAYERS", ",".join(LAYERS)).split(",")
+                   if name]
+STRICT = os.environ.get("SEAM_TEST_STRICT") == "1"
+
+
+def _unavailable(reason):
+    """A toolchain is missing: skip locally, fail where the full matrix is required."""
+    if STRICT:
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
+def _stale(out, *sources):
+    return not os.path.exists(out) or any(
+        os.path.getmtime(out) < os.path.getmtime(s) for s in sources)
+
+
+def _run(cmd, **kw):
+    proc = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if proc.returncode != 0:
+        raise RuntimeError("build failed: %s\n%s\n%s" % (" ".join(cmd), proc.stdout[-3000:],
+                                                         proc.stderr[-3000:]))
+
+
+@pytest.fixture(scope="session")
+def pyinfo(python):
+    """Header directory and version tag of the interpreter under test."""
+    out = subprocess.run(
+        [python, "-c", "import sys, sysconfig; print(sysconfig.get_paths()['include']); "
+                       "print('cp%d%d' % sys.version_info[:2])"],
+        capture_output=True, text=True, check=True).stdout.split()
+    return {"include": out[0], "tag": out[1]}
+
+
+def _build_layer(layer, opt, pyinfo):
+    module, source = LAYERS[layer]
+    out_dir = os.path.join(BUILD, "%s-%s-%s" % (layer, opt, pyinfo["tag"]))
+    out = os.path.join(out_dir, module + ".so")
+    common = ["-shared", "-fPIC", "-g", "-" + opt, "-I", pyinfo["include"]]
+    if layer == "pyo3":
+        if not shutil.which("cargo"):
+            _unavailable("cargo is not installed")
+        target_dir = os.environ.get(
+            "CARGO_TARGET_DIR", os.path.expanduser("~/.cache/seam/cargo-target"))
+        profile = "debug" if opt == "O0" else "release"
+        cmd = ["cargo", "build", "--quiet"] + (["--release"] if opt != "O0" else [])
+        _run(cmd, cwd=os.path.dirname(os.path.dirname(source)),
+             env=dict(os.environ, CARGO_TARGET_DIR=target_dir, PYO3_NO_PYTHON="1"))
+        os.makedirs(out_dir, exist_ok=True)
+        shutil.copy2(os.path.join(target_dir, profile, "libseam_pyo3.so"), out)
+        return Extension(out_dir, opt, source, module, layer)
+    if not _stale(out, source):
+        return Extension(out_dir, opt, source, module, layer)
+    os.makedirs(out_dir, exist_ok=True)
+    if layer == "pybind11":
+        try:
+            import pybind11
+        except ImportError:
+            _unavailable("pybind11 is not installed in the test environment")
+        _run(["g++", "-std=c++17", "-fvisibility=hidden", *common, "-I", pybind11.get_include(),
+              source, "-o", out])
+    elif layer == "nanobind":
+        try:
+            import nanobind
+        except ImportError:
+            _unavailable("nanobind is not installed in the test environment")
+        base = os.path.dirname(nanobind.__file__)
+        _run(["g++", "-std=c++17", "-fvisibility=hidden", *common,
+              "-I", os.path.join(base, "include"),
+              "-I", os.path.join(base, "ext", "robin_map", "include"),
+              source, os.path.join(base, "src", "nb_combined.cpp"), "-o", out])
+    elif layer == "cython":
+        try:
+            import Cython  # noqa: F401
+        except ImportError:
+            _unavailable("Cython is not installed in the test environment")
+        c_file = os.path.join(out_dir, module + ".c")
+        cwd = os.path.dirname(source)
+        # --line-directives makes the debug info point at the .pyx file.
+        _run([sys.executable, "-m", "cython", "-3", "--line-directives",
+              os.path.basename(source), "-o", c_file], cwd=cwd)
+        _run(["gcc", *common, c_file, "-o", out], cwd=cwd)
+    else:
+        _run(["gcc", "-Wall", *common, source, "-o", out])
+    return Extension(out_dir, opt, source, module, layer)
+
+
+@pytest.fixture(scope="session")
+def build_layer(request, pyinfo):
+    cache = {}
+
+    def build(layer):
+        if layer not in cache:
+            cache[layer] = _build_layer(layer, request.config.getoption("--opt"), pyinfo)
+        return cache[layer]
+    return build
+
+
+@pytest.fixture(params=SELECTED_LAYERS)
+def binding(request, build_layer):
+    """One extension per binding layer, exposing add(a, b) and call_back(fn, x)."""
+    return build_layer(request.param)
 
 
 @pytest.fixture(scope="session")
@@ -106,6 +223,19 @@ def dap(tmp_path, python):
         time.sleep(0.05)
     alive = [p for p in leftovers if pid_alive(p)]
     assert not alive, "processes left behind after the session: %s" % alive
+
+
+@pytest.fixture
+def make_client(tmp_path, python):
+    """Factory for tests that need several sessions (each one is closed by the test)."""
+    counter = [0]
+
+    def make():
+        counter[0] += 1
+        client = DapClient(log_path=str(tmp_path / ("seam-%d.log" % counter[0])))
+        client.python = python
+        return client
+    return make
 
 
 def _children(pid):
