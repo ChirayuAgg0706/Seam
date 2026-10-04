@@ -235,6 +235,7 @@ jobs:
           # can be run with some cores kept spinning.
           for _ in $(seq "$SOAK_LOAD"); do (while :; do :; done) & done
           status=0
+          mkdir -p "$RUNNER_TEMP/soak"
           for round in $(seq "$SOAK_ROUNDS"); do
             scripts/test.sh -q -p no:cacheprovider --basetemp="$RUNNER_TEMP/soak/$round" \
               -k "$SOAK_SELECT" || status=1
