@@ -41,6 +41,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/targets holds the programs the scenarios debug; one of them is a pytest project.
+norecursedirs = ["targets", "build", ".*"]
 addopts = "-ra"
 markers = [
     "smoke: the subset run on every cell of the Python version x optimisation matrix",
