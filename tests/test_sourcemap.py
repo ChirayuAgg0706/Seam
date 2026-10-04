@@ -329,6 +329,37 @@ def test_a_mapping_to_a_directory_that_does_not_exist(dap, built):
     finish(dap)
 
 
+def unbound_message(sources=SOURCES):
+    return ('the breakpoint in %s has no code to stop at: %s was built from '
+            '/build/seam/src/mapped.c. If that is the same file, add this to the launch '
+            'configuration: "sourceMap": {"/build/seam": "%s"}' % (MAPPED_C, LIBRARY, sources))
+
+
+def test_a_breakpoint_that_cannot_bind_says_what_the_library_was_built_from(dap, built):
+    ext = built("fake")
+    # Set before the library is loaded, with a mapping that does not fit it. The program
+    # never stops, so the explanation has to come by itself when the library loads.
+    dap.launch(TARGET, dap.python, env=ext.env, sourceMap={"/build/wrong": SOURCES},
+               breakpoints={MAPPED_C: [marker_line(MAPPED_C, "scale-return")]})
+    assert dap.wait_exit() == 0
+    told = [e["body"]["breakpoint"] for e in dap.events if e["event"] == "breakpoint"]
+    assert told and told[-1]["verified"] is False and told[-1]["message"] == unbound_message()
+    assert dap.output.count("Seam: " + unbound_message()) == 1, dap.output
+
+
+def test_a_breakpoint_set_after_loading_is_answered_with_the_reason(dap, built):
+    ext = built("fake")
+    dap.launch(TARGET, dap.python, env=ext.env,
+               breakpoints={TARGET: [marker_line(TARGET, "scale-call")]})
+    dap.wait_stopped()
+    answers = dap.set_breakpoints(MAPPED_C, [marker_line(MAPPED_C, "scale-return"),
+                                             marker_line(MAPPED_C, "crash-here")])
+    assert [(a["verified"], a["message"]) for a in answers] == [(False, unbound_message())] * 2
+    dap.set_breakpoints(TARGET, [])
+    finish(dap)
+    assert dap.output.count("has no code to stop at") == 1  # once per file
+
+
 @pytest.mark.parametrize("value", ["/build=/src", [["/build"]], {"/build": 5},
                                    [["/build", ""]], 7])
 def test_a_malformed_mapping_is_refused_and_the_session_survives(dap, built, value):

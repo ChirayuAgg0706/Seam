@@ -113,6 +113,7 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.local_sources = {}       # name in the debug info -> file here, "" if none
         self.glue_paths = {}          # name in the debug info -> is binding-layer glue
         self.missing_source_reported = False
+        self.unbound_explained = set()  # files whose unbound breakpoints were explained
         self.native_bp_group = {}     # breakpoint id -> [SBBreakpoint], one per spelling
         self._watch_exit_packets()
 

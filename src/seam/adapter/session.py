@@ -323,9 +323,11 @@ class SessionMixin:
             pass
 
     def _watch_breakpoints(self):
-        """Receive LLDB's breakpoint events (locations resolving when a module loads)."""
+        """Receive LLDB's breakpoint events (locations resolving when a module loads), and
+        the loading itself (a breakpoint that did not resolve may be explained by it)."""
         self.target.GetBroadcaster().AddListener(
-            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
+            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged
+            | lldb.SBTarget.eBroadcastBitModulesLoaded)
 
     def _entry_breakpoint(self, name):
         """Breakpoint on a function's first instruction, located through the symbol table.

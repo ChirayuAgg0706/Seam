@@ -2,7 +2,9 @@
 import json
 import os
 
-from .common import DapError
+import lldb
+
+from .common import DapError, SYSTEM_LIB_PREFIXES
 
 SOURCE_MAP_SHAPE = (
     'sourceMap must be a list of ["path in the debug info", "path on this machine"] pairs, '
@@ -260,6 +262,61 @@ class SourcesMixin:
                          'with the directory they are in: "sourceMap": %s'
                          % json.dumps({prefix or "/": "/where/the/sources/are"}))
         self.event("output", {"category": "console", "output": "Seam: " + text + "\n"})
+
+    def _unbound_reason(self, path, modules=None):
+        """Why none of a file's native breakpoints has code, if a path is the likely reason.
+
+        A loaded library was built from a file of the same name, under a path that no
+        spelling of the breakpoint covers: most likely this file, built somewhere else.
+        Returns the explanation with the `sourceMap` entry that would fit, and puts it in
+        the debug console the first time. Only the files that were compiled are looked
+        at, not the headers they include.
+        """
+        group = self.native_bps.get(path) or []
+        if not group or any(self._native_bp_answer(bp)["verified"] for bp in group):
+            return None
+        spellings = self._debug_spellings(path)
+        real = os.path.realpath(path)
+        wanted = lldb.SBFileSpec(os.path.basename(path), False)
+        for module in modules if modules is not None else self.target.module_iter():
+            library = module.GetFileSpec().fullpath or ""
+            if (not library.startswith("/") or library.startswith(SYSTEM_LIB_PREFIXES)
+                    or library in (self.interp_module, self.helper_module)):
+                continue
+            units = module.FindCompileUnits(wanted)
+            for i in range(units.GetSize()):
+                named = units.GetContextAtIndex(i).GetCompileUnit().GetFileSpec().fullpath
+                if not named or named in spellings:
+                    continue
+                if not named.startswith("/") and real.endswith("/" + _prefix(named)):
+                    continue  # a relative name LLDB matches against the end of the path
+                local = self._local_source(named)
+                if local and os.path.realpath(local) == real:
+                    continue  # this very file: it is the line that has no code
+                text = ("the breakpoint in %s has no code to stop at: %s was built from %s. "
+                        "If that is the same file, add this to the launch configuration: "
+                        '"sourceMap": %s' % (path, os.path.basename(library), named,
+                                             self._mapping_between(named, path)))
+                if path not in self.unbound_explained:
+                    self.unbound_explained.add(path)
+                    self.event("output", {"category": "console",
+                                          "output": "Seam: " + text + "\n"})
+                return text
+        return None
+
+    def _on_modules_loaded(self, ev):
+        """A library was loaded: a breakpoint still without code may have its reason now."""
+        if not any(self.native_bps.values()):
+            return
+        modules = [lldb.SBTarget.GetModuleAtIndexFromEvent(i, ev)
+                   for i in range(lldb.SBTarget.GetNumModulesFromEvent(ev))]
+        for path, group in self.native_bps.items():
+            reason = self._unbound_reason(path, modules)
+            for bp in group if reason else ():
+                if self.native_bp_group.get(bp.GetID(), [bp])[0].GetID() == bp.GetID():
+                    self.event("breakpoint", {"reason": "changed", "breakpoint": {
+                        "id": bp.GetID(), "verified": False, "message": reason,
+                        "line": self.native_bp_lines.get(bp.GetID(), 0)}})
 
     def req_source(self, args):
         """The editor asks for the text of a source it was given no path for.

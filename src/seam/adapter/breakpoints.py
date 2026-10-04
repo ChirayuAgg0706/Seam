@@ -125,6 +125,12 @@ class BreakpointsMixin:
                 self.native_bp_state[group[0].GetID()] = (answer["verified"], answer["line"])
                 answers.append(answer)
             self.native_bps[path] = created
+            # Nothing bound although the library is loaded: perhaps it knows the file
+            # under another path. Then the answer says so, and what to do about it.
+            reason = self._unbound_reason(path)
+            for answer in answers if reason else ():
+                if "id" in answer:
+                    answer["message"] = reason
         return {"breakpoints": answers}
 
     def _native_breakpoint_wants_a_stop(self, thread, bp):

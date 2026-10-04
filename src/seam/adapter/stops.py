@@ -15,6 +15,9 @@ class StopsMixin:
         if lldb.SBBreakpoint.EventIsBreakpointEvent(ev):
             self._refresh_native_bp_status()
             return
+        if lldb.SBTarget.EventIsTargetEvent(ev):
+            self._on_modules_loaded(ev)
+            return
         if not lldb.SBProcess.EventIsProcessEvent(ev):
             return
         kind = ev.GetType()
