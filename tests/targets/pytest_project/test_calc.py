@@ -54,9 +54,13 @@ def test_fails_in_a_helper():
     helper_that_checks(seamtest.add(1, 2), 4)  # helper-call
 
 
+def divide(a, b):
+    return a / b  # divide-body
+
+
 def test_expected_exceptions():
     with pytest.raises(ZeroDivisionError):
-        1 / 0  # raises-body
+        divide(1, 0)  # raises-body
     try:
         int("x")
     except ValueError:

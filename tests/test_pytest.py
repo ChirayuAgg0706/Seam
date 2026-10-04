@@ -5,6 +5,7 @@ test modules, captures output at the file-descriptor level, enables faulthandler
 with pytest-xdist, runs the tests in child processes; the scenarios check that Seam's
 breakpoints, stacks, stepping, crash stops, logpoints and exit codes hold up under that.
 """
+import ast
 import os
 import signal
 
@@ -12,7 +13,6 @@ import pytest
 
 from conftest import CAPI_SRC, _run, at_line, marker_line, target
 from dapclient import Terminal
-from test_python import ground_truth
 from test_wheels import python_part
 
 pytestmark = pytest.mark.smoke
@@ -49,6 +49,26 @@ def run_pytest(dap, capi, pytest_python):
     return launch
 
 
+TRUTH = ("[(f.name, f.lineno) for f in __import__('traceback').extract_stack() "
+         "if f.filename.endswith('.py') and 'seam' not in f.filename.rsplit('/', 1)[-1]][%d:%d]")
+
+
+def python_truth(dap, frame_id):
+    """The Python stack as Python itself reports it, newest first, Seam's frames removed.
+
+    Only frames from .py files, like `python_part` (runpy's two at the bottom are frozen).
+    Under pytest the stack is some forty frames deep, more than fits in one value as
+    Seam shows it, so it is fetched a page at a time.
+    """
+    frames = []
+    while True:
+        page = ast.literal_eval(
+            dap.evaluate(TRUTH % (len(frames), len(frames) + 15), frame_id)["result"])
+        frames += page
+        if len(page) < 15:
+            return frames[::-1]
+
+
 def names(stack):
     return [f["name"] for f in stack]
 
@@ -78,7 +98,8 @@ def test_breakpoint_in_a_test_function(dap, run_pytest):
     assert stack[0]["source"]["path"] == TESTS
     # Below the test are pytest's and pluggy's own frames; the whole stack is what
     # Python itself reports, and ends in `python -m pytest`.
-    assert python_part(stack) == ground_truth(dap, stack[0]["id"])
+    assert python_part(stack) == python_truth(dap, stack[0]["id"])
+    assert len(python_part(stack)) > 20
     assert "pytest_pyfunc_call" in names(stack) and names(stack)[-1] == "_run_module_as_main"
     local = dap.scope(stack[0]["id"])
     assert (local["a"]["value"], local["b"]["value"]) == ("2", "3") and "total" not in local
@@ -148,9 +169,16 @@ def test_segfault_in_an_extension_during_a_test(dap, run_pytest, capi):
     assert stack[1]["line"] == marker_line(TESTS, "crash-call")
     assert "pytest_pyfunc_call" in names(stack) and names(stack)[-1] == "_run_module_as_main"
     dap.cont()
-    # Carrying on hands the signal to faulthandler, which reports and lets it kill.
-    assert dap.wait_exit() == 128 + signal.SIGSEGV
+    # Carrying on hands the signal to faulthandler. It writes its report (to the real
+    # stderr, past pytest's capture) and raises the signal again, which is a second
+    # stop, inside the C library this time; the test is still on the stack below.
+    stop = dap.wait_stopped()
+    assert stop["reason"] == "exception" and "SIGSEGV" in stop["description"]
     assert "Fatal Python error: Segmentation fault" in dap.plain_output
+    again = names(dap.stack(stop["threadId"]))
+    assert "st_crash" in again and "test_crashes" in again and again[0] != "st_crash", again
+    dap.cont()
+    assert dap.wait_exit() == 128 + signal.SIGSEGV
     assert "terminated by signal SIGSEGV" in dap.output
 
 
