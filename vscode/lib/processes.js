@@ -78,11 +78,14 @@ function quote(argument) {
 // name says little; then the pid; the interpreter and working directory underneath.
 function pickItem(entry) {
   const program = entry.argv.slice(1).map(quote).join(" ");
-  const interpreter = path.basename(entry.exe);
+  // The path a program was started with names its virtual environment; the kernel's
+  // view is the interpreter behind that, which says less.
+  const started = path.isAbsolute(entry.argv[0]) && isPython(entry.argv[0])
+    ? entry.argv[0] : entry.exe;
   return {
-    label: program || `${interpreter} (no arguments)`,
+    label: program || `${path.basename(entry.exe)} (no arguments)`,
     description: `pid ${entry.pid}` + (entry.tracer ? ", already being debugged" : ""),
-    detail: entry.cwd ? `${entry.exe}  in ${entry.cwd}` : entry.exe,
+    detail: entry.cwd ? `${started}  in ${entry.cwd}` : started,
     pid: entry.pid,
   };
 }

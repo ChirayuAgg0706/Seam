@@ -236,7 +236,7 @@ async function expandInVariablesView(session, frame, name, member) {
     { variablesReference: locals[row].variablesReference })).variables;
   const inner = members.findIndex((variable) => variable.name === member);
   await sleep(1500);   // the view fills in after the stop; nothing is asserted about this
-  await command("workbench.debug.variablesView.focus");
+  await command("workbench.debug.action.focusVariablesView");
   await sleep(500);
   await command("list.focusFirst");            // the Locals scope
   for (let i = 0; i <= row; i++) {
@@ -307,7 +307,11 @@ async function pressF5() {
   assert.ok(vscode.window.terminals.some((terminal) => terminal.name.includes("Seam")),
     "VS Code created a terminal for the program");
   log(`F5 debugs ${venvPython}; stopped at the Python breakpoint, app.py line ${pyLine}`);
-  await expandInVariablesView(session, stack.top, "order", "quantities");
+  try {
+    await expandInVariablesView(session, stack.top, "order", "quantities");
+  } catch (err) {
+    log(`the Variables view was not expanded for the picture: ${err.message}`);
+  }
   await shot("1-python-stop");
 
   await command("workbench.action.debug.stepInto");
@@ -540,6 +544,8 @@ async function interpreterFromThePythonExtension() {
   await command("workbench.action.debug.continue");
   assert.strictEqual((await nextEvent("exited")).body.exitCode, 0);
   await ended;
+  log(`the Python extension's active interpreter afterwards: `
+    + api.environments.getActiveEnvironmentPath(folder.uri).path);
 }
 
 exports.run = async function run() {

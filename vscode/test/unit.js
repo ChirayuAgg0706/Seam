@@ -174,7 +174,7 @@ test("what the picker shows for a process", () => {
   assert.deepStrictEqual(item, {
     label: "serve.py --name 'two words' 'it'\\''s'",
     description: "pid 4242",
-    detail: "/usr/bin/python3.12  in /srv/app",
+    detail: "/venv/bin/python  in /srv/app",   // the environment, not the interpreter behind it
     pid: 4242,
   });
   const bare = processes.pickItem({ pid: 7, argv: ["python3"], exe: "/usr/bin/python3.12",
