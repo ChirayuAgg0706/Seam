@@ -12,6 +12,7 @@ The adapter is one class, `Adapter`, assembled from a mixin per concern:
     stepping.py     stepping across the boundary; what counts as user code
     breakpoints.py  source-line, function, data and exception breakpoints
     stack.py        the merged call stack, variables, expressions
+    sources.py      source paths: the debug info's, this machine's, the editor's
     common.py       constants and small helpers
 
 `Adapter.__init__` below is the one place that lists the session's state.
@@ -28,12 +29,14 @@ from .common import FRAMEWORK_PATHS
 from .breakpoints import BreakpointsMixin
 from .protocol import ProtocolMixin
 from .session import SessionMixin
+from .sources import SourcesMixin
 from .stack import StackMixin
 from .stepping import SteppingMixin
 from .stops import StopsMixin
 
 
-class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, BreakpointsMixin, StackMixin):
+class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, BreakpointsMixin, StackMixin,
+              SourcesMixin):
     """One debug session. The behaviour lives in the mixins; the state is all here."""
 
     def __init__(self, debugger, sock, log=None):
@@ -102,6 +105,13 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.post_mortem = {}         # tid -> frames of the uncaught exception shown there
         self.throw_stop = False       # stopped at a C++ throw or Rust panic
         self.leftover_stops = 0       # stops ignored as leftovers (see _is_leftover)
+        self.source_map = []          # [(prefix in the debug info, prefix on this machine)]
+        self.aliases = {}             # real path -> the client's spelling (symbolic links)
+        self.editor_paths = {}        # path -> the spelling given to the editor (a cache)
+        self.local_sources = {}       # name in the debug info -> file here, "" if none
+        self.glue_paths = {}          # name in the debug info -> is binding-layer glue
+        self.missing_source_reported = False
+        self.native_bp_group = {}     # breakpoint id -> [SBBreakpoint], one per spelling
         self._watch_exit_packets()
 
 

@@ -13,8 +13,7 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        path = spec.fullpath or ""
-        if any(part in path for part in self.framework_paths):
+        if self._is_glue_path(spec.fullpath or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(self._function_name(address)):
             return "framework"
@@ -48,8 +47,7 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        path = spec.fullpath or ""
-        if any(part in path for part in self.framework_paths):
+        if self._is_glue_path(spec.fullpath or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or ""):
             return "framework"

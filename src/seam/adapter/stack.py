@@ -4,7 +4,7 @@ import re
 
 import lldb
 
-from .common import DapError, GLUE, UNSAFE_MESSAGE
+from .common import DapError, GLUE, SYSTEM_LIB_PREFIXES, UNSAFE_MESSAGE
 
 
 class StackMixin:
@@ -86,7 +86,7 @@ class StackMixin:
             return None
         if not os.path.isabs(filename):
             filename = os.path.join(self.cwd, filename)
-        return os.path.realpath(filename)
+        return self._editor_path(filename)
 
     def _merged_stack(self, thread):
         tid = thread.GetThreadID()
@@ -135,12 +135,19 @@ class StackMixin:
 
         out = []
         hide_top = self.stop_is_trap and tid == self.safe_tid
+        # The interpreter's own frames are hidden, except where the program crashed in
+        # them: then the ones at the top of the stack (below libc's, which raise the
+        # signal for an abort) are what went wrong, down to the newest Python frame or
+        # the first frame of other code.
+        crashed_in = self.fault_stop and tid in self.exception_info
         py_index = 0
         last_python = None
         for i, frame in enumerate(natives):
-            name = frame.GetFunctionName() or ""
-            module = frame.GetModule().GetFileSpec().fullpath
+            module = frame.GetModule().GetFileSpec().fullpath or ""
             if i in anchors:
+                if crashed_in and i == 0:  # in the eval loop itself
+                    out.append(self._native_record(frame, tid, i, sps[i]))
+                crashed_in = False
                 for pf in anchors[i]:
                     out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
                                 "path": self._py_path(pf.filename), "line": pf.line,
@@ -149,16 +156,14 @@ class StackMixin:
                 hide_top = False
                 last_python = len(out)
                 continue
-            if hide_top or module in (self.interp_module, self.helper_module):
+            if hide_top or module == self.helper_module:
                 continue
-            entry_line = frame.GetLineEntry()
-            spec = entry_line.GetFileSpec()
-            path = spec.fullpath if spec.IsValid() else None
-            out.append({"kind": "native", "tid": tid, "index": i,
-                        "name": name or "%#x" % frame.GetPC(),
-                        "path": path, "line": entry_line.GetLine() if path else 0,
-                        "cls": self._classify_frame(frame),
-                        "at": (frame.GetPC(), sps[i])})
+            if module == self.interp_module:
+                if not crashed_in:
+                    continue
+            elif module and not module.startswith(SYSTEM_LIB_PREFIXES):
+                crashed_in = False
+            out.append(self._native_record(frame, tid, i, sps[i]))
         for _, frames in groups:  # could not be matched to a C frame; show them anyway
             for pf in frames:
                 out.append({"kind": "py", "tid": tid, "index": py_index, "name": pf.name,
@@ -208,6 +213,16 @@ class StackMixin:
             if record["path"]:
                 frame["source"] = {"name": os.path.basename(record["path"]),
                                    "path": record["path"]}
+            elif record.get("missing"):
+                # Debug info that names a file which is not here: its name and line are
+                # worth showing, but there is no path the editor could open.
+                frame["source"] = {
+                    "name": os.path.basename(record["missing"]),
+                    "presentationHint": "deemphasize",
+                    "origin": "%s is not on this machine (see the sourceMap option)"
+                              % record["missing"]}
+            if record["kind"] == "native":
+                frame["instructionPointerReference"] = "%#x" % record["at"][0]
             if not record["path"] or record.get("cls") in GLUE:
                 frame["presentationHint"] = "subtle"
             frames.append(frame)

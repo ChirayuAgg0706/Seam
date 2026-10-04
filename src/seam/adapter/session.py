@@ -131,6 +131,9 @@ class SessionMixin:
         self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
         self.show_glue_frames = bool(args.get("showGlueFrames"))
         self.just_my_code = bool(args.get("justMyCode", True))
+        self._set_source_map(args.get("sourceMap"))
+        for named in (args.get("cwd"), args.get("program")):
+            self._note_client_path(named)  # how the editor spells the project's directory
 
     def _apply_signal_policy(self, args):
         """Stop on the signals that mean a crash; hand every other signal to the program.
