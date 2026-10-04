@@ -5,6 +5,7 @@ Every child reports back through its exit status and the parent prints what beca
 """
 import concurrent.futures
 import ctypes
+import errno
 import multiprocessing
 import os
 import signal
@@ -57,6 +58,7 @@ def forking():
     pid = os.fork()  # fork-here
     if pid == 0:
         child_main("fork")
+    print("forked %d" % pid, flush=True)
     reap("fork", pid)  # fork-after
     after = work(2)
     print("parent: work %d %d, helper %s" % (before, after, helper()), flush=True)
@@ -86,9 +88,7 @@ PYTHON_CHILD = (
 
 def spawning():
     before = work(1)
-    done = subprocess.run([sys.executable, "-c", PYTHON_CHILD])  # spawn-python
-    print("subprocess python:", exit_code(done.returncode), flush=True)
-    done = subprocess.run(["/bin/true"])
+    done = subprocess.run(["/bin/true"])  # spawn-first
     print("subprocess true:", exit_code(done.returncode), flush=True)
     done = subprocess.run(["ls", os.path.dirname(os.path.abspath(__file__))],
                           capture_output=True, text=True)
@@ -97,11 +97,54 @@ def spawning():
     print("system:", describe(os.system("exit 3")), flush=True)
     pid = os.posix_spawn("/bin/true", ["true"], os.environ)
     print("posix_spawn:", describe(os.waitpid(pid, 0)[1]), flush=True)
-    with subprocess.Popen([sys.executable, "-c", "print(input().upper())"],
-                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as proc:
-        answer = proc.communicate("piped\n")[0].strip()
-    print("popen:", exit_code(proc.returncode), answer, flush=True)
+    command = [sys.executable, "-c", "print(input().upper())"]  # spawn-python
+    proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    answer = proc.communicate("piped\n")[0].strip()
+    print("popen: pid %d, %s %s" % (proc.pid, exit_code(proc.returncode), answer), flush=True)
+    done = subprocess.run([sys.executable, "-c", PYTHON_CHILD])
+    print("subprocess python:", exit_code(done.returncode), flush=True)
     print("parent: work %d %d" % (before, work(2)), flush=True)
+
+
+def concurrent_spawns():
+    """Several threads start a child at the same moment, four times over."""
+    results = {}
+    barrier = threading.Barrier(4)
+
+    def run(index):
+        for round_number in range(4):
+            barrier.wait(20)
+            results[index, round_number] = describe(os.system("exit %d" % (index + 1)))
+
+    threads = [threading.Thread(target=run, args=(i,), daemon=True) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 40
+    for thread in threads:
+        thread.join(max(0, deadline - time.monotonic()))
+    stuck = [i for i, thread in enumerate(threads) if thread.is_alive()]
+    expected = {(i, r): "exit %d" % (i + 1) for i in range(4) for r in range(4)}
+    if stuck or results != expected:
+        print("concurrent: threads stuck %s, children %s" % (stuck, sorted(results.items())),
+              flush=True)
+        os._exit(3)
+    print("concurrent: all 16 children exited as expected", flush=True)
+
+
+def terminal():
+    """In the editor's terminal: children use it too, and Ctrl-C reaches them."""
+    done = subprocess.run([sys.executable, "-c",
+                           "print('child heard', input('child? ').upper(), flush=True)"])
+    print("reader:", exit_code(done.returncode), flush=True)
+    pid = os.fork()
+    if pid == 0:
+        print("forked child: tty %s, work %d" % (os.isatty(1), work(5)), flush=True)
+        os._exit(7)
+    reap("terminal", pid)
+    # While system() runs, the program itself ignores SIGINT (the C library sees to that):
+    # only a Ctrl-C that reaches the child ends this before the minute is up.
+    status = os.system("echo asleep; sleep 60")
+    print("system:", describe(status), flush=True)
 
 
 def pool(method):
@@ -163,7 +206,7 @@ def fork_with_threads():
 def stepping():
     """Lines to step over that start children."""
     pid = os.fork()  # step-fork
-    if pid == 0:
+    if pid == 0:  # step-if
         child_main("step")
     reap("step", pid)  # step-reap
     done = subprocess.run(["/bin/true"])  # step-subprocess
@@ -172,14 +215,29 @@ def stepping():
           flush=True)
 
 
-def orphan(marker):
-    """A child that outlives the program: it writes `marker` a moment after the parent left."""
+def orphan(folder):
+    """A child that outlives the program, and then the debug session.
+
+    It prints a line each time the test puts a file named "first", then "second", into
+    `folder`, and leaves a report there saying how that went.
+    """
     pid = os.fork()
     if pid == 0:
-        result = work(5)
-        time.sleep(1.5)
-        with open(marker, "w") as fh:
-            fh.write("orphan %d work %d helper %s\n" % (os.getpid(), result, helper()))
+        report = ["work %d, helper %s" % (work(5), helper())]
+        for step in ("first", "second"):
+            deadline = time.monotonic() + 60
+            while not os.path.exists(os.path.join(folder, step)):
+                if time.monotonic() > deadline:
+                    os._exit(2)
+                time.sleep(0.02)
+            try:
+                print("orphan: %s" % step, flush=True)
+                report.append("%s: printed" % step)
+            except OSError as exc:
+                report.append("%s: %s" % (step, errno.errorcode.get(exc.errno, exc.errno)))
+        with open(os.path.join(folder, "report.tmp"), "w") as fh:
+            fh.write("\n".join(report) + "\n")
+        os.rename(os.path.join(folder, "report.tmp"), os.path.join(folder, "report"))
         os._exit(0)
     print("parent: leaving child %d behind" % pid, flush=True)
 
@@ -280,6 +338,10 @@ def main():
         raising()
     elif mode == "log":
         logging_lines()
+    elif mode == "terminal":
+        terminal()
+    elif mode == "concurrent":
+        concurrent_spawns()
     print("end", flush=True)
 
 

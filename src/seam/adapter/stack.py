@@ -336,9 +336,9 @@ class StackMixin:
             var = self._py_var(item, record)
             return {"result": var["value"], "type": var["type"],
                     "variablesReference": var["variablesReference"]}
-        value = self._native_frame(record).EvaluateExpression(expr, self._expr_options(10))
-        if not value.GetError().Success():
-            raise DapError(value.GetError().GetCString() or "evaluation failed")
+        value, problem = self._evaluate(self._native_frame(record), expr, 10)
+        if problem is not None:
+            raise DapError(problem)
         var = self._sb_var(value)
         return {"result": var["value"], "type": var["type"],
                 "variablesReference": var["variablesReference"]}

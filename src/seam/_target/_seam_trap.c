@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SEAM_REQ_CAP (1 << 20)
 #define EXPORT __attribute__((visibility("default"), used))
@@ -125,6 +126,12 @@ dispatch_buffer(const char *buf, long len)
     }
     if (rc != 0) {
         PyErr_Clear();
+    }
+    if (g_forked) {
+        /* The request (an expression typed into the debug console) forked, and this is
+         * the child coming back from it. The caller is the debugger, which is not here:
+         * there is nothing to return to. */
+        _exit(0);
     }
     PyErr_SetRaisedException(saved);
     return rc;
