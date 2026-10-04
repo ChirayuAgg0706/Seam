@@ -89,6 +89,17 @@
                 "description": "Extra environment variables.",
                 "default": {}
               },
+              "console": {
+                "type": "string",
+                "enum": [ "integratedTerminal", "internalConsole", "externalTerminal" ],
+                "enumDescriptions": [
+                  "Run the program in VS Code's integrated terminal. It can read from the keyboard.",
+                  "Show the program's output in the Debug Console. The program cannot read input.",
+                  "Run the program in an external terminal window."
+                ],
+                "description": "Where the program's input and output go.",
+                "default": "integratedTerminal"
+              },
               "stopOnEntry": {
                 "type": "boolean",
                 "description": "Stop on the first line of Python code.",

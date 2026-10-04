@@ -94,6 +94,7 @@ call stack. **Step Out** returns to the Python line.
 | `python` | Interpreter to run (default `python3`). Use your virtualenv's. |
 | `pythonArgs` | Arguments for the interpreter itself. |
 | `cwd`, `env` | Working directory and extra environment variables. |
+| `console` | `integratedTerminal` or `externalTerminal`: run the program in the editor's terminal, where it can read input. `internalConsole`: show its output in the debug console; its input is empty. The VS Code extension defaults to `integratedTerminal`; the adapter itself, for other clients, to `internalConsole`. |
 | `stopOnEntry` | Stop on the first line of Python. |
 | `stopOnSignals` | Signals that stop the debugger (default `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGABRT`). Every other signal goes straight to the program. Also valid for attach. |
 | `justMyCode` | For "Raised Python exceptions": ignore exceptions that stay inside libraries (default true). |
@@ -203,8 +204,12 @@ Known limits of what is in scope:
   change takes effect when that call returns.
 - **Attach** loads the helper at the main thread's next safe point. A main thread blocked
   indefinitely in a system call will not get there, and the attach times out.
-- **Program input.** The program runs on a pseudo-terminal owned by the adapter; its
-  stdout and stderr arrive as one stream, and typing input into it is not supported yet.
+- **Program input and output.** With `console: integratedTerminal` the program has the
+  editor's terminal to itself, and Ctrl-C there interrupts it as usual. It is not that
+  terminal's foreground job (a small holder process is), so it is not sent `SIGWINCH`
+  when the terminal is resized and Ctrl-Z does nothing. With `internalConsole` the
+  program's stdout and stderr arrive in the debug console as one stream and its standard
+  input is empty: `input()` raises `EOFError`.
 - **Thread-heavy programs** run about twice as slowly under Seam even with no breakpoints,
   because LLDB handles every thread start and exit. CPU-bound work is unaffected.
 - **Embedded interpreters.** Launch expects a normal `python` executable (it injects the

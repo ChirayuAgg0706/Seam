@@ -42,6 +42,11 @@ class SeamConfigurationProvider {
       if (!config.python) {
         config.python = "python3";
       }
+      if (!config.console) {
+        // In VS Code the program gets a real terminal unless told otherwise, so that
+        // input() works. (The adapter's own default is the debug console.)
+        config.console = "integratedTerminal";
+      }
     }
     return config;
   }

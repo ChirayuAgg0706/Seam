@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import struct
 import tempfile
 import termios
@@ -21,7 +22,14 @@ import lldb
 
 from . import pyread
 
-TARGET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_target")
+PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TARGET_DIR = os.path.join(PACKAGE_DIR, "_target")
+TERMINAL_HOLDER = os.path.join(PACKAGE_DIR, "terminal.py")
+CONSOLES = ("internalConsole", "integratedTerminal", "externalTerminal")
+# Signals the terminal holder may pass on to the program (Ctrl-C, Ctrl-\, hang-up).
+TERMINAL_SIGNALS = (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP)
+# Seam's own plumbing between `seam dap` and the adapter; not the program's business.
+PRIVATE_ENV = ("SEAM_DAP_FD", "SEAM_NOTE_FD", "SEAM_PYTHON")
 PY_SUFFIXES = (".py", ".pyw", ".pyi")
 EVAL_FRAME = "_PyEval_EvalFrameDefault"
 
@@ -156,6 +164,8 @@ class Adapter:
         self.exc_filters = []         # exception breakpoint filters in force
         self.native_exc_bps = {}      # filter -> SBBreakpoint (cpp_throw, rust_panic)
         self.just_my_code = True
+        self.client = {}              # what the client said about itself in `initialize`
+        self.terminal = None          # connection to the terminal holder (console option)
         self.post_mortem = {}         # tid -> frames of the uncaught exception shown there
         self.throw_stop = False       # stopped at a C++ throw or Rust panic
         self._watch_exit_packets()
@@ -237,6 +247,8 @@ class Adapter:
 
     def _handle(self, req):
         self.log("<-", json.dumps(req)[:600])
+        if req.get("type") == "response":
+            return  # a late answer to a reverse request nobody is waiting for any more
         cmd = req.get("command", "")
         resp = {"type": "response", "request_seq": req.get("seq", 0), "command": cmd,
                 "success": True}
@@ -330,6 +342,7 @@ class Adapter:
         if self.output_thread is not None:
             self.output_thread.join(2)
         self._drain_output()
+        self._release_terminal()
         code = self.process.GetExitStatus()
         if self.exit_packet == ("X", code):
             self.event("output", {"category": "console", "output":
@@ -934,6 +947,17 @@ class Adapter:
             except OSError:
                 pass
         self.temp_files = []
+        self._release_terminal()
+
+    def _release_terminal(self):
+        """Hang up on the terminal holder: the program is gone, the terminal is free."""
+        if self.terminal is not None:
+            try:
+                self.terminal.shutdown(socket.SHUT_RDWR)
+                self.terminal.close()
+            except OSError:
+                pass
+            self.terminal = None
 
     # ------------------------------------------------------ target access
 
@@ -1029,6 +1053,7 @@ class Adapter:
         return os.path.abspath(path)
 
     def req_initialize(self, args):
+        self.client = dict(args)
         return {
             "supportsConfigurationDoneRequest": True,
             "supportsConditionalBreakpoints": True,
@@ -1098,6 +1123,12 @@ class Adapter:
         argv += [str(a) for a in args.get("args") or []]
 
         self._apply_settings(args)
+        console = args.get("console") or "internalConsole"
+        if console not in CONSOLES:
+            raise DapError("console must be one of %s" % ", ".join(CONSOLES))
+        terminal_tty = None
+        if console != "internalConsole":
+            terminal_tty = self._open_terminal(console)
         err = lldb.SBError()
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
         if not self.target or not self.target.IsValid():
@@ -1107,28 +1138,45 @@ class Adapter:
         info = lldb.SBLaunchInfo(argv)
         info.SetWorkingDirectory(self.cwd)
         # The program inherits the environment `seam dap` was started in, plus launch "env".
-        env = {k: v for k, v in os.environ.items() if k != "SEAM_DAP_FD"}
+        env = {k: v for k, v in os.environ.items() if k not in PRIVATE_ENV}
         env.update({str(k): str(v) for k, v in (args.get("env") or {}).items()})
         info.SetEnvironmentEntries(["%s=%s" % kv for kv in env.items()], False)
         info.SetListener(self.listener)
-        # The target gets its own pty: LLDB's driver would otherwise swallow its output.
-        master, slave = os.openpty()
-        attrs = termios.tcgetattr(slave)
-        attrs[1] &= ~termios.ONLCR
-        termios.tcsetattr(slave, termios.TCSANOW, attrs)
-        tty = os.ttyname(slave)
-        info.AddOpenFileAction(0, tty, True, False)
-        info.AddOpenFileAction(1, tty, False, True)
-        info.AddOpenFileAction(2, tty, False, True)
+        master = slave = None
+        if terminal_tty is not None:
+            # The client's terminal: the program reads the keyboard and writes there.
+            info.AddOpenFileAction(0, terminal_tty, True, False)
+            info.AddOpenFileAction(1, terminal_tty, False, True)
+            info.AddOpenFileAction(2, terminal_tty, False, True)
+        else:
+            # The debug console. Output goes to a pty owned by the adapter (LLDB's driver
+            # would otherwise swallow it, and a pipe would make the program buffer it).
+            # Nobody can type into the debug console, so input is empty rather than a
+            # terminal that never answers.
+            master, slave = os.openpty()
+            attrs = termios.tcgetattr(slave)
+            attrs[1] &= ~termios.ONLCR
+            termios.tcsetattr(slave, termios.TCSANOW, attrs)
+            tty = os.ttyname(slave)
+            info.AddOpenFileAction(0, os.devnull, True, False)
+            info.AddOpenFileAction(1, tty, False, True)
+            info.AddOpenFileAction(2, tty, False, True)
         self.process = self.target.Launch(info, err)
-        os.close(slave)
+        if slave is not None:
+            os.close(slave)
         if not err.Success() or not self.process or not self.process.IsValid():
-            os.close(master)
+            if master is not None:
+                os.close(master)
             raise DapError("launch failed: %s" % err.GetCString())
-        self._note("launched %d" % self.process.GetProcessID())
-        self.output_thread = threading.Thread(target=self._pump_output, args=(master,),
-                                              daemon=True)
-        self.output_thread.start()
+        pid = self.process.GetProcessID()
+        self._note("launched %d" % pid)
+        if master is not None:
+            self.output_thread = threading.Thread(target=self._pump_output, args=(master,),
+                                                  daemon=True)
+            self.output_thread.start()
+        else:
+            threading.Thread(target=self._serve_terminal, args=(self.terminal, pid),
+                             daemon=True).start()
         state = self._wait_stop()
         if state != lldb.eStateStopped:
             self._on_exit()
@@ -1147,6 +1195,92 @@ class Adapter:
             self.agent("step", mode="any")
             self.py_step_armed = True
         return None, lambda: self.event("initialized")
+
+    def _reverse_request(self, command, arguments, timeout=30):
+        """Ask the client to do something and wait for its answer.
+
+        Called while a request is being handled, so the main loop is not running: the
+        answer is picked out of the incoming queue, and everything else stays queued.
+        """
+        message = {"type": "request", "command": command, "arguments": arguments}
+        self._send(message)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for queued in list(self.requests):
+                if (queued.get("type") == "response"
+                        and queued.get("request_seq") == message["seq"]):
+                    self.requests.remove(queued)
+                    self.log("<-", json.dumps(queued)[:600])
+                    if not queued.get("success"):
+                        raise DapError("the client refused %s: %s"
+                                       % (command, queued.get("message")))
+                    return queued.get("body") or {}
+            time.sleep(0.02)
+        raise DapError("the client did not answer %s within %d s" % (command, timeout))
+
+    def _open_terminal(self, console):
+        """Get a terminal from the client; returns its device path, or None to fall back.
+
+        The client runs Seam's small holder program (seam/terminal.py) in a terminal of
+        its own. The holder reports which terminal it is on and then stays out of the
+        way; the program is launched with that terminal as its input and output.
+        """
+        if not self.client.get("supportsRunInTerminalRequest"):
+            self.event("output", {"category": "console", "output":
+                       "Seam: this client cannot run the program in a terminal; its output "
+                       "goes to the debug console and it cannot read input.\n"})
+            return None
+        directory = tempfile.mkdtemp(prefix="seam-terminal-")
+        path = os.path.join(directory, "channel")
+        server = socket.socket(socket.AF_UNIX)
+        try:
+            server.bind(path)
+            server.listen(1)
+            server.settimeout(30)
+            holder = [os.environ.get("SEAM_PYTHON") or shutil.which("python3") or "python3",
+                      TERMINAL_HOLDER, path]
+            self._reverse_request("runInTerminal", {
+                "kind": "external" if console == "externalTerminal" else "integrated",
+                "title": "Seam", "cwd": self.cwd, "args": holder})
+            connection, _ = server.accept()
+            connection.settimeout(10)
+            line = b""
+            while not line.endswith(b"\n"):
+                data = connection.recv(256)
+                if not data:
+                    break
+                line += data
+            kind, _, tty = line.decode().strip().partition(" ")
+            if kind != "tty" or not tty.startswith("/dev/"):
+                connection.close()
+                raise DapError("the terminal holder did not report a terminal")
+            connection.settimeout(None)
+            self.terminal = connection
+            return tty
+        except OSError as exc:
+            raise DapError("could not get a terminal from the client: %s" % exc)
+        finally:
+            server.close()
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def _serve_terminal(self, connection, pid):
+        """Pass on what the terminal holder reports: Ctrl-C, Ctrl-\\, the terminal closing."""
+        pending = b""
+        try:
+            while True:
+                data = connection.recv(256)
+                if not data:
+                    break
+                pending += data
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    kind, _, value = line.decode("ascii", "replace").partition(" ")
+                    if (kind == "signal" and value.isdigit() and not self.exited
+                            and int(value) in TERMINAL_SIGNALS):
+                        self.log("terminal: signal", value)
+                        os.kill(pid, int(value))
+        except OSError:
+            pass
 
     def _watch_breakpoints(self):
         """Receive LLDB's breakpoint events (locations resolving when a module loads)."""

@@ -319,6 +319,29 @@ stop.
 breakpoint, and the `rust_panic` symbol, which the Rust runtime keeps for debuggers). The
 C++ exception type is read from the `type_info` argument's symbol name.
 
+## 15. Running the program in the client's terminal
+
+LLDB launches the program, so the usual DAP arrangement (the client's terminal runs the
+program itself) is not available. Instead, for `console: integratedTerminal` or
+`externalTerminal` the adapter sends the client a `runInTerminal` request for a small
+holder program (`seam/terminal.py`, standard library only). The holder connects back over
+a Unix socket, reports which terminal device it is on, and then waits without ever reading
+from it. The adapter launches the program with that device as its standard input, output
+and error.
+
+The holder, not the program, is the terminal's foreground job, so the terminal's
+signal keys reach the holder. It passes Ctrl-C, Ctrl-\ and a hang-up to the adapter, which
+sends the same signal to the program; with the signal policy of §13 a SIGINT goes straight
+through and becomes `KeyboardInterrupt`. The adapter hangs up on the holder when the
+program exits or the session ends, which returns the terminal to its shell. Two things
+are lost by not being the foreground job: the program gets no SIGWINCH on resize, and
+Ctrl-Z does nothing.
+
+In the debug console (`internalConsole`) nobody can type, so the program's standard input
+is `/dev/null` rather than a terminal that never answers: a stray `input()` fails at once
+with `EOFError` instead of hanging the session. A client that asks for a terminal without
+supporting `runInTerminal` gets this mode and a message saying so.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

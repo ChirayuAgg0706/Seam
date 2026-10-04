@@ -38,7 +38,8 @@ def run_dap():
     # A second channel on which the adapter reports the programs it launches, so that
     # they can be cleaned up here if LLDB dies without doing it.
     notes_read, notes_write = os.pipe()
-    env = dict(os.environ, SEAM_DAP_FD=str(theirs.fileno()), SEAM_NOTE_FD=str(notes_write))
+    env = dict(os.environ, SEAM_DAP_FD=str(theirs.fileno()), SEAM_NOTE_FD=str(notes_write),
+               SEAM_PYTHON=sys.executable)
     log_path = os.environ.get("SEAM_LOG")
     sink = open(log_path + ".lldb", "ab") if log_path else subprocess.DEVNULL
     proc = subprocess.Popen(

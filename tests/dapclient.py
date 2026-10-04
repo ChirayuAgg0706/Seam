@@ -1,10 +1,14 @@
 """A scripted DAP client that drives `seam dap` exactly as an editor would."""
+import fcntl
 import json
 import os
+import pty
 import queue
 import re
+import select
 import subprocess
 import sys
+import termios
 import threading
 import time
 
@@ -13,6 +17,58 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class DapFailure(AssertionError):
     pass
+
+
+class Terminal:
+    """What an editor's integrated terminal is to the adapter: a pty that runs a command.
+
+    The command gets the pty as its controlling terminal, so a Ctrl-C typed here raises
+    SIGINT in it exactly as in a real terminal.
+    """
+
+    def __init__(self):
+        self.master, self.slave = pty.openpty()
+        self.proc = None
+        self.text = ""
+
+    def run(self, arguments):
+        def own_terminal():
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+        env = dict(os.environ)
+        for key, value in (arguments.get("env") or {}).items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+        self.proc = subprocess.Popen(
+            arguments["args"], cwd=arguments.get("cwd"), env=env, stdin=self.slave,
+            stdout=self.slave, stderr=self.slave, preexec_fn=own_terminal)
+        return self.proc.pid
+
+    def type(self, text):
+        os.write(self.master, text.encode())
+
+    def read_until(self, expected, timeout=20):
+        deadline = time.monotonic() + timeout
+        while expected not in self.text:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.master], [], [], remaining)[0]:
+                raise DapFailure("the terminal never showed %r; it shows %r"
+                                 % (expected, self.text))
+            self.text += os.read(self.master, 65536).decode("utf-8", "replace")
+        return self.text
+
+    def close(self):
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
+        for fd in (self.master, self.slave):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 class DapClient:
@@ -33,6 +89,7 @@ class DapClient:
         self.events = []
         self.output = ""
         self.target_pid = None
+        self.terminal = None  # set to a Terminal to act as a client that has one
         threading.Thread(target=self._reader, daemon=True).start()
 
     # ---------------------------------------------------------- transport
@@ -65,12 +122,32 @@ class DapClient:
             raise DapFailure("timed out waiting for the adapter\n" + self.tail_log())
         if msg is None:
             raise DapFailure("the adapter closed the connection\n" + self.tail_log())
+        self._absorb(msg)
+        return msg
+
+    def _absorb(self, msg):
         if msg.get("type") == "event":
             if msg["event"] == "output":
                 self.output += msg["body"].get("output", "")
             else:
                 self.events.append(msg)
-        return msg
+        elif msg.get("type") == "request":
+            # A reverse request: the adapter asks the client to do something.
+            reply = {"type": "response", "request_seq": msg["seq"],
+                     "command": msg["command"], "success": True, "body": {}}
+            if msg["command"] == "runInTerminal" and self.terminal is not None:
+                reply["body"] = {"processId": self.terminal.run(msg["arguments"])}
+            else:
+                reply.update(success=False, message="not supported by this client")
+            self._write(reply)
+
+    def _write(self, message):
+        self.seq += 1
+        message["seq"] = self.seq
+        data = json.dumps(message).encode()
+        self.proc.stdin.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
+        self.proc.stdin.flush()
+        return self.seq
 
     def tail_log(self, lines=40):
         """The end of the adapter's protocol log and of LLDB's own output (tracebacks)."""
@@ -83,12 +160,8 @@ class DapClient:
         return out
 
     def send(self, command, arguments=None):
-        self.seq += 1
-        data = json.dumps({"seq": self.seq, "type": "request", "command": command,
-                           "arguments": arguments or {}}).encode()
-        self.proc.stdin.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
-        self.proc.stdin.flush()
-        return self.seq
+        return self._write({"type": "request", "command": command,
+                            "arguments": arguments or {}})
 
     def request(self, command, arguments=None, timeout=60, check=True):
         seq = self.send(command, arguments)
@@ -132,11 +205,7 @@ class DapClient:
                 break
             if msg is None:
                 raise DapFailure("the adapter closed the connection\n" + self.tail_log())
-            if msg.get("type") == "event":
-                if msg["event"] == "output":
-                    self.output += msg["body"].get("output", "")
-                else:
-                    self.events.append(msg)
+            self._absorb(msg)
         return [e for e in self.events if e["event"] == name]
 
     # ------------------------------------------------------------ helpers
@@ -150,8 +219,9 @@ class DapClient:
         return re.sub(r"\x1b\[[0-9;]*m", "", self.output)
 
     def launch(self, program, python, args=(), breakpoints=None, exceptions=None, **extra):
-        self.capabilities = self.request("initialize", {"adapterID": "seam",
-                                                        "clientID": "tests"})
+        self.capabilities = self.request("initialize", {
+            "adapterID": "seam", "clientID": "tests",
+            "supportsRunInTerminalRequest": self.terminal is not None})
         launch = {"program": program, "python": python, "args": list(args),
                   "cwd": os.path.dirname(program)}
         if os.environ.get("SEAM_TEST_DEBUGINFO") == "0":
@@ -210,6 +280,13 @@ class DapClient:
         return body["exitCode"]
 
     def close(self):
+        try:
+            self._close_adapter()
+        finally:
+            if self.terminal is not None:
+                self.terminal.close()
+
+    def _close_adapter(self):
         if self.proc.poll() is None:
             try:
                 self.request("disconnect", timeout=10, check=False)
