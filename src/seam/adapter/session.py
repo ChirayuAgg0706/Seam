@@ -393,7 +393,12 @@ class SessionMixin:
 
     def req_attach(self, args):
         self._require_no_session()
-        pid = int(args.get("pid") or 0)
+        pid = args.get("pid") or 0
+        try:
+            # A number when written by hand; text when an editor's process picker chose it.
+            pid = int(pid)
+        except (TypeError, ValueError):
+            raise DapError("attach needs a process id as 'pid'; %r is not one" % (pid,)) from None
         if pid <= 0:
             raise DapError("attach needs a 'pid'")
         self._apply_settings(args)
