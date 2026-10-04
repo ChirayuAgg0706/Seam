@@ -78,7 +78,17 @@ st_do_abort(PyObject *self, PyObject *noargs)
     Py_RETURN_NONE;
 }
 
+static long bump_count = 0;
+
+static PyObject *
+st_bump(PyObject *self, PyObject *noargs)
+{
+    bump_count += 1; /* bump-here */
+    return PyLong_FromLong(bump_count);
+}
+
 static PyMethodDef methods[] = {
+    {"bump", st_bump, METH_NOARGS, NULL},
     {"add", st_add, METH_VARARGS, NULL},
     {"call_back", st_call_back, METH_VARARGS, NULL},
     {"fail", st_fail, METH_NOARGS, NULL},

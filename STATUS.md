@@ -38,6 +38,9 @@ marked done on the strength of reading code. Work that remains is in
 | Exception breakpoints: uncaught (main thread, threads, replaced `sys.excepthook`), raised, C++ throw, Rust panic | **done** | `test_exceptions.py` |
 | Program input: the editor's terminal, Ctrl-C, terminal closed; empty input in the debug console | **done** | `test_terminal.py`, and for real in VS Code and Neovim by the `editors` job |
 | Hit counts and logpoints, Python and native | **done** | `test_breakpoints.py` |
+| Function breakpoints (Python by bare, qualified or module-qualified name; native), with conditions and hit counts | **done** | `test_breakpoints.py` |
+| Data breakpoints on native variables | **done** | `test_breakpoints.py` (hardware watchpoints; seen working under WSL2, not yet on a CI runner at the time of writing) |
+| Set variable (Python locals, globals, members; native), paged lists, expressions for nested values | **done** | `test_variables.py` |
 | `seam doctor`; clear messages when LLDB is missing or cannot load the adapter | **done** | `test_doctor.py`; also run on the clean machine |
 | Unsupported interpreters refused by name (3.11, free-threaded) | **done** | `test_unsupported.py`. The refusal of non-x86-64 programs is written but **not tested** (no such machine here). |
 | Real third-party wheels in a virtual environment | **done** | `test_wheels.py`: numpy and orjson from PyPI |
@@ -46,19 +49,26 @@ marked done on the strength of reading code. Work that remains is in
 
 ## CI
 
-GitHub Actions, on every push and once a week (`.github/workflows/ci.yml`):
+GitHub Actions (`.github/workflows/ci.yml`). The repository is on the free tier (2,000
+runner minutes a month), so the jobs are split:
 
-- `full suite (3.12, -O0)`: every test on the runner's system Python (no debug info there).
+On every push (about 5 minutes of runner time):
+
+- `full suite (3.12, -O0)`: every test on the runner's system Python (no debug info
+  there), LLDB 18.
+- `lint, versions, VS Code extension package`.
+
+The extended set (about 20 more minutes), run once a week, when started by hand, and on
+a push whose commit message contains `[ci full]`:
+
 - `smoke` × 5: 3.12 -O2, 3.13 -O0, 3.14 -O0 and -O2, 3.15 -O0, on uv's standalone
   interpreters, with LLDB 18.
 - `lldb` × 2: the smoke scenarios under LLDB 19 and LLDB 20.
 - `editors`: VS Code and Neovim, see item 11.
 - `clean machine`: see item 14.
-- `VS Code extension package`: builds the `.vsix` and uploads it as an artifact.
 - Weekly only: the stepping, binding-layer and attach scenarios looped 8 times.
 
-A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`). One push costs
-roughly 25 minutes of runner time across the jobs.
+A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`).
 
 ## Test matrix
 
@@ -81,18 +91,19 @@ first; pressing it again gets there (the test allows up to 12, typically 2 to 5)
 
 ## Known problems
 
-- **Leftover stops (handled; one related failure not proven fixed).** On a busy machine
-  LLDB sometimes reports the internal step it takes to leave a breakpoint as a new stop
-  at that breakpoint. It showed up as a hit count being off by one in 4 of 9 CI jobs.
-  Seam now recognises such stops and ignores them: 52 occurred in loaded local loops
-  after the check went in and none caused a failure. While fixing it, one loaded run lost
-  a genuine breakpoint hit instead; the likely cause was removed and it has not recurred
-  in 22 further loaded runs, which is not enough to call it proven
-  (`docs/decisions.md` §17).
-- **Two older one-off failures remain unexplained.** A Cython callback step-in that once
-  reported an "exception" stop, and a nanobind callback scenario that failed once under
-  LLDB 18 with its output lost. Neither has recurred. The leftover stops above are a
-  plausible cause for both, but that is a guess.
+- **Extra, missing and stale stops on a busy machine: cause found and removed.** Seam
+  used the debugger object of the `lldb` program it runs in, whose own event thread
+  handled every stop event concurrently with Seam. It showed up as stale frame lists,
+  stops reported twice ("leftover stops", a hit count off by one in 4 of 9 CI jobs), and
+  once a lost breakpoint hit. Seam now has a debugger of its own. Under the same CPU load
+  that produced 6 leftover stops and 12 stale frame lists in 1,584 continues, there were
+  none of either in 1,920; with every core busy, none in 384 where about 20 would have
+  been expected (`docs/decisions.md` §17, §18). Measured under LLDB 20 only; the earlier
+  defences stay in place.
+- **Two older one-off failures were never reproduced.** A Cython callback step-in that
+  once reported an "exception" stop, and a nanobind callback scenario that failed once
+  under LLDB 18 with its output lost. The race above is a plausible cause for both, but
+  that is a guess.
 - **Thread-heavy programs run 2 to 3 times slower** under Seam even with no breakpoints.
 - Limits by design are listed in the README's Limitations section.
 

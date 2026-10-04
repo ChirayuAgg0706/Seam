@@ -8,6 +8,8 @@ pytestmark = pytest.mark.smoke
 
 LOOP = target("loop.py")
 COUNTING = target("counting.py")
+VARIABLES = target("variables.py")
+WATCH = target("watch.py")
 BODY = marker_line(LOOP, "work-body")
 NATIVE = marker_line(CAPI_SRC, "add-impl-return")
 
@@ -142,6 +144,108 @@ def test_native_breakpoint_in_a_loop_stops_once_per_iteration(dap, capi, iterati
         dap.cont(body["threadId"])
     assert seen == [str(i) for i in range(10)]
     assert body["exitCode"] == 0
+
+
+def set_function_breakpoints(dap, *items):
+    wanted = [item if isinstance(item, dict) else {"name": item} for item in items]
+    return dap.request("setFunctionBreakpoints", {"breakpoints": wanted})["breakpoints"]
+
+
+def test_function_breakpoint_on_a_python_function(dap):
+    dap.launch(LOOP, dap.python, stopOnEntry=True)
+    dap.wait_stopped()
+    assert set_function_breakpoints(dap, {"name": "work", "condition": "i == 4"}) == \
+        [{"verified": True}]
+    dap.cont()
+    stop = dap.wait_stopped()
+    assert stop["reason"] == "breakpoint"
+    stack = dap.stack(stop["threadId"])
+    assert py_frames(stack)[0] == ("work", BODY - 1)  # the `def` line: the function's entry
+    assert dap.scope(stack[0]["id"])["i"]["value"] == "4"
+    set_function_breakpoints(dap)
+    status = dap.status()["agent"]
+    assert status["function_breakpoints"] == [] and status["global_events"] == 0
+    dap.cont()
+    assert dap.wait_exit() == 0
+
+
+def test_function_breakpoint_by_qualified_name(dap, capi):
+    dap.launch(VARIABLES, dap.python, env=capi.env, stopOnEntry=True)
+    dap.wait_stopped()
+    set_function_breakpoints(dap, "Point.__init__", "__main__.compute")
+    dap.cont()
+    stop = dap.wait_stopped()
+    assert dap.stack(stop["threadId"])[0]["name"] == "compute"
+    dap.cont()
+    stop = dap.wait_stopped()
+    stack = dap.stack(stop["threadId"])
+    assert [f["name"] for f in stack[:2]] == ["Point.__init__", "compute"]
+    assert dap.scope(stack[0]["id"])["x"]["value"] == "3"
+    set_function_breakpoints(dap)
+    dap.cont()
+    assert dap.wait_exit() == 0
+
+
+def test_function_breakpoint_on_a_native_function(dap, capi):
+    dap.launch(COUNTING, dap.python, env=capi.env, stopOnEntry=True)
+    dap.wait_stopped()
+    # The extension is not loaded yet; the breakpoint takes effect when it is.
+    set_function_breakpoints(dap, {"name": "add_impl", "hitCondition": "%4"})
+    dap.cont()
+    seen = []
+    while True:
+        name, body = dap.wait_any(["stopped", "exited"])
+        if name == "exited":
+            break
+        stack = dap.stack(body["threadId"])
+        assert stack[0]["name"] == "add_impl"
+        main = [f for f in stack if f["name"] == "main"][0]
+        seen.append(dap.scope(main["id"])["i"]["value"])
+        dap.cont(body["threadId"])
+    assert (seen, body["exitCode"]) == (["3", "7"], 0)
+
+
+@pytest.mark.parametrize("hit, expected", [(None, [1, 2, 3, 4, 5]), ("%2", [2, 4])])
+def test_data_breakpoint_on_a_native_variable(dap, capi, hit, expected):
+    line = marker_line(CAPI_SRC, "bump-here")
+    dap.launch(WATCH, dap.python, env=capi.env, breakpoints={CAPI_SRC: [line]})
+    stop = dap.wait_stopped()
+    stack = dap.stack(stop["threadId"])
+    scopes = {s["name"]: s["variablesReference"]
+              for s in dap.request("scopes", {"frameId": stack[0]["id"]})["scopes"]}
+    assert dap.variables(scopes["Globals"])["bump_count"]["value"] == "0"
+
+    info = dap.request("dataBreakpointInfo", {"variablesReference": scopes["Globals"],
+                                              "name": "bump_count"})
+    assert info["dataId"] and "write" in info["accessTypes"]
+    wanted = {"dataId": info["dataId"], "accessType": "write"}
+    if hit:
+        wanted["hitCondition"] = hit
+    answers = dap.request("setDataBreakpoints", {"breakpoints": [wanted]})["breakpoints"]
+    assert answers == [{"verified": True}], answers
+
+    # A Python variable has no fixed place in memory to watch, and Seam says so.
+    main = [f for f in stack if f["name"] == "main"][0]
+    python_scope = [s for s in dap.request("scopes", {"frameId": main["id"]})["scopes"]
+                    if s["name"] == "Locals"][0]["variablesReference"]
+    refused = dap.request("dataBreakpointInfo", {"variablesReference": python_scope,
+                                                 "name": "i"})
+    assert refused["dataId"] is None and "Python variable" in refused["description"]
+
+    dap.set_breakpoints(CAPI_SRC, [])
+    dap.cont()
+    seen = []
+    while True:
+        name, body = dap.wait_any(["stopped", "exited"])
+        if name == "exited":
+            break
+        assert body["reason"] == "data breakpoint", body
+        stack = dap.stack(body["threadId"])
+        assert stack[0]["name"] == "st_bump" and "main" in [f["name"] for f in stack]
+        seen.append(body["description"])
+        dap.cont(body["threadId"])
+    assert seen == ["bump_count is now %d" % n for n in expected]
+    assert body["exitCode"] == 0 and "bumped 5" in dap.output
 
 
 def test_native_logpoint(dap, capi):

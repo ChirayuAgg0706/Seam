@@ -18,6 +18,10 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - `console: integratedTerminal` / `externalTerminal`: the program runs in the editor's
   terminal and can read input; Ctrl-C there interrupts it.
 - Hit-count conditions and logpoints, on Python and native breakpoints.
+- Set variable (Python locals, globals and members; native variables); long lists in
+  pages; expressions for nested values ("Add to Watch").
+- Function breakpoints on Python and native functions, with conditions and hit counts.
+- Data breakpoints on native variables.
 - `seam doctor`: checks the installation and runs a real debug session.
 - Python 3.15 (tested with 3.15.0rc3).
 - LLDB 19 and 20, besides 18.
@@ -32,8 +36,9 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 - A program left running, with nobody attached, when LLDB died.
 - An internal error instead of an error message for a request with a missing argument.
-- A rare extra stop after continuing from a native breakpoint (LLDB reporting a stop that
-  was already over).
+- Rare extra or missing stops on a busy machine. Seam shared its debugger object with
+  the `lldb` program it runs in, whose own event thread handled the same events; it now
+  has a debugger of its own.
 
 ## 0.1.0
 

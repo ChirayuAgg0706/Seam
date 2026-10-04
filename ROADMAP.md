@@ -29,8 +29,8 @@ when a scenario test for it has been seen passing; [STATUS.md](STATUS.md) has th
 | # | Item | Status |
 |---|---|---|
 | 11 | Hit-count conditions and logpoints. | **done** (`tests/test_breakpoints.py`; §16) |
-| 12 | Set variable; richer variable display (object attributes by kind, long collections in pages). | not started |
-| 13 | Function breakpoints with conditions; data breakpoints (watchpoints) on native variables. | not started |
+| 12 | Set variable; long collections in pages; `__slots__` objects; expressions for nested values. | **done** (`tests/test_variables.py`; §19) |
+| 13 | Function breakpoints (Python and native) with conditions; data breakpoints on native variables. | **done** (`tests/test_breakpoints.py`; §19) |
 
 ## Priority 4: release engineering
 
@@ -42,8 +42,8 @@ when a scenario test for it has been seen passing; [STATUS.md](STATUS.md) has th
 
 ## Things found on the way that are still open
 
-- A genuine breakpoint hit was lost once under full CPU load while the leftover-stop fix
-  was being developed; the likely cause is removed, but it is not proven (§17).
+- The race behind the stale, extra and lost stops (§18) was measured away under LLDB 20
+  only. LLDB 18 and 19 run the same code on CI but have not been looped under load.
 - Thread-heavy programs run 2 to 3 times slower under Seam.
 - nanobind at `-O2` under LLDB 20: LLDB cannot unwind through its library code.
 

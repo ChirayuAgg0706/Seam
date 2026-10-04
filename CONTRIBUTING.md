@@ -51,7 +51,11 @@ uvx ruff check src tests tools                            # lint
 
 ## Continuous integration
 
-Every push runs the full suite on Python 3.12, smoke scenarios on the other supported
-versions and at `-O2`, the same under LLDB 19 and 20, a clean-machine install, and the
-editor checks (the packaged extension inside a real VS Code, and the documented
-configuration in a headless Neovim). A missing toolchain fails CI rather than skipping.
+Every push runs the full suite on Python 3.12, and the linter. The extended set runs once
+a week, when started by hand from the Actions page, and on any push whose commit message
+contains `[ci full]`: smoke scenarios on the other supported versions and at `-O2`, the
+same under LLDB 19 and 20, a clean-machine install, and the editor checks (the packaged
+extension inside a real VS Code, and the documented configuration in a headless Neovim).
+It is split this way because the repository lives on GitHub's free tier; use `[ci full]`
+for changes to the adapter's core, to stepping, or to anything version-specific. A
+missing toolchain fails CI rather than skipping.

@@ -135,9 +135,24 @@ Conditions, hit counts and log messages work on both sides of the boundary.
 - **Log message:** the breakpoint prints the message to the debug console instead of
   stopping. Text in braces is evaluated: `total is {total}`.
 
+- **Function breakpoint:** a function name, Python or native. For Python the bare name
+  (`compute`), the qualified name (`Point.__init__`) or the module-qualified one
+  (`mypackage.geometry.Point.__init__`) all work.
+- **Data breakpoint:** stop when a native variable changes ("Break on Value Change" in
+  the Variables view). Works for variables of 1, 2, 4 or 8 bytes that live in memory;
+  a native frame's Globals scope lists the statics of its file. Not available for Python
+  variables.
+
 A native breakpoint on a line the compiler left without code (optimised builds) is either
 reported as unverified or moved by LLDB to the next line that has code, which can be in
 the next function; the editor shows where it ended up.
+
+### Variables
+
+Values can be changed from the Variables view or the debug console: Python locals,
+globals, attributes, list items and dict entries at a Python stop (the new value is any
+Python expression), and native variables at a native stop. Long lists are fetched in
+pages, and "Copy as Expression" / "Add to Watch" work on nested values.
 
 ### Exceptions
 

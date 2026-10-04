@@ -47,8 +47,12 @@ jobs:
           SEAM_TEST_PYTHON: /usr/bin/python3.12
         run: scripts/test.sh -q -rs
 
+  # The jobs from here to `clean-machine` are the extended set. The repository is on
+  # GitHub's free tier (2,000 runner minutes a month) and together they cost about 20
+  # minutes, so they do not run on every push: they run weekly, when started by hand, and
+  # on a push whose commit message contains [ci full].
   smoke:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: smoke (${{ matrix.python }}, -${{ matrix.opt }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -79,7 +83,7 @@ jobs:
         run: scripts/test.sh -q -rs -m smoke
 
   lldb:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: smoke (3.12, -O0, LLDB ${{ matrix.lldb }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -103,7 +107,7 @@ jobs:
         run: scripts/test.sh -q -rs -m smoke
 
   editors:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: editors (VS Code extension host, Neovim headless)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -148,7 +152,7 @@ jobs:
           if-no-files-found: ignore
 
   clean-machine:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: clean machine (README install, PyO3 demo)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -181,7 +185,7 @@ jobs:
           if-no-files-found: error
 
   soak:
-    name: soak (${{ github.event.inputs.soak || 'weekly' }})
+    name: soak
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.soak != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30

@@ -412,6 +412,64 @@ Two mistakes made on the way, both found by the same loops:
 This is probably also what was behind the one-off failures recorded in STATUS.md, but
 that is an inference from the similarity, not something those runs' logs can confirm.
 
+## 18. Seam uses a debugger instance of its own, not the `lldb` program's
+
+Seam's adapter runs inside the `lldb` program (§1) and for a long time used the
+`SBDebugger` that program hands to scripts. That debugger has an event-handler thread of
+its own. It is signed up for the state-change events of every process, so each stop
+event went to two consumers: Seam's listener and that thread. Whichever took it first
+did LLDB's stop processing (updating the public state, running the stop actions, deciding
+whether to restart), while the other was already looking at the process.
+
+It was found through data breakpoints. Plain LLDB reports a first, spurious watchpoint
+hit ("value unchanged") and silently continues; Seam received that stop as a real one,
+reported it, and then watched LLDB resume the program underneath it. The stop event Seam
+held said "not restarted"; the restart was decided a moment later, on the other thread.
+
+With a debugger created by Seam itself (`SBDebugger.Create()`), nothing else consumes its
+events, and a whole family of earlier findings went away with it. Measured by looping the
+native breakpoint scenarios under LLDB 20 with half the cores kept busy:
+
+| | shared debugger | own debugger |
+|---|---|---|
+| continues from a breakpoint | 1,584 | 1,920 |
+| stale frame lists (§4d) | 12 | 0 |
+| leftover stops (§17) | 6 | 0 |
+
+and with every core busy, 46 leftover stops in about 860 continues before, none in 384
+after. So the stale frame lists of §4d, the stop events that preceded the public state
+(§10), the unreadable PC register and the leftover stops of §17 were most likely all the
+same race, seen from different angles. That is an inference from the measurements above;
+the earlier diagnoses were each consistent with what was observed at the time. The
+defences written for them stay in place: they cost nothing when nothing is wrong, and
+LLDB 18 and 19 have only been run with the new arrangement on CI, not looped under load.
+
+The transient two-frame backtrace of §12 and the attach crash of §8 (LLDB 18 on CI) may
+have had the same cause. Neither can be re-tested here (LLDB 18 is no longer installed
+locally), so their workarounds stay too.
+
+## 19. Changing variables, function breakpoints, data breakpoints
+
+**Set variable.** A Python local, global, attribute, list item or dict entry is assigned
+by the agent, with the new value given as an expression evaluated in the frame. From
+Python 3.13 `frame.f_locals` writes through to the running frame. In 3.12 it is a
+snapshot, and the interpreter copies it back only for old-style trace functions, so the
+agent calls `PyFrame_LocalsToFast` itself (through `ctypes`, imported only when a
+variable is actually changed). The same applies to an assignment typed into the debug
+console. At a native stop Python variables cannot be changed, for the same reason they
+cannot be evaluated. Native variables are set through LLDB.
+
+**Function breakpoints** take a name and nothing else, and the name may belong to either
+side, so it is given to both: to LLDB as a function-name breakpoint (pending until the
+module that has it loads) and to the agent, which stops on entry to a Python function
+whose bare name, qualified name or `module.qualname` matches. A condition is evaluated in
+the language of the function actually entered.
+
+**Data breakpoints** are LLDB hardware watchpoints on native variables of 1, 2, 4 or 8
+bytes; a native frame's "Globals" scope lists the statics of its source file so that they
+can be chosen. Python variables are refused with an explanation: a Python name has no
+fixed place in memory to watch.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

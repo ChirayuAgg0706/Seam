@@ -41,6 +41,7 @@ _exc_fresh = False   # set at the trap; lets the stop's own first request keep t
 _thread_hook = None  # (ours, the one we replaced) while threading.excepthook is wrapped
 
 _bps = {}         # canonical path -> {line: None (plain breakpoint) or _Spec}
+_func_bps = {}    # bare function name -> [(name as given, None or _Spec)]
 _lines = {}       # id(code) -> set of breakpoint lines (shared with the C callback)
 _codes = {}       # id(code) -> code, for every code object carrying local events
 _paths = {}       # co_filename -> canonical path
@@ -135,7 +136,7 @@ def _compute(code):
 
 
 def _update_global():
-    want = ((E.PY_START if _bps else 0) | (_step.glob if _step else 0)
+    want = ((E.PY_START if _bps or _func_bps else 0) | (_step.glob if _step else 0)
             | (E.RAISE if "raised" in _exc_filters else 0))
     if mon.get_events(TOOL) != want:
         mon.set_events(TOOL, want)
@@ -160,9 +161,23 @@ def _reinstrument():
 
 
 def _on_start(code, offset):
-    if not _internal(code):
-        _compute(code)
-    return mon.DISABLE
+    if _internal(code):
+        return mon.DISABLE
+    _compute(code)
+    specs = _func_bps.get(code.co_name) if _func_bps and not _in_dispatch else None
+    if not specs:
+        return mon.DISABLE
+    # A function breakpoint may name this function: stay enabled for it, and stop if the
+    # name (bare, qualified, or with its module) and the breakpoint's conditions agree.
+    frame = sys._getframe(1)
+    module = frame.f_globals.get("__name__", "")
+    for name, spec in specs:
+        if name in (code.co_name, code.co_qualname, "%s.%s" % (module, code.co_qualname)):
+            if _spec_verdict(spec, frame) == "stop":
+                if _step is not None:
+                    _finish_step()
+                return (None, code, code.co_firstlineno, R_BREAKPOINT)
+    return None
 
 
 class _Spec:
@@ -210,9 +225,12 @@ def _log_text(template, frame):
 
 def _breakpoint_verdict(code, line, frame):
     """What a breakpoint on this line wants right now: "stop", "log" or nothing."""
-    global _in_dispatch
     table = _bps.get(_canon(code.co_filename))
-    spec = table.get(line) if table else None
+    return _spec_verdict(table.get(line) if table else None, frame)
+
+
+def _spec_verdict(spec, frame):
+    global _in_dispatch
     if spec is None:
         return "stop"
     _in_dispatch = True  # an exception inside a condition is not the program's
@@ -481,11 +499,12 @@ def _frame_for(req):
     return frames[index]
 
 
-def _new_ref(obj):
+def _new_ref(obj, expr):
+    """Remember `obj` (and the expression that reaches it, if known) for this stop."""
     global _next_ref
     ref = _next_ref
     _next_ref += 1
-    _refs[ref] = obj
+    _refs[ref] = (obj, expr)
     return ref
 
 
@@ -497,36 +516,93 @@ def _safe_repr(value, limit=2000):
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+_SIMPLE_KEYS = (str, int, float, bool, bytes, type(None))
+
+
+def _attributes(obj):
+    """An object's own data attributes: its __dict__, then its classes' __slots__."""
+    out = {}
+    try:
+        out.update(getattr(obj, "__dict__", None) or {})
+        for klass in type(obj).__mro__:
+            slots = klass.__dict__.get("__slots__", ())
+            for slot in (slots,) if isinstance(slots, str) else slots:
+                if slot not in ("__dict__", "__weakref__") and slot not in out:
+                    try:
+                        out[slot] = getattr(obj, slot)
+                    except AttributeError:
+                        pass  # a slot that has not been assigned yet
+    except BaseException:  # attribute access runs arbitrary user code
+        pass
+    return out
+
+
 def _has_children(value):
     if isinstance(value, (dict, list, tuple, set, frozenset)):
         return len(value) > 0
     if isinstance(value, (int, float, complex, str, bytes, bytearray, type(None))):
         return False
-    try:
-        return bool(getattr(value, "__dict__", None))
-    except BaseException:
-        return False
+    return bool(_attributes(value))
 
 
-def _describe(name, value):
-    return {
+def _describe(name, value, expr=None):
+    """One variable for the adapter. `expr` is source text that evaluates to it."""
+    out = {
         "name": str(name),
         "value": _safe_repr(value),
         "type": type(value).__qualname__,
-        "ref": _new_ref(value) if _has_children(value) else 0,
+        "ref": _new_ref(value, expr) if _has_children(value) else 0,
     }
+    if expr:
+        out["expr"] = expr
+    if isinstance(value, (list, tuple)) and value:
+        out["indexed"] = len(value)  # lets the client fetch long sequences in pages
+    return out
 
 
-def _children(obj, limit=500):
+def _children(obj, expr, start=0, count=None, limit=500):
+    """The children of a container or object, as (name, value, expression) triples."""
+    if isinstance(obj, (list, tuple)):
+        stop = len(obj) if count is None else min(len(obj), start + count)
+        stop = min(stop, start + max(limit, count or 0))
+        return [("[%d]" % i, obj[i], expr and "%s[%d]" % (expr, i))
+                for i in range(start, stop)]
     if isinstance(obj, dict):
-        pairs = ((_safe_repr(k, 200), v) for k, v in list(obj.items())[:limit])
-    elif isinstance(obj, (list, tuple)):
-        pairs = (("[%d]" % i, v) for i, v in enumerate(obj[:limit]))
-    elif isinstance(obj, (set, frozenset)):
-        pairs = (("[%d]" % i, v) for i, v in enumerate(list(obj)[:limit]))
+        return [(_safe_repr(k, 200), v,
+                 expr and isinstance(k, _SIMPLE_KEYS) and "%s[%r]" % (expr, k) or None)
+                for k, v in list(obj.items())[:limit]]
+    if isinstance(obj, (set, frozenset)):
+        return [("[%d]" % i, v, None) for i, v in enumerate(list(obj)[:limit])]
+    return [(k, v, expr and "%s.%s" % (expr, k))
+            for k, v in list(_attributes(obj).items())[:limit]]
+
+
+def _write_back(frame):
+    """Make assignments to a function frame's locals take effect (Python 3.12).
+
+    From 3.13 on `frame.f_locals` writes through. In 3.12 it is a snapshot dict, and the
+    interpreter only copies it back for old-style trace functions; do what it does there.
+    """
+    if sys.version_info < (3, 13):
+        import ctypes
+
+        ctypes.pythonapi.PyFrame_LocalsToFast(ctypes.py_object(frame), ctypes.c_int(0))
+
+
+def _assign_child(container, name, value):
+    """Store `value` where the child shown as `name` lives in `container`."""
+    if isinstance(container, list):
+        container[int(name.strip("[]"))] = value
+    elif isinstance(container, dict):
+        for key in container:
+            if _safe_repr(key, 200) == name:
+                container[key] = value
+                return
+        raise LookupError("no key shown as %s" % name)
+    elif isinstance(container, (tuple, set, frozenset, str, bytes)):
+        raise TypeError("a %s cannot be changed in place" % type(container).__name__)
     else:
-        pairs = list(getattr(obj, "__dict__", {}).items())[:limit]
-    return [_describe(k, v) for k, v in pairs]
+        setattr(container, name, value)
 
 
 def _cmd_sync_breakpoints(req):
@@ -562,6 +638,17 @@ def _cmd_sync_breakpoints(req):
         result[path] = answers
     _bps.clear()
     _bps.update(new)
+    functions = {}
+    for item in req.get("functions") or ():
+        spec = None
+        if item.get("condition") or item.get("hit"):
+            spec = _Spec(item.get("condition") or None, item.get("hit"), None)
+            for name, old in _func_bps.get(item["name"].rpartition(".")[2], ()):
+                if name == item["name"] and spec.same_as(old):
+                    spec.hits = old.hits
+        functions.setdefault(item["name"].rpartition(".")[2], []).append((item["name"], spec))
+    _func_bps.clear()
+    _func_bps.update(functions)
     exceptions = req.get("exceptions")
     if exceptions is not None:
         _set_exception_filters(exceptions["filters"], bool(exceptions["just_my_code"]))
@@ -667,21 +754,49 @@ def _cmd_threads(req):
 def _cmd_variables(req):
     kind = req["kind"]
     if kind == "ref":
-        return _children(_refs[req["ref"]])
+        obj, expr = _refs[req["ref"]]
+        return [_describe(name, value, child_expr) for name, value, child_expr
+                in _children(obj, expr, req.get("start") or 0, req.get("count"))]
     frame = _frame_for(req)
     scope = frame.f_locals if kind == "locals" else frame.f_globals
-    return [_describe(k, v) for k, v in list(scope.items())]
+    return [_describe(k, v, k if isinstance(k, str) and k.isidentifier() else None)
+            for k, v in list(scope.items())]
+
+
+def _cmd_set_variable(req):
+    """Assign the value of an expression to a local, a global, or a child of an object."""
+    frame = _frame_for(req)
+    kind = req["kind"]
+    name = req["name"]
+    local_names = frame.f_locals  # in 3.12, a snapshot that _write_back copies back
+    value = eval(req["value"], frame.f_globals, local_names)
+    if kind == "locals":
+        local_names[name] = value
+        _write_back(frame)
+        return _describe(name, value, name)
+    if kind == "globals":
+        frame.f_globals[name] = value
+        return _describe(name, value, name)
+    container, expr = _refs[req["ref"]]
+    _assign_child(container, name, value)
+    for child, _, child_expr in _children(container, expr):
+        if child == name:
+            return _describe(name, value, child_expr)
+    return _describe(name, value)
 
 
 def _cmd_evaluate(req):
     frame = _frame_for(req)
     expr = req["expr"]
+    local_names = frame.f_locals
     try:
         code = compile(expr, "<seam-eval>", "eval")
     except SyntaxError:
-        exec(compile(expr, "<seam-eval>", "exec"), frame.f_globals, frame.f_locals)
+        # A statement, typically an assignment typed into the debug console.
+        exec(compile(expr, "<seam-eval>", "exec"), frame.f_globals, local_names)
+        _write_back(frame)
         return {"name": "", "value": "", "type": "", "ref": 0}
-    return _describe("", eval(code, frame.f_globals, frame.f_locals))
+    return _describe("", eval(code, frame.f_globals, local_names), "(%s)" % expr)
 
 
 def _cmd_shutdown(req):
@@ -690,6 +805,7 @@ def _cmd_shutdown(req):
     if _step is not None:
         _finish_step()
     _bps.clear()
+    _func_bps.clear()
     _set_exception_filters((), True)
     _post_mortem = _exc_pending = None
     _reinstrument()
@@ -714,6 +830,8 @@ def _cmd_status(req):
         "stepping": _step.mode if _step else None,
         "breakpoints": {p: sorted(t) for p, t in _bps.items()},
         "exception_filters": sorted(_exc_filters),
+        "function_breakpoints": sorted(name for specs in _func_bps.values()
+                                       for name, _ in specs),
     }
 
 
@@ -724,6 +842,7 @@ _COMMANDS = {
     "threads": _cmd_threads,
     "variables": _cmd_variables,
     "evaluate": _cmd_evaluate,
+    "set_variable": _cmd_set_variable,
     "exception": _cmd_exception,
     "logs": _cmd_logs,
     "status": _cmd_status,
@@ -767,7 +886,7 @@ def _install():
     mon.use_tool_id(TOOL, "seam")
     _t.configure(_lines, mon.DISABLE, _on_line, dispatch)
     mon.register_callback(TOOL, E.LINE, _t.line_cb)
-    mon.register_callback(TOOL, E.PY_START, _on_start)
+    mon.register_callback(TOOL, E.PY_START, _t.wrap(_on_start))
     mon.register_callback(TOOL, E.PY_RETURN, _t.wrap(_on_return))
     mon.register_callback(TOOL, E.PY_YIELD, _t.wrap(_on_return))
     mon.register_callback(TOOL, E.PY_UNWIND, _t.wrap(_on_unwind))

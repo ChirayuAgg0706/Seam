@@ -173,6 +173,8 @@ class Adapter:
         self.py_bps = {}              # path -> [{line, condition}]
         self.native_bps = {}          # path -> [SBBreakpoint]
         self.function_bps = []
+        self.py_function_bps = []     # [{name, condition, hit}] for the agent
+        self.watchpoints = {}         # watchpoint id -> {name, address, size, hit, hits}
         self.pending_sync = False
         self.pause_requested = False
         self.output_thread = None
@@ -906,6 +908,8 @@ class Adapter:
         self.process.SetSelectedThread(thread)
         reason = thread.GetStopReason()
         body = {"threadId": thread.GetThreadID(), "allThreadsStopped": True}
+        self.log("stop: thread", thread.GetThreadID(), "reason", reason,
+                 thread.GetStopDescription(80), "pc %#x" % self._pc(thread))
 
         if (reason == lldb.eStopReasonBreakpoint and thread.GetStopReasonDataAtIndex(0)
                 in [bp.GetID() for bp in self.user_bps.values()]):
@@ -950,6 +954,17 @@ class Adapter:
                     self._new_stop()
                     self._continue()
                     return
+            elif (bp.IsValid() and any(bp.GetID() == b.GetID() for b in self.function_bps)
+                    and not self._native_breakpoint_wants_a_stop(thread, bp)):
+                self._new_stop()  # a function breakpoint whose hit count says "not yet"
+                self._continue()
+                return
+        watched = {}
+        if reason == lldb.eStopReasonWatchpoint and not self.pause_requested:
+            if not self._watchpoint_stop(thread, watched):
+                self._new_stop()
+                self._continue()
+                return
         returned = False
         if (self.stepout is not None and reason == lldb.eStopReasonBreakpoint
                 and thread.GetStopReasonDataAtIndex(0) == self.stepout["bp"].GetID()):
@@ -985,6 +1000,8 @@ class Adapter:
             body["reason"] = "breakpoint"
         elif reason == lldb.eStopReasonPlanComplete:
             body["reason"] = "step"
+        elif reason == lldb.eStopReasonWatchpoint:
+            body.update(watched)
         elif reason in (lldb.eStopReasonSignal, lldb.eStopReasonException):
             body["reason"] = "exception"
             body["description"] = thread.GetStopDescription(200)
@@ -1220,6 +1237,9 @@ class Adapter:
             "supportsEvaluateForHovers": True,
             "supportsTerminateRequest": True,
             "supportsExceptionInfoRequest": True,
+            "supportsSetVariable": True,
+            "supportsVariablePaging": True,
+            "supportsDataBreakpoints": True,
             "exceptionBreakpointFilters": EXCEPTION_FILTERS,
         }
 
@@ -1752,14 +1772,7 @@ class Adapter:
                 if b.get("condition"):
                     bp.SetCondition(b["condition"])
                 if hit or b.get("logMessage") is not None:
-                    self.native_bp_specs[bp.GetID()] = {
-                        "hit": hit, "log": b.get("logMessage"), "hits": 0}
-                    if hit and hit[0] in ("==", ">=", ">"):
-                        # LLDB skips the hits before the interesting one without
-                        # stopping; Seam only counts from there on.
-                        skipped = hit[1] if hit[0] == ">" else hit[1] - 1
-                        bp.SetIgnoreCount(max(skipped, 0))
-                        self.native_bp_specs[bp.GetID()]["hits"] = max(skipped, 0)
+                    self._set_native_hit_condition(bp, hit, b.get("logMessage"))
                 self._drop_glue_locations(bp)
                 created.append(bp)
                 self.native_bp_lines[bp.GetID()] = b["line"]
@@ -1832,16 +1845,148 @@ class Adapter:
                     self.event("breakpoint", {"reason": "changed", "breakpoint": answer})
 
     def req_setFunctionBreakpoints(self, args):
+        """Break on entry to a function, by name, whichever side it lives on.
+
+        The name is given to LLDB (a native function, now or when its module loads) and
+        to the agent (a Python function: bare name, qualified name, or module.qualname).
+        A condition is evaluated in the language of the function that is entered.
+        """
+        if self.process is None:
+            raise DapError("nothing has been launched")
+        answers = []
+        python_side = []
         with self._paused():
             for bp in self.function_bps:
+                self.native_bp_specs.pop(bp.GetID(), None)
                 self.target.BreakpointDelete(bp.GetID())
             self.function_bps = []
-            answers = []
             for b in args.get("breakpoints") or []:
+                try:
+                    hit = parse_hit_condition(b.get("hitCondition"))
+                except DapError as exc:
+                    answers.append({"verified": False, "message": str(exc)})
+                    continue
                 bp = self.target.BreakpointCreateByName(b["name"])
+                if b.get("condition"):
+                    bp.SetCondition(b["condition"])
+                if hit:
+                    self._set_native_hit_condition(bp, hit, None)
                 self.function_bps.append(bp)
-                answers.append({"verified": bp.GetNumLocations() > 0})
+                python_side.append({"name": b["name"], "condition": b.get("condition"),
+                                    "hit": hit})
+                answers.append({"verified": True})
+        self.py_function_bps = python_side
+        self._sync_py_bps()
         return {"breakpoints": answers}
+
+    def _set_native_hit_condition(self, bp, hit, log):
+        """Remember a native breakpoint's hit-count condition and log message."""
+        skipped = 0
+        if hit and hit[0] in ("==", ">=", ">"):
+            # LLDB skips the hits before the interesting one without stopping; Seam
+            # only counts from there on.
+            skipped = max(hit[1] if hit[0] == ">" else hit[1] - 1, 0)
+            bp.SetIgnoreCount(skipped)
+        self.native_bp_specs[bp.GetID()] = {"hit": hit, "log": log, "hits": skipped}
+
+    # ------------------------------------------------------ data breakpoints
+
+    def _native_variable(self, record, name):
+        """The SBValue a variables record and a child name refer to, or None."""
+        kind = record[0]
+        if kind in ("native", "statics"):
+            frame = self._native_frame(record[1])
+            values = (frame.GetVariables(True, True, False, True) if kind == "native"
+                      else frame.GetVariables(False, False, True, True))
+            for value in values:
+                if value.GetName() == name:
+                    return value
+            return None
+        if kind == "sb":
+            value = record[1].GetChildMemberWithName(name)
+            if not value.IsValid() and name.startswith("["):
+                value = record[1].GetChildAtIndex(int(name.strip("[]")))
+            return value if value.IsValid() else None
+        return None
+
+    def req_dataBreakpointInfo(self, args):
+        """Can a variable be watched? Native variables of 1, 2, 4 or 8 bytes can."""
+        self._require_stopped()
+        name = args["name"]
+        record = self.refs.get(args.get("variablesReference"))
+        value = None
+        if record is not None:
+            if record[0] in ("py", "pyref"):
+                return {"dataId": None, "description":
+                        "Data breakpoints work on native variables; %s is a Python "
+                        "variable." % name}
+            value = self._native_variable(record, name)
+        elif args.get("frameId") is not None:
+            frame = self._frame_record(args["frameId"])
+            if frame["kind"] == "native":
+                value = self._native_frame(frame).EvaluateExpression(
+                    name, self._expr_options(5))
+                if not value.GetError().Success():
+                    value = None
+        address = value.GetLoadAddress() if value is not None else lldb.LLDB_INVALID_ADDRESS
+        size = value.GetByteSize() if value is not None else 0
+        if address == lldb.LLDB_INVALID_ADDRESS or size not in (1, 2, 4, 8):
+            return {"dataId": None, "description":
+                    "%s cannot be watched: it has no address in memory, or is not 1, 2, 4 "
+                    "or 8 bytes long." % name}
+        return {"dataId": "%x/%d/%s" % (address, size, name), "description": name,
+                "accessTypes": ["write", "readWrite", "read"], "canPersist": False}
+
+    def req_setDataBreakpoints(self, args):
+        if self.process is None:
+            raise DapError("nothing has been launched")
+        answers = []
+        with self._paused():
+            for watch_id in self.watchpoints:
+                self.target.DeleteWatchpoint(watch_id)
+            self.watchpoints = {}
+            for b in args.get("breakpoints") or []:
+                try:
+                    address, size, name = str(b.get("dataId")).split("/", 2)
+                    address, size = int(address, 16), int(size)
+                    hit = parse_hit_condition(b.get("hitCondition"))
+                except (ValueError, DapError) as exc:
+                    answers.append({"verified": False, "message": str(exc)})
+                    continue
+                access = b.get("accessType") or "write"
+                error = lldb.SBError()
+                watch = self.target.WatchAddress(address, size, access != "write",
+                                                 access != "read", error)
+                if not error.Success() or not watch.IsValid():
+                    answers.append({"verified": False, "message":
+                                    "cannot watch %s: %s" % (name, error.GetCString()
+                                                             or "no hardware watchpoint free")})
+                    continue
+                if b.get("condition"):
+                    watch.SetCondition(b["condition"])
+                self.watchpoints[watch.GetID()] = {
+                    "name": name, "address": address, "size": size, "hit": hit, "hits": 0}
+                answers.append({"verified": True})
+        return {"breakpoints": answers}
+
+    def _watchpoint_stop(self, thread, body):
+        """A watched variable was touched. Returns False if the hit does not count."""
+        watch = self.watchpoints.get(thread.GetStopReasonDataAtIndex(0))
+        if watch is None:
+            body.update({"reason": "data breakpoint",
+                         "description": thread.GetStopDescription(120)})
+            return True
+        watch["hits"] += 1
+        if watch["hit"] and not hit_condition_met(watch["hit"], watch["hits"]):
+            return False
+        text = "%s was accessed" % watch["name"]
+        try:
+            raw = self._read(watch["address"], watch["size"])
+            text = "%s is now %d" % (watch["name"], int.from_bytes(raw, "little", signed=True))
+        except ValueError:
+            pass
+        body.update({"reason": "data breakpoint", "description": text, "text": text})
+        return True
 
     def req_setExceptionBreakpoints(self, args):
         wanted = list(args.get("filters") or [])
@@ -1883,9 +2028,11 @@ class Adapter:
             if self.pending_sync:
                 self._write(self.sym["seam_pend_len"], struct.pack("<q", 0))
                 self.pending_sync = False
-            return self.agent("sync_breakpoints", files=self.py_bps, exceptions=exceptions)
+            return self.agent("sync_breakpoints", files=self.py_bps, exceptions=exceptions,
+                              functions=self.py_function_bps)
         with self._paused():
-            self._agent_pending("sync_breakpoints", files=self.py_bps, exceptions=exceptions)
+            self._agent_pending("sync_breakpoints", files=self.py_bps, exceptions=exceptions,
+                                functions=self.py_function_bps)
             self.pending_sync = True
         return None
 
@@ -2073,12 +2220,22 @@ class Adapter:
         return {"scopes": [
             {"name": "Locals", "presentationHint": "locals", "expensive": False,
              "variablesReference": self._new_ref(("native", record))},
+            # The statics and globals of the frame's source file.
+            {"name": "Globals", "expensive": True,
+             "variablesReference": self._new_ref(("statics", record))},
         ]}
 
-    def _py_var(self, item):
-        ref = self._new_ref(("pyref", item["ref"])) if item.get("ref") else 0
-        return {"name": item["name"], "value": item["value"], "type": item["type"],
-                "variablesReference": ref}
+    def _py_var(self, item, frame):
+        """DAP form of a variable from the agent. `frame` is the Python frame record it
+        was reached from: expressions that change its children are evaluated there."""
+        ref = self._new_ref(("pyref", item["ref"], frame)) if item.get("ref") else 0
+        var = {"name": item["name"], "value": item["value"], "type": item["type"],
+               "variablesReference": ref}
+        if item.get("expr"):
+            var["evaluateName"] = item["expr"]
+        if item.get("indexed"):
+            var["indexedVariables"] = item["indexed"]
+        return var
 
     def _sb_var(self, value):
         text = value.GetSummary() or value.GetValue()
@@ -2100,7 +2257,7 @@ class Adapter:
                 try:
                     items = self.agent("variables", kind=scope, tid=frame["tid"],
                                        index=frame["index"], pm=frame.get("pm"))
-                    return {"variables": [self._py_var(i) for i in items]}
+                    return {"variables": [self._py_var(i, frame) for i in items]}
                 except DapError:
                     if scope != "locals" or frame["pf"] is None:
                         raise
@@ -2111,15 +2268,47 @@ class Adapter:
                 {"name": name, "value": text, "type": tname, "variablesReference": 0}
                 for name, text, tname in self.py.frame_locals(frame["pf"])]}
         if kind == "pyref":
-            items = self.agent("variables", kind="ref", ref=record[1])
-            return {"variables": [self._py_var(i) for i in items]}
-        if kind == "native":
+            # Long sequences are fetched in the pages the client asks for.
+            items = self.agent("variables", kind="ref", ref=record[1],
+                               start=args.get("start"), count=args.get("count") or None)
+            return {"variables": [self._py_var(i, record[2]) for i in items]}
+        if kind in ("native", "statics"):
             frame = self._native_frame(record[1])
-            values = frame.GetVariables(True, True, False, True)
+            values = (frame.GetVariables(True, True, False, True) if kind == "native"
+                      else frame.GetVariables(False, False, True, True))
             return {"variables": [self._sb_var(v) for v in values]}
         value = record[1]
         count = min(value.GetNumChildren(), 500)
         return {"variables": [self._sb_var(value.GetChildAtIndex(i)) for i in range(count)]}
+
+    def req_setVariable(self, args):
+        """Change a variable: a Python local, global or member, or a native variable."""
+        self._require_stopped()
+        record = self.refs.get(args["variablesReference"])
+        if record is None:
+            raise DapError("unknown or stale variablesReference")
+        name, text = args["name"], str(args["value"])
+        kind = record[0]
+        if kind in ("py", "pyref"):
+            if self.safe_tid is None:
+                raise DapError(UNSAFE_MESSAGE)
+            frame = record[2]
+            request = {"kind": record[1], "name": name} if kind == "py" else {
+                "kind": "ref", "ref": record[1], "name": name}
+            item = self.agent("set_variable", tid=frame["tid"], index=frame["index"],
+                              pm=frame.get("pm"), value=text, **request)
+            var = self._py_var(item, frame)
+        else:
+            value = self._native_variable(record, name)
+            if value is None:
+                raise DapError("no variable called %s here" % name)
+            error = lldb.SBError()
+            if not value.SetValueFromCString(text, error):
+                raise DapError("cannot set %s: %s" % (name, error.GetCString()
+                                                       or "the value was not accepted"))
+            var = self._sb_var(value)
+        return {"value": var["value"], "type": var["type"],
+                "variablesReference": var["variablesReference"]}
 
     def req_evaluate(self, args):
         self._require_stopped()
@@ -2136,7 +2325,7 @@ class Adapter:
                 raise DapError(UNSAFE_MESSAGE)
             item = self.agent("evaluate", tid=record["tid"], index=record["index"],
                               pm=record.get("pm"), expr=expr)
-            var = self._py_var(item)
+            var = self._py_var(item, record)
             return {"result": var["value"], "type": var["type"],
                     "variablesReference": var["variablesReference"]}
         value = self._native_frame(record).EvaluateExpression(expr, self._expr_options(10))
@@ -2297,6 +2486,12 @@ def serve(debugger):
     sock = socket.socket(fileno=fd)
     log_path = os.environ.get("SEAM_LOG")
     log = open(log_path, "a") if log_path else None
+    # Seam does not use the debugger object of the `lldb` program it runs in. That one
+    # has an event-handler thread of its own, which receives every process event as well
+    # and handles it (updating LLDB's public state, running stop actions, restarting the
+    # process) concurrently with Seam. A debugger created here has no such thread: Seam's
+    # listener is the only consumer of its process's events. See docs/decisions.md §18.
+    debugger = lldb.SBDebugger.Create(False)
     adapter = Adapter(debugger, sock, log)
     note_fd = os.environ.get("SEAM_NOTE_FD")
     if note_fd:
@@ -2314,3 +2509,4 @@ def serve(debugger):
             sock.close()
         except OSError:
             pass
+        lldb.SBDebugger.Destroy(debugger)
