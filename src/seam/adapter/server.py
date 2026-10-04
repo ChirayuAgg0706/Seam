@@ -108,6 +108,7 @@ class Adapter:
         self.show_glue_frames = False
         self.user_bps = {}            # module path -> breakpoint on all its user functions
         self.user_bps_on = False
+        self.unwind_warnings = set()  # functions LLDB failed to unwind (warned once each)
         self.last_native_stop = {}    # tid -> (line key, pc) of the last reported stop
         self.native_bp_lines = {}     # breakpoint id -> line the user asked for
         self.native_bp_state = {}     # breakpoint id -> (verified, line) last reported
@@ -389,6 +390,51 @@ class Adapter:
             return "framework"
         return "user"
 
+    def _native_frames(self, thread, retry=True):
+        """The thread's native frames, cut where LLDB's unwinder went wrong.
+
+        When LLDB cannot unwind a function it tends to end the backtrace with a frame
+        whose PC is not code at all (LLDB 20 does this under nanobind's optimised
+        library, ending in `_PyRuntime + N`). Such a frame must never be used as a place
+        to run to.
+
+        Sometimes the bad frame is a glitch rather than a real limit: about once in 40
+        stops in `seam_trap`, LLDB 20 produced a two-frame backtrace whose second frame
+        was in a data section. Making LLDB rebuild its frame list (the same harmless
+        `getpid()` call used for stale frames) is tried once before giving up.
+        """
+        frames = []
+        for i in range(thread.GetNumFrames()):
+            frame = thread.GetFrameAtIndex(i)
+            if i:
+                section = frame.GetPCAddress().GetSection()
+                if (not section.IsValid()
+                        or not section.GetPermissions() & lldb.ePermissionsExecutable):
+                    self.log("native frames cut at", i, "of", thread.GetNumFrames(),
+                             "pc %#x" % frame.GetPC(), "name", frame.GetFunctionName(),
+                             "rsp %#x" % thread.GetFrameAtIndex(0).GetSP())
+                    if retry and self.sym.get("getpid"):
+                        try:
+                            self._call(thread, "((int(*)(void))%d)()" % self.sym["getpid"],
+                                       timeout_s=5)
+                        except DapError as exc:
+                            self.log("refresh failed:", exc)
+                        again = self._native_frames(thread, retry=False)
+                        self.log("after refresh:", len(again), "frames")
+                        return again
+                    break
+            frames.append(frame)
+        return frames
+
+    def _warn_truncated(self, frame):
+        name = frame.GetFunctionName() or "%#x" % frame.GetPC()
+        if name not in self.unwind_warnings:
+            self.unwind_warnings.add(name)
+            self.event("output", {"category": "console", "output":
+                       "Seam: LLDB could not unwind the native stack past `%s`. Native "
+                       "frames below it are missing from the call stack; Python frames "
+                       "are still complete.\n" % name[:120]})
+
     def _landing_class(self, thread):
         """Class of the place a thread is stopped at, looking through inlined glue.
 
@@ -516,12 +562,31 @@ class Adapter:
 
     def _step_out_of_glue(self, thread):
         """Step out to the nearest frame that is user code or the interpreter."""
-        natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+        natives = self._native_frames(thread)
         target_index = 1
-        while (target_index < len(natives) - 1
+        while (target_index < len(natives)
                and self._classify_frame(natives[target_index]) in GLUE):
             target_index += 1
-        self._step_out_to(thread, natives, target_index)
+        if target_index < len(natives):
+            self._step_out_to(thread, natives, target_index)
+            return
+        # Nowhere to run to: every remaining frame is glue, which means LLDB's backtrace
+        # ended early. If Python called this code, hand the step to the Python side
+        # instead: stop when the calling Python frame resumes.
+        tid = thread.GetThreadID()
+        if not self.py.holds_gil(tid):
+            raise DapError("cannot step out: LLDB could not unwind the native stack here")
+        self._warn_truncated(natives[-1])
+        self.safe_tid = tid
+        try:
+            self.agent("step", mode="caller", tid=tid)
+        finally:
+            self.safe_tid = None
+        self._finish_steps(thread, cancel_py=False)
+        self.py_step_armed = True
+        err = self.process.Continue()
+        if not err.Success():
+            raise DapError("could not resume: %s" % err.GetCString())
 
     def _discard_plans(self, thread):
         """Drop LLDB step plans so a later `continue` does not stop where a step would."""
@@ -590,7 +655,7 @@ class Adapter:
         if reason == R_RETURN_NATIVE:
             # The stepped Python function is returning to native code that called it:
             # finish with a native step-out into the nearest user frame.
-            natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+            natives = self._native_frames(thread)
             for i, native in enumerate(natives):
                 if i and self._classify_frame(native) == "user":
                     self._finish_steps(thread, cancel_py=False)
@@ -673,9 +738,12 @@ class Adapter:
                 # Returned into binding glue: keep going until user code or the interpreter.
                 self.native_stepping["hops"] += 1
                 self._new_stop()
-                self._step_out_of_glue(thread)
-                self.running = True
-                return
+                try:
+                    self._step_out_of_glue(thread)
+                    self.running = True
+                    return
+                except DapError as exc:
+                    self.log("cannot leave glue:", exc)  # report the stop where it is
         self._finish_steps(thread)
         if self.pause_requested:
             self.pause_requested = False
@@ -860,8 +928,7 @@ class Adapter:
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
         if not self.target or not self.target.IsValid():
             raise DapError("cannot create a target for %s: %s" % (python, err.GetCString()))
-        bp_main = self.target.BreakpointCreateByName("Py_RunMain")
-        self.bp_trap = self.target.BreakpointCreateByName("seam_trap")
+        bp_main = self._entry_breakpoint("Py_RunMain")
 
         info = lldb.SBLaunchInfo(argv)
         info.SetWorkingDirectory(self.cwd)
@@ -910,6 +977,21 @@ class Adapter:
         self.target.GetBroadcaster().AddListener(
             self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
 
+    def _entry_breakpoint(self, name):
+        """Breakpoint on a function's first instruction, located through the symbol table.
+
+        Seam's own breakpoints are not set by function name. LLDB 20 resolves a name
+        breakpoint through the debug info and skips the prologue; with the interpreter's
+        debug info in a separate file it lands at a wrong address (`Py_RunMain` ended up
+        inside a data table), so the breakpoint was never hit. The symbol table is right.
+        """
+        for ctx in self.target.FindSymbols(name):
+            address = ctx.GetSymbol().GetStartAddress()
+            if address.IsValid():
+                return self.target.BreakpointCreateBySBAddress(address)
+        # Not in any module yet (an interpreter linked against libpython): by name.
+        return self.target.BreakpointCreateByName(name)
+
     def _find_python(self):
         """Locate the interpreter in the process and set up the raw-memory reader."""
         self._watch_breakpoints()
@@ -943,6 +1025,9 @@ class Adapter:
             self.sym[name] = addr
         self.helper_module = module.GetFileSpec().fullpath
         self.sym["cap"] = struct.unpack("<q", self._read(self.sym["seam_req_cap"], 8))[0]
+        if self.bp_trap is not None:
+            self.target.BreakpointDelete(self.bp_trap.GetID())
+        self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
 
     def _inject(self, thread):
         """Load the agent. The caller guarantees `thread` is at a safe point."""
@@ -979,6 +1064,8 @@ class Adapter:
             except OSError:
                 pass
             self._find_python()
+            # The helper is not loaded yet, so this one can only be set by name; it is
+            # replaced by an address breakpoint as soon as the helper's symbols exist.
             self.bp_trap = self.target.BreakpointCreateByName("seam_trap")
             method = self._request_agent_load()
             thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
@@ -1259,7 +1346,7 @@ class Adapter:
             return cached
         tstate, _ = self.py.find_thread(tid)
         groups = self.py.thread_groups(tstate) if tstate else []
-        natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+        natives = self._native_frames(thread)
         sps = [f.GetSP() for f in natives]
         if self.logfile:
             self.log("native frames of", tid, "stop reason", thread.GetStopReason(),
@@ -1282,7 +1369,9 @@ class Adapter:
             found = None
             if entry is not None:
                 for i in range(search_from, len(natives)):
-                    if sps[i] <= entry and (uppers[i] is None or entry < uppers[i]):
+                    # The oldest frame has no known upper bound, so it never matches:
+                    # if the backtrace was cut short it would claim every older group.
+                    if uppers[i] is not None and sps[i] <= entry < uppers[i]:
                         found = i
                         break
             if found is None:
@@ -1291,6 +1380,9 @@ class Adapter:
                 anchors[found] = frames
                 search_from = found + 1
         groups = unmatched
+        if unmatched and natives:
+            # Python frames whose eval loop is not on the native stack LLDB produced.
+            self._warn_truncated(natives[-1])
 
         out = []
         hide_top = self.stop_is_trap and tid == self.safe_tid
@@ -1521,7 +1613,7 @@ class Adapter:
             return None
 
         self.process.SetSelectedThread(thread)
-        natives = [thread.GetFrameAtIndex(i) for i in range(thread.GetNumFrames())]
+        natives = self._native_frames(thread)
         start = top["index"] if top is not None else 0
         if mode == "in" and self._control_safe(thread):
             # If the stepped statement calls back into Python, stop on its first line.

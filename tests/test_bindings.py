@@ -112,6 +112,16 @@ def test_native_breakpoint_then_into_and_out_of_a_python_callback(dap, binding, 
     assert (stack[0]["name"], stack[0]["line"]) == ("cb", marker_line(BINDING, "cb-body")), \
         describe(stack)
     assert dap.evaluate("v", stack[0]["id"])["result"] == "5"
+    if "could not unwind the native stack" in dap.output:
+        # LLDB itself lost the native frames below the callback (LLDB 20 cannot unwind
+        # nanobind's optimised library code; its own `bt` stops there too). Seam says so
+        # and still shows every Python frame; the native caller cannot be stepped back to.
+        assert binding.opt != "O0", dap.output
+        assert python_frames(stack)[-2:] == [
+            ("main", marker_line(BINDING, "bind-callback")),
+            ("<module>", marker_line(BINDING, "module-main"))], describe(stack)
+        pytest.skip("LLDB could not unwind below the callback in the %s -%s build; Seam "
+                    "reported it and kept the Python frames" % (binding.layer, binding.opt))
     user_native = [f for f in stack if f.get("source", {}).get("path") == binding.source]
     assert user_native and "call_back" in user_native[0]["name"], describe(stack)
 

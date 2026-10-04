@@ -197,6 +197,45 @@ user code or glue by its own name and line, not by the innermost function at its
 when the newest frame is glue inlined into a user function the stop belongs to the user
 function.
 
+## 12. LLDB 20: internal breakpoints by symbol address, and truncated backtraces
+
+Running the suite under LLDB 20.1.2 (after LLDB 18 was replaced on the development
+machine) turned up two differences from 18.
+
+**Function-name breakpoints land at the wrong address** when the interpreter's debug info
+is in a separate file (`python3.x-dbg`). `breakpoint set -n Py_RunMain` resolved to an
+address inside a data table (`0x8b89de` instead of `0x6bc920` on 3.12), so the launch
+breakpoint was never hit and the program ran to completion. Symbol-table lookup gives the
+right address. Seam now sets its own breakpoints (`Py_RunMain`, `seam_trap`) on the
+symbol's start address. The one exception is `seam_trap` during attach, which has to be
+set by name before the helper is loaded; it is replaced by an address breakpoint as soon
+as the helper's symbols exist, and the helper carries its debug info in the same file, so
+the bug does not apply to it. Breakpoints the user sets by function name still go
+through LLDB's name resolution.
+
+**LLDB 20 cannot unwind through nanobind's optimised library code.** Its own `bt` ends
+there with a frame whose PC is inside `_PyRuntime` (data). LLDB 18 unwound the same binary
+correctly. Seam cannot repair the unwinder, so it contains the damage:
+
+- a frame whose PC is not in an executable section ends the native frame list;
+- the oldest native frame never claims a group of Python frames (its stack area has no
+  known upper bound), so a cut-short backtrace is recognised as such, the Python frames
+  are still shown, and a console message names the function LLDB stopped at;
+- stepping out when no frame is left to run to falls back to arming the Python-side step
+  (the thread holds the GIL), instead of running to a bogus address.
+
+Native frames below the point of failure, such as the user's function that called a
+Python callback, are simply missing in that situation.
+
+**A transient two-frame backtrace.** About once in 40 stops in `seam_trap`, LLDB 20
+returned a backtrace of two frames whose second frame was in a data section. This showed
+up as an intermittent test failure. When the native frame list ends in such a frame Seam
+makes LLDB rebuild it once (the `getpid()` call from §4d) before treating it as
+truncated; in 80 looped runs the glitch occurred twice and both times the rebuild
+returned the full 24-frame stack. One unexplained failure seen earlier under LLDB 18 (a
+nanobind callback scenario, see STATUS.md) has the same shape, but that run's output was
+not kept, so this is a guess.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

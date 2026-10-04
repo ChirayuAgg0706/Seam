@@ -10,7 +10,7 @@ scripted DAP client (`tests/`). Nothing is marked done on the strength of readin
 
 | # | Item | Status | Evidence / what is missing |
 |---|---|---|---|
-| 1 | Python 3.12, 3.13, 3.14, including builds with no debug info | **partial** | Without debug info: done on all three (uv standalone builds, and system 3.12 with symbol lookup disabled, which leaves only the dynamic symbol table). With debug info: done on 3.12 (Ubuntu `python3-dbg`). **3.13 and 3.14 with debug info are not tested** — blocked, see below. |
+| 1 | Python 3.12, 3.13, 3.14, including builds with no debug info | **done** | With debug info: Ubuntu's 3.12 and the deadsnakes 3.13/3.14 with their `-dbg` packages, full suite. Without: uv's standalone builds of all three (symbol table, no DWARF), full suite; and system 3.12 with symbol lookup disabled (dynamic symbols only), smoke. |
 | 2 | Breakpoints in Python files (incl. modules imported later) and native files, in one session, add/remove while running | **done** | `test_python.py`, `test_mixed.py::test_python_and_native_breakpoints_in_one_session`, `::test_breakpoints_added_and_removed_while_running`. Conditional breakpoints and moving a breakpoint off a line without code are also covered. |
 | 3 | Merged call stack, Seam's frames hidden, nested Python → native → Python → native, multi-threaded | **done** | `test_mixed.py::test_native_breakpoint_shows_one_merged_stack` (four alternations), `::test_threads_each_have_a_correct_merged_stack`. Python frames are compared with `traceback.extract_stack()` / `sys._current_frames()` taken inside the target. |
 | 4 | Variables: Python locals in Python frames, native locals in native frames | **done** | Same tests. At native stops Python locals are decoded from memory (simple built-in types show values, others type and address). |
@@ -37,25 +37,33 @@ GitHub Actions, on every push (`.github/workflows/ci.yml`). Last run: all 8 jobs
 A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`). One run costs
 roughly 12 minutes of Actions time across the jobs.
 
-## Test matrix (last local run)
+## Test matrix
 
 Full suite = 40 tests. Smoke = 27 tests (the mixed-mode, stepping, binding-layer and
 attach scenarios plus two Python-only ones; not the overhead or unit checks).
 
+**Local, LLDB 20.1.2** (last run; LLDB 20 replaced LLDB 18 on this machine when it was
+installed, so local runs are LLDB 20 only from here on):
+
 | Interpreter | Python debug info | -O0 | -O2 |
 |---|---|---|---|
-| 3.12.3 system | yes (`python3-dbg`) | full: 40 pass | smoke: 25 pass, 2 skipped |
-| 3.12.3 system | none at all (lookup disabled: dynamic symbols only) | smoke: 27 pass | not run |
+| 3.12.3 Ubuntu | yes (`python3-dbg`) | full: 40 pass | smoke: 25 pass, 2 skipped |
+| 3.13.16 deadsnakes | yes (`python3.13-dbg`) | full: 40 pass | smoke: 25 pass, 2 skipped |
+| 3.14.8 deadsnakes | yes (`python3.14-dbg`) | full: 40 pass | smoke: 25 pass, 2 skipped |
 | 3.12.15 uv | symbol table, no DWARF | full: 40 pass | not run |
-| 3.13.16 uv | symbol table, no DWARF | full: 40 pass | smoke: 25 pass, 2 skipped |
-| 3.14.8 uv (tail-call interpreter) | symbol table, no DWARF | full: 40 pass | smoke: 25 pass, 2 skipped |
+| 3.13.16 uv | symbol table, no DWARF | full: 40 pass | not run |
+| 3.14.8 uv (tail-call interpreter) | symbol table, no DWARF | full: 40 pass | not run |
 
-Flakiness hunting on system 3.12, -O0: every stepping and binding-layer scenario looped
-8× after the last code change (144 runs, no failure); the stepping scenarios had earlier
-been looped 15× (150 runs, no failure).
+**LLDB 18.1.3**: the same suite passed locally before the switch (full at -O0 on system
+3.12 and the three uv builds; smoke at -O2 on 3.12, 3.13 and 3.14; smoke on system 3.12
+with symbol lookup disabled), and CI runs it on LLDB 18 on every push.
+
+Flakiness hunting: on LLDB 18, every stepping scenario looped 15× (150 runs) and every
+stepping and binding scenario 8× (144 runs) with no failure. On LLDB 20, the scenario
+that exposed the transient-backtrace glitch looped 80× clean after the fix.
 
 The two skips at -O2 are the same on every interpreter and are not Seam failures; the test
-asserts what Seam reports before skipping:
+asserts what Seam reports before skipping. Which two depends on the LLDB version:
 
 - **nanobind -O2, PyO3 -O2: breakpoint on the line that calls the Python callback.** The
   optimiser leaves that statement with no code of its own (it is one inlined library
@@ -64,6 +72,12 @@ asserts what Seam reports before skipping:
   breakpoint as unverified and the program runs normally. So "step in from native to a
   Python callback" is **untested for nanobind and PyO3 at -O2**. It passes for the C API,
   pybind11 and Cython at -O2.
+- **nanobind -O2 under LLDB 20** fails differently: the breakpoint is placed before the
+  call and stepping into the callback works, but LLDB 20 cannot unwind through nanobind's
+  optimised library code (its own `bt` stops there), so the native frames below the
+  callback are missing and the callback cannot be stepped back out to its native caller.
+  Seam says so in the debug console, still shows every Python frame, and a step out from
+  such a place falls back to the Python caller instead of running away.
 
 Binding-layer results in detail:
 
@@ -88,19 +102,22 @@ on the `def` line first; pressing it again gets there (the test allows up to 12,
   step. It has not recurred in more than 250 further runs of that scenario or in any of
   the full-suite passes since. The test now records the stop's description if it happens
   again. I do not know the cause and am not claiming it is fixed.
-- **A second unexplained failure, not reproduced.** In the final verification pass the
-  nanobind "native breakpoint, then into a Python callback" scenario failed once on the uv
-  3.12 build at -O0. I had filtered the output of that run down to pass/fail lines and so
-  do not have the failure message. It did not recur in 40 targeted repeats, 6 full-suite
-  passes on that interpreter, or 8 further alternating full passes. Cause unknown.
+- **A second one-off failure, probable cause found later.** A nanobind callback scenario
+  failed once on the uv 3.12 build under LLDB 18; I had filtered that run's output and
+  lost the message, and it did not recur in 54 further runs. Under LLDB 20 an intermittent
+  failure of the same shape was caught with full logs and traced to LLDB occasionally
+  returning a two-frame backtrace; Seam now recovers from it (`docs/decisions.md` §12).
+  That this was also the LLDB 18 failure is a guess.
 - **One CI-only failure, probable cause fixed.** In one CI run, on the 3.14 -O2 cell, the
   adapter exited during the first request after an attach. It did not recur in the next
   CI run or in 48 local attach runs. A real defect that fits the symptom was then found
   and removed (`docs/decisions.md` §10, second part), but since the failure was never
   reproduced I cannot show that this was it. Test failures now include LLDB's own output.
 - **Thread-heavy programs run about 2× slower** under Seam even with no breakpoints.
-- **LLDB 19 and 20 are untested.** Only LLDB 18.1.3 is installed here. The stale-frame
-  workaround (`docs/decisions.md` §4d) is specific to behaviour observed on 18.
+- **LLDB 19 is untested.** 18.1.3 (CI) and 20.1.2 (local) are. LLDB 20 needed three
+  accommodations, all in `docs/decisions.md` §12: internal breakpoints by symbol address,
+  recovery from a transient short backtrace, and safe handling of a backtrace LLDB cannot
+  complete.
 - Limits by design are listed in the README's Limitations section (no Python evaluation
   at native stops, no stdin for the debugged program, no embedded interpreters, modules
   over 20,000 functions excluded from step-in).
@@ -124,12 +141,5 @@ WSL so that `seam dap` runs in a terminal:
 
 ## Blocked on the project owner
 
-- **3.13 and 3.14 with debug symbols** (checklist item 1). Needs, with sudo:
-
-  ```bash
-  sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update && sudo apt-get install -y python3.13 python3.13-dev python3.13-dbg python3.14 python3.14-dev python3.14-dbg
-  ```
-
-  Then: `SEAM_TEST_PYTHON=/usr/bin/python3.13 scripts/test.sh -q` and the same for 3.14.
-- **A second LLDB version** (optional): `sudo apt-get install -y lldb-20`, then
-  `SEAM_LLDB=lldb-20 scripts/test.sh -q`.
+Nothing. (The deadsnakes interpreters and LLDB 20 were installed on 2026-10-04 and the
+cells they unblocked are in the matrix above.)

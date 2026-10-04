@@ -58,12 +58,17 @@ def test_line_at_agrees_with_co_lines_for_every_offset():
 SYSTEM_PYTHON = "/usr/bin/python3.12"
 
 
-@pytest.mark.skipif(not os.path.exists(SYSTEM_PYTHON) or not shutil.which("lldb"),
+LLDB = os.environ.get("SEAM_LLDB") or next(
+    (p for p in map(shutil.which, ("lldb", "lldb-21", "lldb-20", "lldb-19", "lldb-18")) if p),
+    None)
+
+
+@pytest.mark.skipif(not os.path.exists(SYSTEM_PYTHON) or not LLDB,
                     reason="needs the system CPython 3.12 and LLDB")
 def test_bundled_312_layout_matches_debug_info():
     """3.12 has no _Py_DebugOffsets, so Seam bundles a table; re-derive it from debug info."""
     out = subprocess.run(
-        ["lldb", "--batch", "-o", "target create " + SYSTEM_PYTHON,
+        [LLDB, "--batch", "-o", "target create " + SYSTEM_PYTHON,
          "-o", "command script import " + os.path.join(ROOT, "tools", "dump_offsets.py")],
         capture_output=True, text=True, timeout=300).stdout
     line = next((l for l in out.splitlines() if l.startswith("SEAM_OFFSETS ")), None)

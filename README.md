@@ -20,7 +20,7 @@ See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
 - Linux x86-64.
 - CPython 3.12, 3.13 or 3.14 as the program being debugged. Interpreters without debug
   info (uv-managed Pythons, `-slim` container images) are supported.
-- LLDB 18 or newer, with its Python scripting support (the normal distro package).
+- LLDB 18 or newer, with its Python scripting support (the normal distro package). Tested with 18.1.3 and 20.1.2.
 - A C compiler and the CPython headers, to build Seam's small in-process helper at
   install time.
 - Permission to `ptrace` the program (the default when Seam launches it).
@@ -175,9 +175,11 @@ Known limits of what is in scope:
   because LLDB handles every thread start and exit. CPU-bound work is unaffected.
 - **Embedded interpreters.** Launch expects a normal `python` executable (it injects the
   helper at `Py_RunMain`). Programs that embed Python are not supported.
-- **LLDB 18 quirk.** Seam works around an LLDB bug that shows stale frames after an
-  interrupt (see [docs/decisions.md](docs/decisions.md)); the workaround calls
-  `getpid()` in the target.
+- **LLDB quirks.** Seam works around LLDB showing stale or cut-short frame lists (see
+  [docs/decisions.md](docs/decisions.md) §4d and §12); the workaround calls `getpid()` in
+  the target. Where LLDB genuinely cannot unwind a function (LLDB 20 through nanobind's
+  optimised library code), native frames below it are missing; Seam says so in the debug
+  console and still shows every Python frame.
 
 ## Development
 
