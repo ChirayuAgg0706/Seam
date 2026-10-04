@@ -2,12 +2,16 @@ name: tests
 
 on:
   push:
+    branches: [main]
   schedule:
     # Weekly: the whole suite against whatever the runner image, uv, PyO3 and friends
     # have become, plus a looped run of the stepping scenarios to catch nondeterminism.
     - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
+      only:
+        description: "Run one job only: full, smoke, lldb, editors, clean-machine or vsix (empty: all of them)"
+        default: ""
       repeat:
         description: "Run each stepping scenario this many times (flakiness hunt)"
         default: "1"
@@ -17,9 +21,19 @@ on:
       soak_python:
         description: "Soak only: Python version (uv build)"
         default: "3.14"
+      soak_lldb:
+        description: "Soak only: LLDB version (18 is the distribution's default)"
+        default: "18"
+      soak_rounds:
+        description: "Soak only: run the selection this many times over"
+        default: "1"
+      soak_load:
+        description: "Soak only: CPU-burning processes to run alongside the tests"
+        default: "0"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A push cancels the run of the push before it. Runs started by hand are left alone.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'auto' }}
   cancel-in-progress: true
 
 env:
@@ -27,7 +41,7 @@ env:
 
 jobs:
   full:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'full') }}
     name: full suite (3.12, -O0)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -52,7 +66,7 @@ jobs:
   # minutes, so they do not run on every push: they run weekly, when started by hand, and
   # on a push whose commit message contains [ci full].
   smoke:
-    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'smoke') && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: smoke (${{ matrix.python }}, -${{ matrix.opt }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -83,7 +97,7 @@ jobs:
         run: scripts/test.sh -q -rs -m smoke
 
   lldb:
-    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'lldb') && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: smoke (3.12, -O0, LLDB ${{ matrix.lldb }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -107,7 +121,7 @@ jobs:
         run: scripts/test.sh -q -rs -m smoke
 
   editors:
-    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'editors') && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: editors (VS Code extension host, Neovim headless)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -152,7 +166,7 @@ jobs:
           if-no-files-found: ignore
 
   clean-machine:
-    if: ${{ (github.event.inputs.soak == '' || github.event.inputs.soak == null) && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'clean-machine') && (github.event_name != 'push' || contains(github.event.head_commit.message, '[ci full]')) }}
     name: clean machine (README install, PyO3 demo)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -165,7 +179,7 @@ jobs:
         run: scripts/clean-machine-check.sh
 
   vsix:
-    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    if: ${{ !github.event.inputs.soak && (!github.event.inputs.only || github.event.inputs.only == 'vsix') }}
     name: lint, versions, VS Code extension package
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -191,12 +205,18 @@ jobs:
     timeout-minutes: 30
     env:
       SOAK_PYTHON: ${{ github.event.inputs.soak_python || '3.14' }}
+      SOAK_LLDB: ${{ github.event.inputs.soak_lldb || '18' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install LLDB and build tools
         run: |
+          package=lldb
+          if [ "$SOAK_LLDB" != 18 ]; then
+            package="lldb-$SOAK_LLDB"
+            echo "SEAM_LLDB=lldb-$SOAK_LLDB" >> "$GITHUB_ENV"
+          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lldb gcc g++ python3-dev
+          sudo apt-get install -y --no-install-recommends "$package" gcc g++ python3-dev
           sudo sysctl -w kernel.yama.ptrace_scope=0
       - uses: astral-sh/setup-uv@v5
       - name: Install the interpreter under test
@@ -208,4 +228,25 @@ jobs:
           # The weekly run loops the stepping, binding-layer and attach scenarios.
           SEAM_TEST_REPEAT: ${{ github.event_name == 'schedule' && '8' || github.event.inputs.repeat }}
           SOAK_SELECT: ${{ github.event.inputs.soak || 'test_stepping or test_bindings or test_attach' }}
-        run: scripts/test.sh -q -k "$SOAK_SELECT"
+          SOAK_ROUNDS: ${{ github.event.inputs.soak_rounds || '1' }}
+          SOAK_LOAD: ${{ github.event.inputs.soak_load || '0' }}
+        run: |
+          # Races between Seam and LLDB show up when the machine is busy, so the loop
+          # can be run with some cores kept spinning.
+          for _ in $(seq "$SOAK_LOAD"); do (while :; do :; done) & done
+          status=0
+          for round in $(seq "$SOAK_ROUNDS"); do
+            scripts/test.sh -q -p no:cacheprovider --basetemp="$RUNNER_TEMP/soak/$round" \
+              -k "$SOAK_SELECT" || status=1
+          done
+          # What the adapter had to work around, counted from its logs.
+          logs() { cat "$RUNNER_TEMP"/soak/*/*/seam*.log 2>/dev/null; }
+          {
+            echo "cores: $(nproc), busy: $SOAK_LOAD, rounds: $SOAK_ROUNDS, $(${SEAM_LLDB:-lldb} --version | head -1)"
+            echo "continue requests: $(logs | grep -c '"command": "continue"')"
+            echo "leftover stops ignored: $(logs | grep -c 'stop without a current reason')"
+            echo "stale frame lists refreshed: $(logs | grep -c 'stale frame list')"
+            echo "breakpoints reported by a thread no longer at them: $(logs | grep -c 'reports a breakpoint it is no longer at')"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          kill $(jobs -p) 2>/dev/null || true
+          exit $status
