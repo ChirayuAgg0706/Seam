@@ -38,7 +38,7 @@ when a scenario test for it has been seen passing; [STATUS.md](STATUS.md) has th
 |---|---|---|
 | 14 | Wheel, sdist and `.vsix` built and checked by a workflow; changelog; versions kept in step. | **done** as a workflow (`release.yml`); nothing is published |
 | 15 | Lint in CI; contributor and security notes. | **done** |
-| 16 | Split the 2,100-line adapter module (`adapter/server.py`) into stepping, breakpoints, stack and session parts. | not started. Worth doing before more features go in, with the suite as the safety net. |
+| 16 | Split the 2,500-line adapter module into parts. | **done**: `adapter/protocol.py`, `session.py`, `stops.py`, `stepping.py`, `breakpoints.py`, `stack.py`, `common.py`. Moved mechanically, method texts unchanged; the full suite passes before and after. |
 
 ## Things found on the way that are still open
 

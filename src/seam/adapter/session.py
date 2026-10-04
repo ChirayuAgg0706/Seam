@@ -1,0 +1,580 @@
+"""Starting and ending a session: launch, attach, the terminal, exit, detach."""
+import json
+import os
+import shutil
+import signal
+import socket
+import struct
+import tempfile
+import termios
+import threading
+import time
+
+import lldb
+
+from . import pyread
+from .common import (
+    CONSOLES, DapError, EVAL_PLEASE_STOP_BIT, EXIT_PACKET, FAULT_SIGNALS, FRAMEWORK_PATHS,
+    HELPER_SYMBOLS, LLDB_SIGNALS, PRIVATE_ENV, TARGET_DIR, TERMINAL_HOLDER, TERMINAL_SIGNALS,
+)
+
+
+class SessionMixin:
+    def _watch_exit_packets(self):
+        """Learn whether the program exited or was killed by a signal.
+
+        LLDB's API reports both as an exit status (SIGKILL and `sys.exit(9)` both read 9,
+        with no description). The difference survives in one place only: the last packet
+        of the debug-server protocol. So that channel is logged to a callback which keeps
+        nothing but that packet.
+        """
+        def on_log(line):
+            match = EXIT_PACKET.search(line)
+            if match:
+                self.exit_packet = (match.group(1), int(match.group(2), 16))
+
+        self._on_log = on_log  # LLDB does not keep the callable alive
+        self.dbg.SetLoggingCallback(on_log)
+        self.dbg.HandleCommand("log enable gdb-remote packets")
+
+    def _drain_output(self):
+        for getter, category in ((self.process.GetSTDOUT, "stdout"),
+                                 (self.process.GetSTDERR, "stderr")):
+            while True:
+                text = getter(4096)
+                if not text:
+                    break
+                self.event("output", {"category": category, "output": text})
+
+    def _pump_output(self, master):
+        """Forward everything the target writes to its pty as DAP output events."""
+        try:
+            while True:
+                data = os.read(master, 65536)
+                if not data:
+                    break
+                self.event("output", {"category": "stdout",
+                                      "output": data.decode("utf-8", "replace")})
+        except OSError:
+            pass  # EIO: every writer has closed the pty
+        finally:
+            os.close(master)
+
+    def _on_exit(self):
+        if self.exited:
+            return
+        self.exited = True
+        self.running = False
+        if self.output_thread is not None:
+            self.output_thread.join(2)
+        self._drain_output()
+        self._release_terminal()
+        code = self.process.GetExitStatus()
+        if self.exit_packet == ("X", code):
+            self.event("output", {"category": "console", "output":
+                       "Seam: the program was terminated by signal %s.\n"
+                       % self._signal_name(code)})
+            code += 128  # what a shell would report
+        self.event("exited", {"exitCode": code})
+        self.event("terminated")
+
+    @staticmethod
+    def _signal_name(number):
+        try:
+            return signal.Signals(number).name
+        except ValueError:
+            return str(number)
+
+    def _kill(self):
+        """End the session: kill a program Seam launched, detach from one it attached to."""
+        if self.process is not None and self.process.IsValid() and not self.exited:
+            if self.attached:
+                self._detach()
+            else:
+                self.process.Kill()
+                self.exited = True
+        for path in self.temp_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self.temp_files = []
+        self._release_terminal()
+
+    def _release_terminal(self):
+        """Hang up on the terminal holder: the program is gone, the terminal is free."""
+        if self.terminal is not None:
+            try:
+                self.terminal.shutdown(socket.SHUT_RDWR)
+                self.terminal.close()
+            except OSError:
+                pass
+            self.terminal = None
+
+    def _resolve_python(self, name):
+        path = name if os.sep in name else shutil.which(name)
+        if not path or not os.path.exists(path):
+            raise DapError("Python interpreter not found: %s" % name)
+        return os.path.abspath(path)
+
+    def _apply_settings(self, args):
+        unknown = [str(s) for s in args.get("stopOnSignals") or ()
+                   if str(s).upper() not in signal.Signals.__members__]
+        if unknown:
+            raise DapError("stopOnSignals: unknown signal %s" % ", ".join(unknown))
+        if not args.get("debugInfoLookup", True):
+            self.dbg.HandleCommand("settings set symbols.enable-external-lookup false")
+        # A native step that leaves user code must stop as soon as it is back in the
+        # interpreter, so Seam can hand the step over to the Python side.
+        self.dbg.HandleCommand(
+            "settings set target.process.thread.step-out-avoid-nodebug false")
+        self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
+        self.show_glue_frames = bool(args.get("showGlueFrames"))
+        self.just_my_code = bool(args.get("justMyCode", True))
+
+    def _apply_signal_policy(self, args):
+        """Stop on the signals that mean a crash; hand every other signal to the program.
+
+        LLDB's defaults suit C programs: it stops on SIGUSR1, SIGTERM, SIGPIPE and friends
+        and swallows SIGINT. Python programs use those routinely (handlers, timers,
+        KeyboardInterrupt), so by default only fault signals stop the debugger.
+        """
+        wanted = args.get("stopOnSignals")
+        wanted = FAULT_SIGNALS if wanted is None else tuple(str(s).upper() for s in wanted)
+        signals = self.process.GetUnixSignals()
+        known = {}
+        for i in range(signals.GetNumSignals()):
+            number = signals.GetSignalAtIndex(i)
+            known[signals.GetSignalAsCString(number)] = number
+        unknown = [name for name in wanted if name not in known]
+        if unknown:
+            raise DapError("stopOnSignals: unknown signal %s" % ", ".join(unknown))
+        for name, number in known.items():
+            if name in LLDB_SIGNALS:
+                continue
+            signals.SetShouldStop(number, name in wanted)
+            signals.SetShouldNotify(number, name in wanted)
+            signals.SetShouldSuppress(number, False)
+
+    def _require_no_session(self):
+        if self.target is not None:
+            raise DapError("this session is already debugging a program")
+
+    def _require_x86_64(self):
+        triple = self.target.GetTriple() or ""
+        if triple and not triple.startswith("x86_64"):
+            raise DapError("Seam supports x86-64 Linux programs only; this one is %s" % triple)
+
+    def req_launch(self, args):
+        self._require_no_session()
+        python = self._resolve_python(args.get("python") or "python3")
+        self.cwd = args.get("cwd") or os.getcwd()
+        if not os.path.isdir(self.cwd):
+            raise DapError("working directory does not exist: %s" % self.cwd)
+        argv = list(args.get("pythonArgs") or [])
+        if args.get("module"):
+            argv += ["-m", args["module"]]
+        elif args.get("program"):
+            argv.append(args["program"])
+        else:
+            raise DapError("launch needs either 'program' or 'module'")
+        argv += [str(a) for a in args.get("args") or []]
+
+        self._apply_settings(args)
+        console = args.get("console") or "internalConsole"
+        if console not in CONSOLES:
+            raise DapError("console must be one of %s" % ", ".join(CONSOLES))
+        terminal_tty = None
+        if console != "internalConsole":
+            terminal_tty = self._open_terminal(console)
+        err = lldb.SBError()
+        self.target = self.dbg.CreateTarget(python, None, None, False, err)
+        if not self.target or not self.target.IsValid():
+            raise DapError("cannot create a target for %s: %s" % (python, err.GetCString()))
+        self._require_x86_64()
+        bp_main = self._entry_breakpoint("Py_RunMain")
+
+        info = lldb.SBLaunchInfo(argv)
+        info.SetWorkingDirectory(self.cwd)
+        # The program inherits the environment `seam dap` was started in, plus launch "env".
+        env = {k: v for k, v in os.environ.items() if k not in PRIVATE_ENV}
+        env.update({str(k): str(v) for k, v in (args.get("env") or {}).items()})
+        info.SetEnvironmentEntries(["%s=%s" % kv for kv in env.items()], False)
+        info.SetListener(self.listener)
+        master = slave = None
+        if terminal_tty is not None:
+            # The client's terminal: the program reads the keyboard and writes there.
+            info.AddOpenFileAction(0, terminal_tty, True, False)
+            info.AddOpenFileAction(1, terminal_tty, False, True)
+            info.AddOpenFileAction(2, terminal_tty, False, True)
+        else:
+            # The debug console. Output goes to a pty owned by the adapter (LLDB's driver
+            # would otherwise swallow it, and a pipe would make the program buffer it).
+            # Nobody can type into the debug console, so input is empty rather than a
+            # terminal that never answers.
+            master, slave = os.openpty()
+            attrs = termios.tcgetattr(slave)
+            attrs[1] &= ~termios.ONLCR
+            termios.tcsetattr(slave, termios.TCSANOW, attrs)
+            tty = os.ttyname(slave)
+            info.AddOpenFileAction(0, os.devnull, True, False)
+            info.AddOpenFileAction(1, tty, False, True)
+            info.AddOpenFileAction(2, tty, False, True)
+        self.process = self.target.Launch(info, err)
+        if slave is not None:
+            os.close(slave)
+        if not err.Success() or not self.process or not self.process.IsValid():
+            if master is not None:
+                os.close(master)
+            raise DapError("launch failed: %s" % err.GetCString())
+        pid = self.process.GetProcessID()
+        self._note("launched %d" % pid)
+        if master is not None:
+            self.output_thread = threading.Thread(target=self._pump_output, args=(master,),
+                                                  daemon=True)
+            self.output_thread.start()
+        else:
+            threading.Thread(target=self._serve_terminal, args=(self.terminal, pid),
+                             daemon=True).start()
+        state = self._wait_stop()
+        if state != lldb.eStateStopped:
+            self._on_exit()
+            raise DapError("the process exited before reaching Py_RunMain; is %s a "
+                           "CPython 3.12+ interpreter?" % python)
+        thread = self.process.GetSelectedThread()
+        if (thread.GetStopReason() != lldb.eStopReasonBreakpoint
+                or thread.GetStopReasonDataAtIndex(0) != bp_main.GetID()):
+            raise DapError("unexpected stop before Py_RunMain: %s" % thread.GetStopDescription(200))
+        self.target.BreakpointDelete(bp_main.GetID())
+        self._apply_signal_policy(args)
+        self._inject(thread)
+        self.safe_tid = thread.GetThreadID()
+        self._sync_native_bps()
+        if args.get("stopOnEntry"):
+            self.agent("step", mode="any")
+            self.py_step_armed = True
+        return None, lambda: self.event("initialized")
+
+    def _open_terminal(self, console):
+        """Get a terminal from the client; returns its device path, or None to fall back.
+
+        The client runs Seam's small holder program (seam/terminal.py) in a terminal of
+        its own. The holder reports which terminal it is on and then stays out of the
+        way; the program is launched with that terminal as its input and output.
+        """
+        if not self.client.get("supportsRunInTerminalRequest"):
+            self.event("output", {"category": "console", "output":
+                       "Seam: this client cannot run the program in a terminal; its output "
+                       "goes to the debug console and it cannot read input.\n"})
+            return None
+        directory = tempfile.mkdtemp(prefix="seam-terminal-")
+        path = os.path.join(directory, "channel")
+        server = socket.socket(socket.AF_UNIX)
+        try:
+            server.bind(path)
+            server.listen(1)
+            server.settimeout(30)
+            holder = [os.environ.get("SEAM_PYTHON") or shutil.which("python3") or "python3",
+                      TERMINAL_HOLDER, path]
+            self._reverse_request("runInTerminal", {
+                "kind": "external" if console == "externalTerminal" else "integrated",
+                "title": "Seam", "cwd": self.cwd, "args": holder})
+            connection, _ = server.accept()
+            connection.settimeout(10)
+            line = b""
+            while not line.endswith(b"\n"):
+                data = connection.recv(256)
+                if not data:
+                    break
+                line += data
+            kind, _, tty = line.decode().strip().partition(" ")
+            if kind != "tty" or not tty.startswith("/dev/"):
+                connection.close()
+                raise DapError("the terminal holder did not report a terminal")
+            connection.settimeout(None)
+            self.terminal = connection
+            return tty
+        except OSError as exc:
+            raise DapError("could not get a terminal from the client: %s" % exc) from None
+        finally:
+            server.close()
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def _serve_terminal(self, connection, pid):
+        """Pass on what the terminal holder reports: Ctrl-C, Ctrl-\\, the terminal closing."""
+        pending = b""
+        try:
+            while True:
+                data = connection.recv(256)
+                if not data:
+                    break
+                pending += data
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    kind, _, value = line.decode("ascii", "replace").partition(" ")
+                    if (kind == "signal" and value.isdigit() and not self.exited
+                            and int(value) in TERMINAL_SIGNALS):
+                        self.log("terminal: signal", value)
+                        os.kill(pid, int(value))
+        except OSError:
+            pass
+
+    def _watch_breakpoints(self):
+        """Receive LLDB's breakpoint events (locations resolving when a module loads)."""
+        self.target.GetBroadcaster().AddListener(
+            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
+
+    def _entry_breakpoint(self, name):
+        """Breakpoint on a function's first instruction, located through the symbol table.
+
+        Seam's own breakpoints are not set by function name. LLDB 20 resolves a name
+        breakpoint through the debug info and skips the prologue; with the interpreter's
+        debug info in a separate file it lands at a wrong address (`Py_RunMain` ended up
+        inside a data table), so the breakpoint was never hit. The symbol table is right.
+        """
+        for ctx in self.target.FindSymbols(name):
+            address = ctx.GetSymbol().GetStartAddress()
+            if address.IsValid():
+                return self.target.BreakpointCreateBySBAddress(address)
+        # Not in any module yet (an interpreter linked against libpython): by name.
+        return self.target.BreakpointCreateByName(name)
+
+    def _find_python(self):
+        """Locate the interpreter in the process and set up the raw-memory reader."""
+        self._watch_breakpoints()
+        run, module = self._symbol("PyRun_SimpleStringFlags")
+        runtime, _ = self._symbol("_PyRuntime")
+        version_addr, _ = self._symbol("Py_Version")
+        if not run or not runtime or not version_addr:
+            raise DapError("this does not look like a CPython 3.12+ process: the "
+                           "interpreter's symbols are missing")
+        self.interp_module = module.GetFileSpec().fullpath
+        hexversion = struct.unpack("<I", self._read(version_addr, 4))[0]
+        version = (hexversion >> 24, (hexversion >> 16) & 0xFF)
+        if version < (3, 12):
+            raise DapError("Seam needs CPython 3.12 or newer; this is %d.%d" % version)
+        self.sym["PyRun_SimpleStringFlags"] = run
+        self.sym["PyRun_SimpleString"] = self._symbol("PyRun_SimpleString")[0]
+        self.sym["Py_AddPendingCall"] = self._symbol("Py_AddPendingCall")[0]
+        self.sym["getpid"] = self._symbol("getpid")[0]
+        try:
+            self.py = pyread.PyReader(self._read, runtime, version)
+        except (ValueError, NotImplementedError) as exc:
+            raise DapError("unsupported interpreter: %s" % exc) from None
+
+    def _load_helper(self):
+        """Resolve the helper's symbols once the agent has been imported."""
+        module = None
+        for name in HELPER_SYMBOLS:
+            addr, module = self._symbol(name)
+            if not addr:
+                raise DapError("Seam helper symbol %s not found after injection" % name)
+            self.sym[name] = addr
+        self.helper_module = module.GetFileSpec().fullpath
+        self.sym["cap"] = struct.unpack("<q", self._read(self.sym["seam_req_cap"], 8))[0]
+        if self.bp_trap is None:
+            # Launch: set by address (see _entry_breakpoint). On attach the breakpoint
+            # was set by name before the helper loaded and the thread is stopped at it
+            # right now, so it is left alone.
+            self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
+
+    def _inject(self, thread):
+        """Load the agent. The caller guarantees `thread` is at a safe point."""
+        self._find_python()
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "try:\n    import seam_agent\n"
+                "finally:\n    sys.path.remove(%r)\n" % (TARGET_DIR, TARGET_DIR))
+        rc = self._call(thread, "((int(*)(const char*, void*))%d)(%s, (void*)0)"
+                        % (self.sym["PyRun_SimpleStringFlags"], json.dumps(code)))
+        self._drain_output()
+        if rc != 0:
+            raise DapError("could not load the Seam agent into the process (see its output)")
+        self._load_helper()
+
+    def req_attach(self, args):
+        self._require_no_session()
+        pid = int(args.get("pid") or 0)
+        if pid <= 0:
+            raise DapError("attach needs a 'pid'")
+        self._apply_settings(args)
+        err = lldb.SBError()
+        self.target = self.dbg.CreateTarget("")
+        self.process = self.target.AttachToProcessWithID(self.listener, pid, err)
+        if not err.Success() or not self.process or not self.process.IsValid():
+            self.process = None
+            raise DapError("cannot attach to pid %d: %s (is ptrace allowed? see "
+                           "/proc/sys/kernel/yama/ptrace_scope)" % (pid, err.GetCString()))
+        self.attached = True
+        try:
+            self._wait_attached(pid)
+            self._require_x86_64()
+            self._apply_signal_policy(args)
+            try:
+                self.cwd = os.readlink("/proc/%d/cwd" % pid)
+            except OSError:
+                pass
+            self._find_python()
+            # The helper is not loaded yet, so this breakpoint can only be set by name.
+            # (The helper carries its own debug info, so the LLDB 20 problem with name
+            # breakpoints and separate debug files does not apply to it.)
+            self.bp_trap = self.target.BreakpointCreateByName("seam_trap")
+            # Evaluate one harmless call now. On 3.14 the PEP 768 path would otherwise
+            # make its first expression at the helper's trap, right after the helper
+            # library was loaded, and LLDB 18 crashed or hung there in about 1 attach
+            # in 13 on CI. The 3.12/3.13 path already evaluates an expression here.
+            try:
+                self._call(self.process.GetSelectedThread(),
+                           "((int(*)(void))%d)()" % self.sym["getpid"], timeout_s=5)
+            except DapError as exc:
+                self.log("warm-up call failed:", exc)
+            method = self._request_agent_load()
+            thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
+        except DapError:
+            self._abandon()
+            raise
+        self._load_helper()
+        self.safe_tid = thread.GetThreadID()
+        self.stop_is_trap = True
+        self.event("output", {"category": "console", "output":
+                   "Seam: attached to pid %d (helper loaded via %s).\n" % (pid, method)})
+        return None, lambda: self.event("initialized")
+
+    def _wait_attached(self, pid, timeout=30):
+        """Wait for the stop that completes an attach.
+
+        LLDB does not always deliver a stop event for it, so the public state is polled
+        as well. That is safe only here: the process has never been resumed by Seam, so
+        "stopped" cannot be a stale reading from before a resume.
+        """
+        ev = lldb.SBEvent()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.listener.WaitForEvent(1, ev) and lldb.SBProcess.EventIsProcessEvent(ev):
+                state = lldb.SBProcess.GetStateFromEvent(ev)
+                if state in (lldb.eStateExited, lldb.eStateDetached, lldb.eStateCrashed):
+                    raise DapError("pid %d exited while attaching" % pid)
+                if state == lldb.eStateStopped:
+                    return
+            if self.process.GetState() == lldb.eStateStopped:
+                return
+        raise DapError("timed out attaching to pid %d" % pid)
+
+    def _request_agent_load(self):
+        """Ask the stopped process to import the agent at its main thread's next safe point."""
+        code = (
+            "import sys\n"
+            "try:\n"
+            "    sys.path.insert(0, %r)\n"
+            "    try:\n"
+            "        import seam_agent\n"
+            "    finally:\n"
+            "        sys.path.remove(%r)\n"
+            "    seam_agent.attached()\n"
+            "except BaseException:\n"
+            "    import traceback\n"
+            "    traceback.print_exc()\n" % (TARGET_DIR, TARGET_DIR))
+        remote = self.py.L.remote
+        if remote is not None:
+            # PEP 768 (3.14+): three memory writes, no code run by the debugger.
+            interp = self.py.u64(self.py.runtime + self.py.L.runtime_interp_head)
+            enabled = struct.unpack("<i", self._read(interp + remote["enabled"], 4))[0]
+            tstate = self.py.u64(interp + remote["threads_main"])
+            if enabled and tstate:
+                fd, script = tempfile.mkstemp(prefix="seam-attach-", suffix=".py")
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(code)
+                self.temp_files.append(script)
+                path = script.encode() + b"\0"
+                if len(path) <= remote["path_size"]:
+                    support = tstate + remote["support"]
+                    self._write(support + remote["path"], path)
+                    self._write(support + remote["pending"], struct.pack("<i", 1))
+                    breaker = self.py.u64(tstate + remote["eval_breaker"])
+                    self._write(tstate + remote["eval_breaker"],
+                                struct.pack("<Q", breaker | EVAL_PLEASE_STOP_BIT))
+                    return "PEP 768 remote exec"
+        # 3.12/3.13 (or remote debugging disabled): queue a pending call. This runs
+        # Py_AddPendingCall in the stopped process, which is not a safe point; the call
+        # only takes a short internal lock, and it is abandoned if it does not return.
+        if not self.sym.get("PyRun_SimpleString") or not self.sym.get("Py_AddPendingCall"):
+            raise DapError("this interpreter does not export the functions attach needs")
+        err = lldb.SBError()
+        data = code.encode() + b"\0"
+        addr = self.process.AllocateMemory(
+            len(data), lldb.ePermissionsReadable | lldb.ePermissionsWritable, err)
+        if not err.Success():
+            raise DapError("cannot allocate memory in the process: %s" % err.GetCString())
+        self._write(addr, data)
+        self._call(self.process.GetSelectedThread(),
+                   "((int(*)(int(*)(void*), void*))%d)((int(*)(void*))%d, (void*)%d)"
+                   % (self.sym["Py_AddPendingCall"], self.sym["PyRun_SimpleString"], addr),
+                   timeout_s=3)
+        return "a pending call"
+
+    def _wait_for_attach_trap(self, timeout):
+        """Run until the agent reports in from `seam_agent.attached()`."""
+        deadline = time.monotonic() + timeout
+        while True:
+            err = self.process.Continue()
+            if not err.Success():
+                raise DapError("could not resume the process: %s" % err.GetCString())
+            remaining = int(max(1, deadline - time.monotonic()))
+            try:
+                state = self._wait_stop(remaining)
+            except DapError:
+                self.process.SendAsyncInterrupt()
+                self._wait_stop(10)
+                raise DapError(
+                    "the process did not load the Seam helper within %d s. Its main "
+                    "thread never reached a safe point; it is probably blocked in a "
+                    "system call or a long native call." % timeout) from None
+            if state != lldb.eStateStopped:
+                raise DapError("the process exited while attaching")
+            thread = self._trap_thread()
+            if thread is not None:
+                return thread
+            if time.monotonic() > deadline:
+                raise DapError("the process did not load the Seam helper in time")
+
+    def _abandon(self):
+        """Give up on a process we attached to, leaving it running."""
+        if self.process is not None and self.process.IsValid():
+            self.target.DeleteAllBreakpoints()
+            self.process.Detach()
+        self.exited = True
+
+    def _detach(self):
+        """Remove everything Seam armed and let the process carry on."""
+        if self.exited or self.process is None:
+            return
+        try:
+            if self.running:
+                self._interrupt()
+            self._finish_steps(self.process.GetSelectedThread())
+            if self.helper_module:
+                self.py_bps = {}
+                if self.safe_tid is not None:
+                    self.agent("shutdown")
+                else:
+                    self._agent_pending("shutdown")
+        except (DapError, ValueError) as exc:
+            self.log("detach clean-up failed:", exc)
+        self.target.DeleteAllBreakpoints()
+        self.process.Detach()
+        self.exited = True
+
+    def req_configurationDone(self, args):
+        if self.process is None:
+            raise DapError("nothing has been launched")
+        self._new_stop()
+        self._continue()
+        return None
+
+    def req_disconnect(self, args):
+        self.done = True
+        return None
+
+    def req_terminate(self, args):
+        self._kill()
+        self.event("terminated")
+        return None

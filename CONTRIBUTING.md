@@ -26,7 +26,14 @@ uvx ruff check src tests tools                            # lint
 | Path | What it is |
 |---|---|
 | `src/seam/cli.py` | `seam dap` (starts LLDB, relays the protocol) and `seam doctor`. |
-| `src/seam/adapter/server.py` | The debug adapter. Runs inside LLDB's embedded Python; standard library only. |
+| `src/seam/adapter/` | The debug adapter. Runs inside LLDB's embedded Python; standard library only. One class, `Adapter` (`server.py`, which lists all its state), assembled from a mixin per concern: |
+| &nbsp;&nbsp;`protocol.py` | the DAP connection, request dispatch, access to the target's memory and to the agent |
+| &nbsp;&nbsp;`session.py` | launch, attach, the terminal, exit, detach |
+| &nbsp;&nbsp;`stops.py` | process events: deciding what a stop is, reporting it or carrying on |
+| &nbsp;&nbsp;`stepping.py` | stepping across the boundary; what counts as user code |
+| &nbsp;&nbsp;`breakpoints.py` | source-line, function, data and exception breakpoints |
+| &nbsp;&nbsp;`stack.py` | the merged call stack, variables, expressions |
+| &nbsp;&nbsp;`common.py` | constants and small helpers |
 | `src/seam/adapter/pyread.py`, `layouts.py`, `linetable.py` | Reading the interpreter's state from raw memory. |
 | `src/seam/_target/seam_agent.py`, `_seam_trap.c` | The helper that runs inside the debugged program. |
 | `src/seam/terminal.py` | The holder that runs in the editor's terminal (`console` option). |

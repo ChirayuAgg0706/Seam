@@ -39,7 +39,7 @@ marked done on the strength of reading code. Work that remains is in
 | Program input: the editor's terminal, Ctrl-C, terminal closed; empty input in the debug console | **done** | `test_terminal.py`, and for real in VS Code and Neovim by the `editors` job |
 | Hit counts and logpoints, Python and native | **done** | `test_breakpoints.py` |
 | Function breakpoints (Python by bare, qualified or module-qualified name; native), with conditions and hit counts | **done** | `test_breakpoints.py` |
-| Data breakpoints on native variables | **done** | `test_breakpoints.py` (hardware watchpoints; seen working under WSL2, not yet on a CI runner at the time of writing) |
+| Data breakpoints on native variables | **done** | `test_breakpoints.py` (hardware watchpoints; pass under WSL2 and on GitHub's runners) |
 | Set variable (Python locals, globals, members; native), paged lists, expressions for nested values | **done** | `test_variables.py` |
 | `seam doctor`; clear messages when LLDB is missing or cannot load the adapter | **done** | `test_doctor.py`; also run on the clean machine |
 | Unsupported interpreters refused by name (3.11, free-threaded) | **done** | `test_unsupported.py`. The refusal of non-x86-64 programs is written but **not tested** (no such machine here). |
