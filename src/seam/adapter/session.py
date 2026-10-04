@@ -427,8 +427,12 @@ class SessionMixin:
                            "((int(*)(void))%d)()" % self.sym["getpid"], timeout_s=5)
             except DapError as exc:
                 self.log("warm-up call failed:", exc)
-            method = self._request_agent_load()
-            thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
+            method, cancel = self._request_agent_load()
+            try:
+                thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
+            except DapError:
+                self._cancel_agent_load(cancel)
+                raise
         except DapError:
             self._abandon()
             raise
@@ -460,7 +464,11 @@ class SessionMixin:
         raise DapError("timed out attaching to pid %d" % pid)
 
     def _request_agent_load(self):
-        """Ask the stopped process to import the agent at its main thread's next safe point."""
+        """Ask the stopped process to import the agent at its main thread's next safe point.
+
+        Returns how it was asked, and a function that takes the request back (to be
+        called with the process stopped).
+        """
         code = (
             "import sys\n"
             "try:\n"
@@ -492,7 +500,8 @@ class SessionMixin:
                     breaker = self.py.u64(tstate + remote["eval_breaker"])
                     self._write(tstate + remote["eval_breaker"],
                                 struct.pack("<Q", breaker | EVAL_PLEASE_STOP_BIT))
-                    return "PEP 768 remote exec"
+                    return "PEP 768 remote exec", lambda: self._write(
+                        support + remote["pending"], struct.pack("<i", 0))
         # 3.12/3.13 (or remote debugging disabled): queue a pending call. This runs
         # Py_AddPendingCall in the stopped process, which is not a safe point; the call
         # only takes a short internal lock, and it is abandoned if it does not return.
@@ -509,7 +518,23 @@ class SessionMixin:
                    "((int(*)(int(*)(void*), void*))%d)((int(*)(void*))%d, (void*)%d)"
                    % (self.sym["Py_AddPendingCall"], self.sym["PyRun_SimpleString"], addr),
                    timeout_s=3)
-        return "a pending call"
+        # A queued call cannot be taken out of the interpreter's queue, but the program
+        # text it will run can be emptied.
+        return "a pending call", lambda: self._write(addr, b"\0")
+
+    def _cancel_agent_load(self, cancel):
+        """Take back the request to load the helper: the attach is being given up.
+
+        Otherwise the process would act on it once its main thread runs Python again,
+        long after the debugger has gone: on 3.14 the interpreter then complains that
+        the script is missing, on 3.12/3.13 it loads a helper nobody is listening to.
+        """
+        if self.process.GetState() != lldb.eStateStopped:
+            return
+        try:
+            cancel()
+        except DapError as exc:
+            self.log("could not take back the helper load:", exc)
 
     def _wait_for_attach_trap(self, timeout):
         """Run until the agent reports in from `seam_agent.attached()`."""
