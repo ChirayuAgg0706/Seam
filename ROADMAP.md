@@ -21,7 +21,7 @@ when a scenario test for it has been seen passing; [STATUS.md](STATUS.md) has th
 | 6 | LLDB 19 and 20 in CI. | **done** (CI job `lldb`) |
 | 7 | Real third-party wheels with no debug info, in a virtual environment. | **done** (`tests/test_wheels.py`: numpy, orjson) |
 | 8 | Clear refusal on unsupported setups; `seam doctor`. | **done** (`tests/test_unsupported.py`, `tests/test_doctor.py`). The non-x86-64 refusal is untested. |
-| 9 | Weekly looped soak run in CI. | **set up**; its first scheduled run has not happened yet |
+| 9 | Weekly looped soak run in CI. | **done**: the job was run by hand with the weekly settings (165 scenario runs, all passed, under LLDB 18). The schedule itself fires on Mondays and has not fired yet. |
 | 10 | Python 3.15. | **done** for 3.15.0rc3 (full suite); re-check when 3.15.0 is released |
 
 ## Priority 3: features people expect from a debugger

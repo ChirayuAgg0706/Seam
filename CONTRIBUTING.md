@@ -64,5 +64,6 @@ contains `[ci full]`: smoke scenarios on the other supported versions and at `-O
 same under LLDB 19 and 20, a clean-machine install, and the editor checks (the packaged
 extension inside a real VS Code, and the documented configuration in a headless Neovim).
 It is split this way because the repository lives on GitHub's free tier; use `[ci full]`
-for changes to the adapter's core, to stepping, or to anything version-specific. A
-missing toolchain fails CI rather than skipping.
+for changes to the adapter's core, to stepping, or to anything version-specific, and
+`[skip ci]` for changes that touch only documentation. A missing toolchain fails CI
+rather than skipping.

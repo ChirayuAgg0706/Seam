@@ -66,9 +66,12 @@ a push whose commit message contains `[ci full]`:
 - `lldb` × 2: the smoke scenarios under LLDB 19 and LLDB 20.
 - `editors`: VS Code and Neovim, see item 11.
 - `clean machine`: see item 14.
-- Weekly only: the stepping, binding-layer and attach scenarios looped 8 times.
+- Weekly only: the stepping, binding-layer and attach scenarios looped 8 times (run once
+  by hand so far: 165 scenario runs, all passed).
 
-A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`).
+A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`). As of
+2026-10-04 this repository had used about 280 of the month's 2,000 minutes; a push whose
+commit message contains `[skip ci]` (documentation-only changes) uses none.
 
 ## Test matrix
 
