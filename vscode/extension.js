@@ -172,6 +172,11 @@ class SeamConfigurationProvider {
         // input() works. (The adapter's own default is the debug console.)
         config.console = "integratedTerminal";
       }
+      if (config.console !== "internalConsole" && !config.internalConsoleOptions) {
+        // The program's output is in the terminal. VS Code would open the Debug Console
+        // over it when the session starts, and show the user an empty panel.
+        config.internalConsoleOptions = "neverOpen";
+      }
     }
     return config;
   }

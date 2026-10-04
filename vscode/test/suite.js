@@ -83,6 +83,24 @@ async function activeEditorIs(file) {
   }
 }
 
+// VS Code has put the cursor on a line of a file: where it shows the program stopped.
+// It does that a moment after the adapter's stop event, having asked for the stack.
+async function cursorIsAt(file, line) {
+  const deadline = Date.now() + 20000;
+  for (;;) {
+    const editor = vscode.window.activeTextEditor;
+    const shown = editor
+      ? `${editor.document.uri.fsPath} line ${editor.selection.active.line + 1}` : "nothing";
+    if (shown === `${file} line ${line}`) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`VS Code did not go to ${file} line ${line}; it shows ${shown}`);
+    }
+    await sleep(100);
+  }
+}
+
 async function stackOf(session, threadId) {
   const reply = await session.customRequest("stackTrace", { threadId });
   return { frames: reply.stackFrames, top: reply.stackFrames[0] };
@@ -217,6 +235,7 @@ async function expandInVariablesView(session, frame, name, member) {
   const members = (await session.customRequest("variables",
     { variablesReference: locals[row].variablesReference })).variables;
   const inner = members.findIndex((variable) => variable.name === member);
+  await sleep(1500);   // the view fills in after the stop; nothing is asserted about this
   await command("workbench.debug.variablesView.focus");
   await sleep(500);
   await command("list.focusFirst");            // the Locals scope
@@ -268,6 +287,8 @@ async function pressF5() {
     "the project's virtual environment is what gets debugged");
   assert.strictEqual(session.configuration.console, "integratedTerminal",
     "the extension defaults to the integrated terminal");
+  assert.strictEqual(session.configuration.internalConsoleOptions, "neverOpen",
+    "and leaves that terminal in view");
   const ended = sessionEnded(session);
 
   let stop = (await nextEvent("stopped")).body;
@@ -275,8 +296,7 @@ async function pressF5() {
   let stack = await stackOf(session, stop.threadId);
   assert.deepStrictEqual(stack.frames.map((frame) => frame.name), ["total", "main", "<module>"]);
   assert.strictEqual(stack.top.line, pyLine);
-  const editor = await activeEditorIs(app);
-  assert.strictEqual(editor.selection.active.line, pyLine - 1, "cursor on the stopped line");
+  await cursorIsAt(app, pyLine);
   // The program itself says which interpreter it is.
   assert.strictEqual(await evaluate(session, stack.top, "__import__('sys').prefix"),
     `'${path.join(project, ".venv")}'`);
@@ -328,7 +348,7 @@ async function pressF5() {
   assert.deepStrictEqual([stack.top.name, stack.top.line], ["check", failLine]);
   assert.ok(stack.frames.some((frame) => frame.name === "main"),
     stack.frames.map((frame) => frame.name).join());
-  await activeEditorIs(app);
+  await cursorIsAt(app, failLine);
   log(`stopped on the uncaught exception: ${stop.description}; stack: `
     + stack.frames.map((frame) => frame.name).join(" < "));
   await shot("4-uncaught-exception");
@@ -356,7 +376,7 @@ async function stepInTheDebugConsole() {
   assert.strictEqual(stop.reason, "breakpoint");
   let { top } = await stackOf(session, stop.threadId);
   assert.deepStrictEqual([top.name, top.line], ["total", pyLine]);
-  await activeEditorIs(app);
+  await cursorIsAt(app, pyLine);
 
   await command("workbench.action.debug.stepInto");
   stop = (await nextEvent("stopped")).body;
@@ -368,7 +388,7 @@ async function stepInTheDebugConsole() {
   stop = (await nextEvent("stopped")).body;
   ({ top } = await stackOf(session, stop.threadId));
   assert.deepStrictEqual([top.name, top.line], ["total", pyLine]);
-  await activeEditorIs(app);
+  await cursorIsAt(app, pyLine);
   log("Step Into went into Rust, Step Out returned to the Python line");
 
   vscode.debug.removeBreakpoints(vscode.debug.breakpoints);
@@ -427,7 +447,7 @@ async function attachThroughThePicker() {
     const stop = (await nextEvent("stopped")).body;
     const { top } = await stackOf(session, stop.threadId);
     assert.deepStrictEqual([top.name, top.line], ["tick", line]);
-    await activeEditorIs(attachTarget);
+    await cursorIsAt(attachTarget, line);
     log(`attached to pid ${target.pid} through the picker; stopped in ${top.name}`);
     await shot("7-attached");
     // Tell the program to finish, let go of it, and see it end on its own.
