@@ -258,7 +258,9 @@ class ProtocolMixin:
             + len(self.function_bps),
             "totalBreakpoints": self.target.GetNumBreakpoints(),
             "pid": self.process.GetProcessID(),
-            "stepInBreakpointsEnabled": any(bp.IsEnabled() for bp in self.user_bps.values()),
+            "stepInBreakpointsEnabled": (any(bp.IsEnabled() for bp in self.user_bps.values())
+                                         or self.traps.pending or self.traps.armed),
+            "entryTrapModules": sorted(self.traps.regions),
             "nativeStepInProgress": self.native_stepping is not None,
             "pythonStepArmed": self.py_step_armed,
             "leftoverStops": self.leftover_stops,

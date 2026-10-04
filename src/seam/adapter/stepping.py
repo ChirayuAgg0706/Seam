@@ -91,6 +91,8 @@ class SteppingMixin:
         candidate. The breakpoints are created once per module and kept disabled.
         """
         for path, module in self._user_modules():
+            if self.traps.covers(path, module):
+                continue  # a large module: entry traps do the same job (entrytraps.py)
             bp = self.user_bps.get(path)
             if bp is None:
                 modules = lldb.SBFileSpecList()
@@ -114,6 +116,7 @@ class SteppingMixin:
                 self.user_bps[path] = bp
             bp.SetThreadID(tid)
             bp.SetEnabled(True)
+        self.traps.begin(tid)
         self.user_bps_on = True
 
     def _step_out_to(self, thread, natives, target_index):
@@ -193,6 +196,7 @@ class SteppingMixin:
         if self.user_bps_on:
             for bp in self.user_bps.values():
                 bp.SetEnabled(False)
+            self.traps.finish()
             self.user_bps_on = False
         if self.native_stepping:
             self._discard_plans(thread)

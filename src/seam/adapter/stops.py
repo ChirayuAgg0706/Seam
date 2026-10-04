@@ -129,7 +129,7 @@ class StopsMixin:
     def _interesting(self, thread):
         reason = thread.GetStopReason()
         return (reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
-                and not self._is_leftover(thread))
+                and not self._is_leftover(thread) and not self.traps.handled(thread))
 
     def _trap_thread(self):
         if self.bp_trap is None:
@@ -230,12 +230,19 @@ class StopsMixin:
 
     def _on_stop(self):
         self._new_stop()
-        # First make LLDB's picture of the threads current: the checks below read it.
+        # Entry traps come out of the process before anything looks at it; a thread that
+        # ran into one is put back on the instruction (see entrytraps.py).
+        trapped = self.traps.stopped()
+        landed, self.traps.landed = self.traps.landed, None
+        # Then make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
-        if not self.pause_requested and not any(self._interesting(t) for t in self.process):
+        if (not self.pause_requested and landed is None
+                and not any(self._interesting(t) for t in self.process)):
             # No thread has a current reason to be stopped: the stop is a leftover of
-            # stepping off a breakpoint (see _is_leftover). Nothing is reported.
-            self.leftover_stops += 1
+            # stepping off a breakpoint (see _is_leftover), or other threads ran into
+            # entry traps meant for the stepping one. Nothing is reported.
+            if not trapped:
+                self.leftover_stops += 1
             self.log("stop without a current reason; resuming")
             self._continue()
             return
@@ -244,6 +251,14 @@ class StopsMixin:
         thread = self._trap_thread()
         if thread is not None:
             self._on_trap(thread)
+            return
+        if landed is not None:
+            # Step-in from Python reached the first user native function of a large module.
+            thread = self._thread(landed)
+            self.process.SetSelectedThread(thread)
+            self._finish_steps(thread)
+            self._report_native_stop(thread, {"threadId": landed, "allThreadsStopped": True,
+                                              "reason": "step"})
             return
         thread = None
         stepping_tid = self.native_stepping["tid"] if self.native_stepping else None
@@ -260,7 +275,7 @@ class StopsMixin:
                  thread.GetStopDescription(80), "pc %#x" % self._pc(thread))
 
         if (reason == lldb.eStopReasonBreakpoint and thread.GetStopReasonDataAtIndex(0)
-                in [bp.GetID() for bp in self.user_bps.values()]):
+                in [bp.GetID() for bp in self.user_bps.values()] + self.traps.breakpoint_ids()):
             # Step-in from Python reached the first user native function.
             self._finish_steps(thread)
             body["reason"] = "step"
@@ -411,8 +426,11 @@ class StopsMixin:
         self.event("stopped", body)
 
     def _continue(self):
+        if self.user_bps_on:
+            self.traps.arm()  # they are out at every stop; in again while the step lasts
         err = self.process.Continue()
         if not err.Success():
+            self.traps.disarm()
             raise DapError("could not resume: %s" % err.GetCString())
         self.running = True
 
@@ -426,10 +444,13 @@ class StopsMixin:
             self._on_exit()
             raise DapError("the process exited")
         self.running = False
+        self.traps.stopped()
+        if self.traps.landed is not None:
+            return False  # a step-in reached its function at this very moment
         for thread in self.process:
             reason = thread.GetStopReason()
             if reason in (lldb.eStopReasonBreakpoint, lldb.eStopReasonException,
-                          lldb.eStopReasonPlanComplete):
+                          lldb.eStopReasonPlanComplete) and not self.traps.handled(thread):
                 return False
         return True
 
