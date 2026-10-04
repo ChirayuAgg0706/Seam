@@ -202,8 +202,14 @@ class StackMixin:
         if not self.show_glue_frames:
             # Binding-layer trampolines between user code and Python are noise (PyO3 puts
             # ten of them under every function). The newest frame is always shown.
+            # At a crash, so is everything above the user's own code: a fault three calls
+            # deep in a library without debug info is shown with all three.
+            keep = 1
+            if self.fault_stop and args["threadId"] in self.exception_info:
+                keep = next((i for i, r in enumerate(stack)
+                             if r["kind"] == "py" or r["cls"] == "user"), len(stack))
             stack = [r for i, r in enumerate(stack)
-                     if i == 0 or r.get("cls") not in ("framework", "nodebug")]
+                     if i < max(keep, 1) or r.get("cls") not in ("framework", "nodebug")]
         start = args.get("startFrame") or 0
         levels = args.get("levels") or len(stack)
         frames = []

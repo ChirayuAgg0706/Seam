@@ -13,6 +13,7 @@ The adapter is one class, `Adapter`, assembled from a mixin per concern:
     breakpoints.py  source-line, function, data and exception breakpoints
     stack.py        the merged call stack, variables, expressions
     sources.py      source paths: the debug info's, this machine's, the editor's
+    disassembly.py  the listing for frames without source, stepping by instruction
     common.py       constants and small helpers
 
 `Adapter.__init__` below is the one place that lists the session's state.
@@ -27,6 +28,7 @@ import lldb
 
 from .common import FRAMEWORK_PATHS
 from .breakpoints import BreakpointsMixin
+from .disassembly import DisassemblyMixin
 from .protocol import ProtocolMixin
 from .session import SessionMixin
 from .sources import SourcesMixin
@@ -36,7 +38,7 @@ from .stops import StopsMixin
 
 
 class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, BreakpointsMixin, StackMixin,
-              SourcesMixin):
+              SourcesMixin, DisassemblyMixin):
     """One debug session. The behaviour lives in the mixins; the state is all here."""
 
     def __init__(self, debugger, sock, log=None):

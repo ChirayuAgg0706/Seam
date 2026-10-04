@@ -195,6 +195,8 @@ class ProtocolMixin:
             "supportsSetVariable": True,
             "supportsVariablePaging": True,
             "supportsDataBreakpoints": True,
+            "supportsDisassembleRequest": True,
+            "supportsSteppingGranularity": True,
             "exceptionBreakpointFilters": EXCEPTION_FILTERS,
         }
 

@@ -323,7 +323,8 @@ class StopsMixin:
                 return
             self._clear_stepout()
             returned = True
-        if (returned or reason == lldb.eStopReasonPlanComplete) and self.native_stepping:
+        if ((returned or reason == lldb.eStopReasonPlanComplete) and self.native_stepping
+                and not self.native_stepping.get("instruction")):  # that ends where it ends
             reason = lldb.eStopReasonPlanComplete
             kind = self._landing_class(thread)
             self.log("native step ended in", thread.GetFrameAtIndex(0).GetFunctionName(),
