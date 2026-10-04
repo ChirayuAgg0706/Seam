@@ -13,7 +13,7 @@ async def ticker(seen):
 async def inner(n):
     first = n + 1  # inner-first
     await asyncio.sleep(0.01)  # inner-sleep
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)  # inner-again
     return first * 2  # inner-return
 
 
@@ -67,7 +67,7 @@ class Resource:
 async def numbers(n):
     for i in range(n):  # numbers-first
         await asyncio.sleep(0.005)  # numbers-sleep
-        yield i  # numbers-yield
+        yield i + 1  # numbers-yield
 
 
 async def protocols():
@@ -97,9 +97,9 @@ async def thrown():
     except asyncio.CancelledError:  # thrown-except
         outcome = "cancelled"  # thrown-caught
     try:
-        async with asyncio.timeout(0.01):
+        async with asyncio.timeout(0.01):  # thrown-timeout
             await asyncio.sleep(10)  # thrown-long
-    except TimeoutError:
+    except TimeoutError:  # thrown-handler
         outcome = "timed out"  # thrown-timed-out
     return outcome  # thrown-return
 
@@ -122,4 +122,4 @@ def main(which):
     print(which, result)  # main-print
 
 
-main(sys.argv[1])
+main(sys.argv[1])  # module-main

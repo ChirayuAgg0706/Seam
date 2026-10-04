@@ -383,6 +383,22 @@ def _add_step_local(code, events):
     _apply_local(code)
 
 
+def _generated(frame):
+    """True for code that other code compiled from a string: a dataclass's __init__, a
+    namedtuple's __new__, whatever goes through exec().
+
+    There is no source to show for it, so a step treats it as it treats a library. Code
+    given on the command line (python -c) has nothing below it: that is the program.
+    """
+    if not _just_my_code or frame.f_code.co_filename != "<string>":
+        return False
+    back = frame.f_back
+    while back is not None and (back.f_code.co_filename == "<string>"
+                                or _internal(back.f_code)):
+        back = back.f_back
+    return back is not None
+
+
 def _aim(st, mode, frame):
     """Make the step follow `frame`: "in", "over", "out", or "caller" (stop as soon as it
     runs again).
@@ -393,7 +409,7 @@ def _aim(st, mode, frame):
     code this thread runs": a step in, which follows the frame down to its own caller
     when it returns.
     """
-    if not _is_user(frame.f_code):
+    if not _is_user(frame.f_code) or _generated(frame):
         mode = "in"
     st.mode = mode
     st.frame = frame
@@ -433,7 +449,7 @@ def _on_line(code, line):
         return mon.DISABLE if not lines or line not in lines else None
     if st.ident == get_ident() and (
             (st.mode == "in" and not st.waiting)
-            or (frame is st.frame and st.mode in ("in", "over"))):
+            or (frame is st.frame and st.mode in ("in", "over"))) and not _generated(frame):
         _finish_step()
         return (None, code, line, R_STEP | log)
     return (None, code, line, log) if log else None
