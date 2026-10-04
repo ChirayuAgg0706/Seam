@@ -20,12 +20,31 @@ BUILD = os.environ.get("SEAM_TEST_BUILD", os.path.join(ROOT, "tests", "build"))
 
 
 def pytest_addoption(parser):
-    parser.addoption("--target-python", default=os.environ.get("SEAM_TEST_PYTHON", "/usr/bin/python3.12"),
+    parser.addoption("--target-python",
+                     default=os.environ.get("SEAM_TEST_PYTHON", "/usr/bin/python3.12"),
                      help="interpreter to debug")
     parser.addoption("--opt", default=os.environ.get("SEAM_TEST_OPT", "O0"),
                      choices=["O0", "O2"], help="optimisation level of the native test code")
     parser.addoption("--repeat", type=int, default=int(os.environ.get("SEAM_TEST_REPEAT", "1")),
                      help="run each stepping scenario this many times")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """A failed scenario's report carries the end of the adapter's log.
+
+    Most failures are plain assertions about what the adapter said; why it said it is in
+    the log, and on CI the report is all there is.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        client = getattr(item, "funcargs", {}).get("dap")
+        log_path = getattr(client, "log_path", None)
+        if log_path and os.path.exists(log_path):
+            with open(log_path, errors="replace") as fh:
+                lines = [line[:300] for line in fh.readlines()[-70:]]
+            report.sections.append(("adapter log (last 70 lines)", "".join(lines)))
 
 
 def pytest_generate_tests(metafunc):

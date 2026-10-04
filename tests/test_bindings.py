@@ -103,7 +103,7 @@ def test_native_breakpoint_then_into_and_out_of_a_python_callback(dap, binding, 
     # so there several presses are needed before the call itself is reached.
     presses = 0
     several = binding.layer == "cython" or binding.opt != "O0"
-    for presses in range(1, 13 if several else 2):
+    for presses in range(1, 13 if several else 2):  # noqa: B007 (used after the loop)
         stop = dap.step("stepIn", tid)
         # When several presses are needed, one of them can land on another address
         # range of the breakpoint's own line, which is reported as a breakpoint stop.

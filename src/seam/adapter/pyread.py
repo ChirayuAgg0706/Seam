@@ -241,7 +241,10 @@ class PyReader:
             raw = self.read(frame, L.frame_size)
             owner = raw[L.frame_owner]
             if owner == L.owner_entry:
-                groups.append((frame, current))
+                # An entry frame with no Python frames above it is not an eval loop
+                # (3.15 ends every thread's chain with such a frame, in the thread state).
+                if current:
+                    groups.append((frame, current))
                 current = []
             elif owner in L.owner_python:
                 try:

@@ -18,9 +18,10 @@ See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
 ## Requirements
 
 - Linux x86-64.
-- CPython 3.12, 3.13 or 3.14 as the program being debugged. Interpreters without debug
-  info (uv-managed Pythons, `-slim` container images) are supported.
-- LLDB 18 or newer, with its Python scripting support (the normal distro package). Tested with 18.1.3 and 20.1.2.
+- CPython 3.12, 3.13 or 3.14 as the program being debugged; 3.15 works as of its release
+  candidate (3.15.0rc3). Interpreters without debug info (uv-managed Pythons, `-slim`
+  container images) and virtual environments are supported.
+- LLDB 18, 19 or 20, with its Python scripting support (the normal distro package).
 - A C compiler and the CPython headers, to build Seam's small in-process helper at
   install time.
 - Permission to `ptrace` the program (the default when Seam launches it).

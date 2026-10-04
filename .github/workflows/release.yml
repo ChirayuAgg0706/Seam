@@ -1,0 +1,52 @@
+name: release artifacts
+
+# Builds what a release consists of and checks that it works. Nothing is published:
+# the files are kept as workflow artifacts for the project owner to publish (or not).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: wheel, sdist and .vsix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions agree
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python3 tools/check_versions.py "${GITHUB_REF_NAME}"
+          else
+            python3 tools/check_versions.py
+          fi
+      - name: Build the sdist and a manylinux wheel
+        # One stable-ABI wheel serves every supported CPython, and carries the compiled
+        # helper, so installing it needs no compiler.
+        run: |
+          docker run --rm -v "$PWD":/io -w /io quay.io/pypa/manylinux_2_28_x86_64 bash -c '
+            set -e
+            /opt/python/cp312-cp312/bin/python -m pip install --quiet build
+            /opt/python/cp312-cp312/bin/python -m build --outdir /tmp/dist
+            auditwheel repair /tmp/dist/*.whl --wheel-dir /io/dist
+            cp /tmp/dist/*.tar.gz /io/dist/
+            chown -R '"$(id -u):$(id -g)"' /io/dist
+          '
+          ls -l dist
+      - name: Build the .vsix
+        run: scripts/build-vsix.sh && cp vscode/*.vsix dist/
+      - name: The wheel works on a machine with no compiler involved
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lldb python3-venv
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --no-index --find-links dist seam-debugger
+          "$RUNNER_TEMP/venv/bin/seam" --version
+          "$RUNNER_TEMP/venv/bin/seam" doctor --python python3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seam-release-artifacts
+          path: dist/*
+          if-no-files-found: error

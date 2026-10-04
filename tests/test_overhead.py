@@ -27,20 +27,25 @@ def under_seam(make_client, python, mode, env):
         dap.close()
 
 
-def measure(make_client, python, mode, env):
+def measure(make_client, python, mode, env, limit=None):
     # Interleave the two configurations and take the best of each: the minimum is the
-    # least noisy estimate of the cost of the work itself.
+    # least noisy estimate of the cost of the work itself. Noise only ever adds time, so
+    # when a busy machine pushes the ratio over `limit`, more runs can only move both
+    # minimums towards the truth: measure up to two more rounds before believing it.
     base, seam = [], []
-    for _ in range(RUNS):
-        base.append(plain(python, mode, env))
-        seam.append(under_seam(make_client, python, mode, env))
+    for _ in range(3):
+        for _ in range(RUNS):
+            base.append(plain(python, mode, env))
+            seam.append(under_seam(make_client, python, mode, env))
+        if limit is None or min(seam) / min(base) < limit:
+            break
     return min(base), min(seam)
 
 
 @pytest.mark.parametrize("mode", ["cpu", "native"])
 def test_overhead_without_breakpoints_is_under_ten_percent(make_client, python, capi, mode,
                                                            record_property):
-    base, seam = measure(make_client, python, mode, capi.env)
+    base, seam = measure(make_client, python, mode, capi.env, limit=1.10)
     ratio = seam / base
     record_property("ratio", ratio)
     print("\noverhead[%s]: plain %.3fs, under Seam %.3fs, ratio %.3f" % (mode, base, seam, ratio))

@@ -142,6 +142,44 @@ _DEBUG_OFFSETS = {
                               "remote_debugging_enabled", "debugger_pending_call",
                               "debugger_script_path", "debugger_script_path_size"]),
     ],
+    # Taken from Include/internal/pycore_debug_offsets.h of 3.15.0rc3.
+    (3, 15): [
+        ("runtime_state", ["size", "finalizing", "interpreters_head"]),
+        ("interpreter_state", ["size", "id", "next", "threads_head", "threads_main", "gc",
+                               "imports_modules", "sysdict", "builtins", "ceval_gil",
+                               "gil_runtime_state", "gil_runtime_state_enabled",
+                               "gil_runtime_state_locked", "gil_runtime_state_holder",
+                               "code_object_generation", "tlbc_generation"]),
+        ("thread_state", ["size", "prev", "next", "interp", "current_frame", "base_frame",
+                          "last_profiled_frame", "last_profiled_frame_seq", "thread_id",
+                          "native_thread_id", "datastack_chunk", "status", "holds_gil",
+                          "gil_requested", "current_exception", "exc_state"]),
+        ("err_stackitem", ["exc_value"]),
+        ("interpreter_frame", ["size", "previous", "executable", "instr_ptr", "localsplus",
+                               "owner", "stackpointer", "tlbc_index"]),
+        ("code_object", ["size", "filename", "name", "qualname", "linetable", "firstlineno",
+                         "argcount", "localsplusnames", "localspluskinds", "co_code_adaptive",
+                         "co_tlbc"]),
+        ("pyobject", ["size", "ob_type"]),
+        ("type_object", ["size", "tp_name", "tp_repr", "tp_flags", "tp_basicsize",
+                         "tp_dictoffset"]),
+        ("heap_type_object", ["size", "ht_cached_keys"]),
+        ("tuple_object", ["size", "ob_item", "ob_size"]),
+        ("list_object", ["size", "ob_item", "ob_size"]),
+        ("set_object", ["size", "used", "table", "mask"]),
+        ("dict_object", ["size", "ma_keys", "ma_values"]),
+        ("float_object", ["size", "ob_fval"]),
+        ("long_object", ["size", "lv_tag", "ob_digit"]),
+        ("bytes_object", ["size", "ob_size", "ob_sval"]),
+        ("unicode_object", ["size", "state", "length", "asciiobject_size",
+                            "compactunicodeobject_size"]),
+        ("gc", ["size", "collecting", "frame", "generation_stats_size", "generation_stats"]),
+        ("gen_object", ["size", "gi_name", "gi_iframe", "gi_frame_state"]),
+        ("llist_node", ["next", "prev"]),
+        ("debugger_support", ["eval_breaker", "remote_debugger_support",
+                              "remote_debugging_enabled", "debugger_pending_call",
+                              "debugger_script_path", "debugger_script_path_size"]),
+    ],
 }
 
 
@@ -197,7 +235,8 @@ def _layout_from_debug_offsets(read, runtime_addr, version):
     L.str_length = t["unicode_object.length"]
     L.str_state = t["unicode_object.state"]
     L.str_ascii_data = t["unicode_object.asciiobject_size"]
-    L.str_compact_data = t["unicode_object.asciiobject_size"] + 16
+    L.str_compact_data = t.get("unicode_object.compactunicodeobject_size",
+                               t["unicode_object.asciiobject_size"] + 16)
     L.var_size = t["bytes_object.ob_size"]
     L.bytes_data = t["bytes_object.ob_sval"]
     L.tuple_item = t["tuple_object.ob_item"]

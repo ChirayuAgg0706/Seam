@@ -201,6 +201,7 @@ class Adapter:
         self.terminal = None          # connection to the terminal holder (console option)
         self.post_mortem = {}         # tid -> frames of the uncaught exception shown there
         self.throw_stop = False       # stopped at a C++ throw or Rust panic
+        self.leftover_stops = 0       # stops ignored as leftovers (see _is_leftover)
         self._watch_exit_packets()
 
     def _note(self, text):
@@ -433,16 +434,57 @@ class Adapter:
         if self.py:
             self.py.new_stop()
 
+    @staticmethod
+    def _pc(thread):
+        """Where the thread really is: its PC register, which stays current when its
+        frame list does not. Right after a stop the register can be unreadable for a
+        moment (it reads as zero); then the frame's own PC is the best there is."""
+        frame = thread.GetFrameAtIndex(0)
+        rip = frame.FindRegister("rip")
+        if rip.IsValid():
+            error = lldb.SBError()
+            value = rip.GetValueAsUnsigned(error)
+            if error.Success() and value:
+                return value
+        return frame.GetPC()
+
+    def _is_leftover(self, thread):
+        """True if this thread's stop reason describes a stop that is already over.
+
+        To resume a thread that sits on a breakpoint, LLDB steps it one instruction past
+        the breakpoint first. On a busy machine (seen with LLDB 18, 19 and 20; never on
+        an idle one) that internal step sometimes surfaces as a public stop, with the
+        thread still described as having hit the breakpoint it has just left: same stop
+        reason, the old frame list, even the breakpoint's hit count bumped. The program
+        has not come round again; the registers say where it really is. A thread that
+        has genuinely hit a breakpoint has its PC on one of the breakpoint's locations.
+        """
+        reason = thread.GetStopReason()
+        if reason == lldb.eStopReasonTrace:
+            return self.native_stepping is None  # a single step nobody asked Seam for
+        if reason != lldb.eStopReasonBreakpoint:
+            return False
+        pc = self._pc(thread)
+        for i in range(0, thread.GetStopReasonDataCount(), 2):
+            bp = self.target.FindBreakpointByID(thread.GetStopReasonDataAtIndex(i))
+            if bp.IsValid() and bp.FindLocationByAddress(pc).IsValid():
+                return False
+        self.log("thread", thread.GetThreadID(), "reports a breakpoint it is no longer at",
+                 "(pc %#x):" % pc, thread.GetStopDescription(80))
+        return True
+
     def _interesting(self, thread):
         reason = thread.GetStopReason()
-        return reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
+        return (reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
+                and not self._is_leftover(thread))
 
     def _trap_thread(self):
         if self.bp_trap is None:
             return None
         for thread in self.process:
             if (thread.GetStopReason() == lldb.eStopReasonBreakpoint
-                    and thread.GetStopReasonDataAtIndex(0) == self.bp_trap.GetID()):
+                    and thread.GetStopReasonDataAtIndex(0) == self.bp_trap.GetID()
+                    and not self._is_leftover(thread)):
                 return thread
         return None
 
@@ -458,15 +500,25 @@ class Adapter:
         getpid = self.sym.get("getpid")
         if not getpid:
             return
-        for thread in self.process:
+        def picture(thread):
             frame = thread.GetFrameAtIndex(0)
-            rip = frame.FindRegister("rip")
-            if rip.IsValid() and rip.GetValueAsUnsigned() != frame.GetPC():
-                self.log("stale frame list on thread", thread.GetThreadID(), "- refreshing")
+            return "reason %s (%s) frame pc %#x rip %#x" % (
+                thread.GetStopReason(), thread.GetStopDescription(60), frame.GetPC(),
+                frame.FindRegister("rip").GetValueAsUnsigned())
+
+        for thread in self.process:
+            # Only a PC register that can be read, and differs, shows a stale list. Right
+            # after a stop the register is sometimes unreadable (it reads as zero) while
+            # the frames are fine; calling into the process then is pointless, and is the
+            # likely cause of a breakpoint hit that lost its stop reason (decisions §17).
+            if self._pc(thread) != thread.GetFrameAtIndex(0).GetPC():
+                self.log("stale frame list on thread", thread.GetThreadID(), "- refreshing;",
+                         picture(thread))
                 try:
                     self._call(thread, "((int(*)(void))%d)()" % getpid, timeout_s=5)
                 except DapError as exc:
                     self.log("refresh failed:", exc)
+                self.log("  after the call:", picture(thread))
                 return
 
     # ----------------------------------------------- stepping across the boundary
@@ -828,7 +880,15 @@ class Adapter:
 
     def _on_stop(self):
         self._new_stop()
+        # First make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
+        if not self.pause_requested and not any(self._interesting(t) for t in self.process):
+            # No thread has a current reason to be stopped: the stop is a leftover of
+            # stepping off a breakpoint (see _is_leftover). Nothing is reported.
+            self.leftover_stops += 1
+            self.log("stop without a current reason; resuming")
+            self._continue()
+            return
         self._drain_output()
         self._refresh_native_bp_status()
         thread = self._trap_thread()
@@ -1363,7 +1423,7 @@ class Adapter:
             self.terminal = connection
             return tty
         except OSError as exc:
-            raise DapError("could not get a terminal from the client: %s" % exc)
+            raise DapError("could not get a terminal from the client: %s" % exc) from None
         finally:
             server.close()
             shutil.rmtree(directory, ignore_errors=True)
@@ -1428,7 +1488,7 @@ class Adapter:
         try:
             self.py = pyread.PyReader(self._read, runtime, version)
         except (ValueError, NotImplementedError) as exc:
-            raise DapError("unsupported interpreter: %s" % exc)
+            raise DapError("unsupported interpreter: %s" % exc) from None
 
     def _load_helper(self):
         """Resolve the helper's symbols once the agent has been imported."""
@@ -1597,7 +1657,7 @@ class Adapter:
                 raise DapError(
                     "the process did not load the Seam helper within %d s. Its main "
                     "thread never reached a safe point; it is probably blocked in a "
-                    "system call or a long native call." % timeout)
+                    "system call or a long native call." % timeout) from None
             if state != lldb.eStateStopped:
                 raise DapError("the process exited while attaching")
             thread = self._trap_thread()
@@ -1719,6 +1779,9 @@ class Adapter:
         if spec is None:
             return True
         spec["hits"] += 1
+        self.log("native breakpoint", bp.GetID(), "hit", spec["hits"], "lldb count",
+                 bp.GetHitCount(), "pc %#x" % thread.GetFrameAtIndex(0).GetPC(),
+                 "stop-id", self.process.GetStopID())
         if spec["hit"]:
             operator, number = spec["hit"]
             last = {"==": number, "<=": number, "<": number - 1}.get(operator)
@@ -1837,7 +1900,8 @@ class Adapter:
         threads = []
         for thread in self.process:
             name = thread.GetName() or "Thread"
-            threads.append({"id": thread.GetThreadID(), "name": "%s (%d)" % (name, thread.GetThreadID())})
+            threads.append({"id": thread.GetThreadID(),
+                            "name": "%s (%d)" % (name, thread.GetThreadID())})
         return {"threads": threads}
 
     def _new_id(self):
@@ -2194,6 +2258,7 @@ class Adapter:
             "stepInBreakpointsEnabled": any(bp.IsEnabled() for bp in self.user_bps.values()),
             "nativeStepInProgress": self.native_stepping is not None,
             "pythonStepArmed": self.py_step_armed,
+            "leftoverStops": self.leftover_stops,
         }
         if self.safe_tid is not None:
             body["agent"] = self.agent("status")

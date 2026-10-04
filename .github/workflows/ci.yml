@@ -58,9 +58,9 @@ jobs:
         include:
           - { python: "3.12", opt: "O2" }
           - { python: "3.13", opt: "O0" }
-          - { python: "3.13", opt: "O2" }
           - { python: "3.14", opt: "O0" }
           - { python: "3.14", opt: "O2" }
+          - { python: "3.15", opt: "O0" }   # a release candidate until 3.15.0 is out
     steps:
       - uses: actions/checkout@v4
       - name: Install LLDB and build tools
@@ -162,11 +162,16 @@ jobs:
 
   vsix:
     if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
-    name: VS Code extension package
+    name: lint, versions, VS Code extension package
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lint
+        run: uvx ruff check src tests tools
+      - name: Versions agree
+        run: python3 tools/check_versions.py
       - name: Build the .vsix
         run: scripts/build-vsix.sh
       - uses: actions/upload-artifact@v4

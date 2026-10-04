@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seam-debugger"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A mixed-mode Python + native debugger for Linux"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
+
+[tool.setuptools.dynamic]
+version = { attr = "seam.__version__" }
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
@@ -21,6 +24,20 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "seam._target" = ["*.c"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = [
+    "B905",  # zip() without strict=: the lists zipped here are built together
+    "E741",  # short names in comprehensions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/targets/*" = ["F841"]  # locals that exist to be looked at in the debugger
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

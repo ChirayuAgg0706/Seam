@@ -120,6 +120,30 @@ def test_native_hit_count(dap, capi, hit, expected):
     assert "total 45" in dap.output
 
 
+def test_native_breakpoint_in_a_loop_stops_once_per_iteration(dap, capi, iteration):
+    """Continuing from a breakpoint to the same breakpoint, ten times over.
+
+    This is where LLDB's leftover stops show up (see Adapter._is_leftover): without the
+    check, about one run in 25 had an extra stop one instruction past the breakpoint.
+    """
+    dap.launch(COUNTING, dap.python, env=capi.env, breakpoints={CAPI_SRC: [NATIVE]})
+    seen = []
+    while True:
+        name, body = dap.wait_any(["stopped", "exited"])
+        if name == "exited":
+            break
+        assert body["reason"] == "breakpoint"
+        stack = dap.stack(body["threadId"])
+        assert stack[0]["name"] == "add_impl"
+        if capi.opt == "O0":
+            assert stack[0]["line"] == NATIVE
+        main = [f for f in stack if f["name"] == "main"][0]
+        seen.append(dap.scope(main["id"])["i"]["value"])
+        dap.cont(body["threadId"])
+    assert seen == [str(i) for i in range(10)]
+    assert body["exitCode"] == 0
+
+
 def test_native_logpoint(dap, capi):
     spec = {"line": NATIVE, "logMessage": "adding {b}: {a + b}"}
     dap.launch(COUNTING, dap.python, env=capi.env, breakpoints={CAPI_SRC: [spec]})

@@ -119,7 +119,7 @@ class DapClient:
         try:
             msg = self.inbox.get(timeout=remaining)
         except queue.Empty:
-            raise DapFailure("timed out waiting for the adapter\n" + self.tail_log())
+            raise DapFailure("timed out waiting for the adapter\n" + self.tail_log()) from None
         if msg is None:
             raise DapFailure("the adapter closed the connection\n" + self.tail_log())
         self._absorb(msg)
@@ -300,4 +300,4 @@ class DapClient:
                 self.proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                raise DapFailure("the adapter did not exit after disconnect")
+                raise DapFailure("the adapter did not exit after disconnect") from None

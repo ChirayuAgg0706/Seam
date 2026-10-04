@@ -1,48 +1,59 @@
 # Roadmap: from v1 to production-ready
 
-v1 (see [STATUS.md](STATUS.md)) proves the design on the scenarios it was specified for.
-This list is what stands between that and a tool people can rely on, in priority order.
-An item is **done** only when a scenario test for it has been seen passing.
+v1 proved the design on the scenarios it was specified for. This list is what stands
+between that and a tool people can rely on, in priority order. An item is **done** only
+when a scenario test for it has been seen passing; [STATUS.md](STATUS.md) has the evidence.
 
 ## Priority 1: fails or is unverified on first real use
 
 | # | Item | Status |
 |---|---|---|
-| 1 | **Crashes and signals.** Segfault/abort in an extension stops with the merged stack; signals the program handles do not stop the debugger; death by signal is reported as such. | **done** (`tests/test_crash.py`, 12 scenarios; `docs/decisions.md` §13) |
-| 2 | **Adapter failure paths.** Editor vanishing, `seam dap` killed, LLDB dying, malformed requests, launch errors: a clear message and nothing left behind. | **done** (`tests/test_robust.py`, 7 scenarios) |
-| 3 | **Exception breakpoints.** Stop on uncaught and on raised Python exceptions, with exception details; C++ `throw` and Rust panic. | **done** (`tests/test_exceptions.py`, 9 scenarios; `docs/decisions.md` §14) |
-| 4 | **Program input.** Run the program in the editor's terminal (`console: integratedTerminal`), with Ctrl-C passed on; in the debug console, input is empty instead of hanging. | **done** (`tests/test_terminal.py`, 6 scenarios; `docs/decisions.md` §15) |
-| 5 | **Editor verification.** Automated checks of the VS Code extension (extension host under a virtual display) and of the Neovim configuration (headless), in CI. | not started |
+| 1 | **Crashes and signals.** Segfault/abort in an extension stops with the merged stack; signals the program handles do not stop the debugger; death by signal is reported as such. | **done** (`tests/test_crash.py`; `docs/decisions.md` §13) |
+| 2 | **Adapter failure paths.** Editor vanishing, `seam dap` killed, LLDB dying, malformed requests, launch errors: a clear message and nothing left behind. | **done** (`tests/test_robust.py`) |
+| 3 | **Exception breakpoints.** Uncaught and raised Python exceptions, with exception details; C++ `throw` and Rust panic. | **done** (`tests/test_exceptions.py`; §14) |
+| 4 | **Program input.** The program runs in the editor's terminal, with Ctrl-C passed on; in the debug console, input is empty instead of hanging. | **done** (`tests/test_terminal.py`; §15) |
+| 5 | **Editor verification.** The packaged extension inside a real VS Code, and the documented configuration inside a headless Neovim, in CI. | **done** (CI job `editors`) |
 
 ## Priority 2: coverage
 
 | # | Item | Status |
 |---|---|---|
-| 6 | LLDB 19 and 20 in CI (today CI runs 18 only; 20 is run locally). | not started |
-| 7 | Real third-party wheels with no debug info (numpy, a PyO3 package): merged stack and stepping. | not started |
-| 8 | Clear refusal on unsupported setups (free-threaded build, Python 3.11, no LLDB, ptrace blocked) and a `seam doctor` command that checks the environment. | not started |
-| 9 | Weekly looped soak run in CI to catch nondeterminism without anyone asking for it. | not started |
+| 6 | LLDB 19 and 20 in CI. | **done** (CI job `lldb`) |
+| 7 | Real third-party wheels with no debug info, in a virtual environment. | **done** (`tests/test_wheels.py`: numpy, orjson) |
+| 8 | Clear refusal on unsupported setups; `seam doctor`. | **done** (`tests/test_unsupported.py`, `tests/test_doctor.py`). The non-x86-64 refusal is untested. |
+| 9 | Weekly looped soak run in CI. | **set up**; its first scheduled run has not happened yet |
+| 10 | Python 3.15. | **done** for 3.15.0rc3 (full suite); re-check when 3.15.0 is released |
 
 ## Priority 3: features people expect from a debugger
 
 | # | Item | Status |
 |---|---|---|
-| 10 | Hit-count conditions and logpoints. | not started |
-| 11 | Set variable; richer variable display (dict keys, object attributes, long collections in pages). | not started |
+| 11 | Hit-count conditions and logpoints. | **done** (`tests/test_breakpoints.py`; §16) |
+| 12 | Set variable; richer variable display (object attributes by kind, long collections in pages). | not started |
+| 13 | Function breakpoints with conditions; data breakpoints (watchpoints) on native variables. | not started |
 
 ## Priority 4: release engineering
 
 | # | Item | Status |
 |---|---|---|
-| 12 | Wheel and `.vsix` built as CI artifacts on a version tag; changelog; one version number. Nothing is published without the owner's say-so. | not started |
-| 13 | Lint in CI; split the 1,800-line adapter module; contributor and security notes. | not started |
+| 14 | Wheel, sdist and `.vsix` built and checked by a workflow; changelog; versions kept in step. | **done** as a workflow (`release.yml`); nothing is published |
+| 15 | Lint in CI; contributor and security notes. | **done** |
+| 16 | Split the 2,100-line adapter module (`adapter/server.py`) into stepping, breakpoints, stack and session parts. | not started. Worth doing before more features go in, with the suite as the safety net. |
+
+## Things found on the way that are still open
+
+- A genuine breakpoint hit was lost once under full CPU load while the leftover-stop fix
+  was being developed; the likely cause is removed, but it is not proven (§17).
+- Thread-heavy programs run 2 to 3 times slower under Seam.
+- nanobind at `-O2` under LLDB 20: LLDB cannot unwind through its library code.
 
 ## Needs the project owner (not yet)
 
 - Publishing: the PyPI name, the VS Code Marketplace / Open VSX publisher, and making the
-  repository public.
+  repository public. Until then the README's install line (`git clone`) only works for
+  people with access.
 
 ## Not planned
 
-macOS, Windows, non-x86-64, PyPy, sub-interpreters, remote debugging. Each is a project of
-its own; see the README's Limitations.
+macOS, Windows, non-x86-64, free-threaded builds, PyPy, sub-interpreters, remote
+debugging. Each is a project of its own; see the README's Limitations.

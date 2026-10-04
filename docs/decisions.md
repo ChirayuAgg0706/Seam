@@ -365,6 +365,53 @@ breakpoint is disabled once no later hit can count, so `==1000000` in a hot loop
 mean a million stops. Message expressions are evaluated by LLDB in the stopped frame.
 The line's other address ranges (§9) are not counted as further hits.
 
+## 17. Stops that are already over
+
+Found through a hit-count scenario (`%3` on a native breakpoint in a ten-iteration loop)
+that stopped on the wrong iterations in 4 of 9 CI jobs and about 1 local run in 25.
+
+To resume a thread that is sitting on a breakpoint, LLDB first steps it one instruction
+past the breakpoint. Occasionally that internal step surfaces as a public stop, and the
+thread is then still described as it was at the previous stop: stop reason "breakpoint N",
+the old frame list, and LLDB even bumps the breakpoint's hit count a second time. The
+program has not come round again. The adapter log of a failing run shows it exactly: the
+stop id advanced by one instead of two, the frame list was stale, and the PC was four
+bytes past the breakpoint, on the next line.
+
+Before this was understood it had three effects, depending on where it happened: a native
+breakpoint in a loop occasionally stopped an extra time, one line further on; a hit count
+was counted twice; and the same thing at Seam's own trap would have run a request in the
+agent from a stop that was not a trap.
+
+The PC register is current when the frame list is not, so the check is cheap: a thread
+that has really hit a breakpoint has its PC on one of that breakpoint's locations. A
+thread whose stop reason names a breakpoint it is not at, or a single-step nobody asked
+Seam for, has no current reason to be stopped. If no thread has one (and no pause was
+requested), Seam resumes without reporting anything.
+
+How often it happens depends on how busy the machine is. Looping the native breakpoint
+scenarios locally under LLDB 20: none in 3,960 continues on an idle machine, 6 in 1,584
+with half the cores kept busy, 46 in about 860 with every core busy. Every one had the
+same picture (stop reason "breakpoint", frame PC on the breakpoint, PC register one
+instruction past it), and after the check none of those runs failed.
+
+Two mistakes made on the way, both found by the same loops:
+
+- The first version trusted the PC register unconditionally. Right after a stop the
+  register is sometimes unreadable and reads as zero, so a genuine hit was taken for a
+  leftover and skipped. An unreadable register now falls back to the frame's PC.
+- The stale-frame refresh of §4d (a `getpid()` call in the process) used to run whenever
+  the register and the frame PC differed, which included the unreadable case, where the
+  frames were fine. Once, under full load, such a refresh at a genuine hit was followed
+  by no thread having a breakpoint stop reason any more, and the hit was lost. That run's
+  log does not show what the thread looked like before the call, so that the call wiped
+  the reason is the likely explanation, not an observed one. The refresh now runs only
+  when the register can be read and really differs. The lost hit has not recurred in the
+  loaded runs since, which is too few (22) to call it proven.
+
+This is probably also what was behind the one-off failures recorded in STATUS.md, but
+that is an inference from the similarity, not something those runs' logs can confirm.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped
