@@ -58,12 +58,17 @@ class Layout:
     gil_ptr = None
     gil_holder = 8
     gil_locked = 16
+    # Another thread's request for the GIL: an int in the interpreter state on 3.12, the
+    # lowest bit of the running thread's eval breaker from 3.13.
+    gil_drop_request = None
+    tstate_eval_breaker = None
     remote = None             # 3.14+: PEP 768 remote-exec offsets
 
 
 def _layout_312():
     L = Layout()
     L.gil_ptr = 384           # offsetof(_is, ceval) + offsetof(_ceval_state, gil)
+    L.gil_drop_request = 372  # offsetof(_is, ceval) + offsetof(_ceval_state, gil_drop_request)
     L.runtime_interp_head = 40
     L.interp_next = 0
     L.interp_threads_head = 72
@@ -246,6 +251,9 @@ def _layout_from_debug_offsets(read, runtime_addr, version):
     L.float_value = t["float_object.ob_fval"]
     L.gil_holder = t["interpreter_state.gil_runtime_state_holder"]
     L.gil_locked = t["interpreter_state.gil_runtime_state_locked"]
+    # 3.13 does not publish it; the field has followed `interp` since then.
+    L.tstate_eval_breaker = t.get("debugger_support.eval_breaker",
+                                  t["thread_state.interp"] + 8)
     if version >= (3, 14):
         L.ref_tag_mask = 3
         # PEP 768: fields a debugger writes to ask the interpreter to run a script.

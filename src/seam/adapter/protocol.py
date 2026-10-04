@@ -157,6 +157,15 @@ class ProtocolMixin:
             raise DapError("request too large for the agent buffer")
         self._write(self.sym["seam_req_buf"], data)
         self._write(self.sym["seam_req_len"], struct.pack("<q", len(data)))
+        # Another Python thread may be waiting for the GIL and have asked this one to give
+        # it up. The interpreter would honour that in the middle of the agent's code and
+        # then wait for somebody to take the GIL, which nobody can: every other thread is
+        # stopped. So the request is withdrawn; the thread that made it makes it again as
+        # soon as it runs.
+        request = self.py.gil_drop_request(self.safe_tid)
+        if request:
+            self.log("withdrawing a request for the GIL before running the agent")
+            self._write(*request)
         rc = self._call(self._thread(self.safe_tid),
                         "((int(*)(void))%d)()" % self.sym["seam_dispatch"])
         if rc != 0:
