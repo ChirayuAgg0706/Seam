@@ -17,7 +17,7 @@ def start_target(python):
     return proc
 
 
-def test_attach_break_inspect_detach(dap, python, pyinfo):
+def test_attach_break_inspect_detach(dap, python, pyinfo, iteration):
     proc = start_target(python)
     try:
         line = marker_line(ATTACH, "tick-body")
