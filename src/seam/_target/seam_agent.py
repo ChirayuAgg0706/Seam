@@ -799,6 +799,36 @@ def _cmd_evaluate(req):
     return _describe("", eval(code, frame.f_globals, local_names), "(%s)" % expr)
 
 
+def _cmd_complete(req):
+    """Names that could continue the text typed into the debug console.
+
+    Completes the dotted name the text ends with: `stem` is the part of its last word
+    already typed, `names` the candidates. Everything before the last dot is evaluated,
+    as hovering over it would.
+    """
+    import builtins
+    import keyword
+    import re
+    frame = _frame_for(req)
+    text = req["text"]
+    match = re.search(r"((?:[A-Za-z_]\w*\.)*)([A-Za-z_]\w*)?$", text)
+    path, stem = match.group(1), match.group(2) or ""
+    if path:
+        try:
+            names = dir(eval(path[:-1], frame.f_globals, frame.f_locals))
+        except BaseException:  # not something that exists here: nothing to offer
+            return {"stem": stem, "names": []}
+    elif text[:match.start()].endswith("."):
+        # After a call, a subscript or a literal ("...".up): not evaluated for a guess.
+        return {"stem": stem, "names": []}
+    else:
+        names = [*frame.f_locals, *frame.f_globals, *dir(builtins), *keyword.kwlist]
+    hidden = not stem.startswith("_")
+    found = sorted({n for n in names if isinstance(n, str) and n.startswith(stem)
+                    and not (hidden and n.startswith("_"))})
+    return {"stem": stem, "names": found[:300]}
+
+
 def _cmd_shutdown(req):
     """The debugger is detaching: leave no trace in the running program."""
     global _post_mortem, _exc_pending
@@ -842,6 +872,7 @@ _COMMANDS = {
     "threads": _cmd_threads,
     "variables": _cmd_variables,
     "evaluate": _cmd_evaluate,
+    "complete": _cmd_complete,
     "set_variable": _cmd_set_variable,
     "exception": _cmd_exception,
     "logs": _cmd_logs,

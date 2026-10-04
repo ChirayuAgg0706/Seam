@@ -1,5 +1,6 @@
 """The merged call stack, variables and expressions."""
 import os
+import re
 
 import lldb
 
@@ -317,6 +318,43 @@ class StackMixin:
             var = self._sb_var(value)
         return {"value": var["value"], "type": var["type"],
                 "variablesReference": var["variablesReference"]}
+
+    def req_completions(self, args):
+        """What could come next in the debug console: names visible in the frame.
+
+        Offers nothing, without an error, where an expression could not be evaluated
+        either: the editor asks on every keystroke.
+        """
+        self._require_stopped()
+        record = self.frames.get(args.get("frameId"))
+        if record is None:
+            return {"targets": []}
+        # The text up to the cursor, on the cursor's line.
+        base = 1 if self.client.get("columnsStartAt1", True) else 0
+        first = 1 if self.client.get("linesStartAt1", True) else 0
+        lines = str(args.get("text", "")).split("\n")
+        row = min(max(args.get("line", first) - first, 0), len(lines) - 1)
+        text = lines[row][:max(args.get("column", base) - base, 0)]
+        if record["kind"] == "py":
+            if self.safe_tid is None:
+                return {"targets": []}
+            try:
+                found = self.agent("complete", tid=record["tid"], index=record["index"],
+                                   pm=record.get("pm"), text=text)
+            except DapError:
+                return {"targets": []}
+            stem, names = found["stem"], found["names"]
+        else:
+            # Native code: the variables in scope. Members are not offered.
+            stem = re.search(r"(?:[A-Za-z_]\w*)?$", text).group()
+            if text[:len(text) - len(stem)].endswith((".", "->", "::")):
+                return {"targets": []}
+            values = self._native_frame(record).GetVariables(True, True, True, True)
+            names = sorted({v.GetName() for v in values
+                            if v.GetName() and v.GetName().startswith(stem)})
+        start = len(text) - len(stem) + base
+        return {"targets": [{"label": name, "start": start, "length": len(stem)}
+                            for name in names]}
 
     def req_evaluate(self, args):
         self._require_stopped()

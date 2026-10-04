@@ -189,6 +189,7 @@ class ProtocolMixin:
             "supportsLogPoints": True,
             "supportsFunctionBreakpoints": True,
             "supportsEvaluateForHovers": True,
+            "supportsCompletionsRequest": True,
             "supportsTerminateRequest": True,
             "supportsExceptionInfoRequest": True,
             "supportsSetVariable": True,
