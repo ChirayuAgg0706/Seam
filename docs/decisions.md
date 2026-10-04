@@ -141,6 +141,14 @@ breakpoint changes while running).
 - Either way the helper loads at the main thread's next safe point and reports in through
   `seam_trap`. A main thread blocked in a system call never gets there; attach then times
   out and detaches.
+- A refused attach takes its request back before detaching, while the process is still
+  stopped. Left queued, the process acted on it once its main thread ran Python again,
+  with the debugger gone: 3.14 printed "Can't open debugger script" and a traceback into
+  the program's stderr (the script had been deleted), 3.12/3.13 imported a helper nobody
+  was listening to. For PEP 768 the pending flag is cleared. A pending call cannot be
+  taken out of the interpreter's queue, so the program text it will run is emptied
+  instead (the memory it lives in stays mapped). If the main thread had already started
+  on the request at that moment, the helper still loads and stays idle.
 - Before the process is resumed to load the helper, the adapter evaluates one harmless
   call (`getpid()`). Without it, the PEP 768 path made the session's first LLDB
   expression at the helper's trap, immediately after the helper library was loaded, and
@@ -440,13 +448,28 @@ and with every core busy, 46 leftover stops in about 860 continues before, none 
 after. So the stale frame lists of §4d, the stop events that preceded the public state
 (§10), the unreadable PC register and the leftover stops of §17 were most likely all the
 same race, seen from different angles. That is an inference from the measurements above;
-the earlier diagnoses were each consistent with what was observed at the time. The
-defences written for them stay in place: they cost nothing when nothing is wrong, and
-LLDB 18 and 19 have only been run with the new arrangement on CI, not looped under load.
+the earlier diagnoses were each consistent with what was observed at the time.
+
+LLDB 18 and 19 were then looped under load on CI (the `soak` job with `soak_load`): the
+breakpoint scenarios 12 times over on a 2-core runner with both cores kept busy, which
+is where the shared debugger had produced a hit count off by one in 4 of 9 jobs without
+any extra load.
+
+| | LLDB 18.1.3 | LLDB 19.1.1 |
+|---|---|---|
+| scenario runs, failures | 288, 0 | 288, 0 |
+| continue requests | 2,448 | 2,448 |
+| stale frame lists (§4d) | 0 | 0 |
+| leftover stops (§17) | 0 | 0 |
+
+The defences written for the old symptoms stay in place all the same. They cost nothing
+when nothing is wrong, each writes a line to the log when it acts, and the soak job
+counts those lines: if one ever becomes non-zero again, something is consuming Seam's
+events again.
 
 The transient two-frame backtrace of §12 and the attach crash of §8 (LLDB 18 on CI) may
-have had the same cause. Neither can be re-tested here (LLDB 18 is no longer installed
-locally), so their workarounds stay too.
+have had the same cause. Neither has been re-tested without its workaround, so the
+workarounds stay too.
 
 ## 19. Changing variables, function breakpoints, data breakpoints
 

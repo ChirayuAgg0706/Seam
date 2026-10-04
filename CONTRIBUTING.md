@@ -66,4 +66,16 @@ extension inside a real VS Code, and the documented configuration in a headless 
 It is split this way because the repository lives on GitHub's free tier; use `[ci full]`
 for changes to the adapter's core, to stepping, or to anything version-specific, and
 `[skip ci]` for changes that touch only documentation. A missing toolchain fails CI
-rather than skipping.
+rather than skipping. Pushes to branches other than `main` start nothing.
+
+A run started by hand can be narrowed down, which is the cheap way to check one thing:
+
+```bash
+gh workflow run ci.yml --ref my-branch -f only=editors      # one job: full, smoke, lldb,
+                                                            # editors, clean-machine, vsix
+gh workflow run ci.yml -f soak=test_breakpoints -f soak_rounds=12 \
+   -f soak_lldb=19 -f soak_load=2                           # loop a selection under load
+```
+
+The soak job prints how many leftover stops and stale frame lists the adapter worked
+around (`docs/decisions.md` §17, §18). Both should be zero.

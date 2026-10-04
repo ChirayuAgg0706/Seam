@@ -22,6 +22,8 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
   pages; expressions for nested values ("Add to Watch").
 - Function breakpoints on Python and native functions, with conditions and hit counts.
 - Data breakpoints on native variables.
+- Completion in the debug console: names in the frame and attributes of the name before
+  the cursor.
 - `seam doctor`: checks the installation and runs a real debug session.
 - Python 3.15 (tested with 3.15.0rc3).
 - LLDB 19 and 20, besides 18.
@@ -39,6 +41,9 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - Rare extra or missing stops on a busy machine. Seam shared its debugger object with
   the `lldb` program it runs in, whose own event thread handled the same events; it now
   has a debugger of its own.
+- An attach that was refused because the program's main thread was blocked left its
+  request in the program, which later printed an error (Python 3.14) or loaded Seam's
+  helper with no debugger attached (3.12, 3.13).
 
 ## 0.1.0
 
