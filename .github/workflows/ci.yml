@@ -129,27 +129,57 @@ jobs:
       SEAM_DEMO_DIR: ${{ github.workspace }}/examples/pyo3-demo
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLDB, build tools and a display server
+      - name: Install LLDB, build tools, a display server and screenshot tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lldb gcc python3-dev python3-venv xvfb
+          sudo apt-get install -y --no-install-recommends lldb gcc python3-dev python3-venv xvfb xdotool imagemagick scrot
           sudo sysctl -w kernel.yama.ptrace_scope=0
-      - name: Install Seam and build the demo project
+      - name: Build the demo project
+        run: (cd examples/pyo3-demo && cargo build && cp target/debug/libseam_demo.so seam_demo.so)
+      - name: Package the extension, with the adapter and its helper inside
+        run: scripts/build-vsix.sh
+      - name: The adapter inside the .vsix works, with no Seam installed
+        run: |
+          if command -v seam; then echo "seam is installed; this check must run without it"; exit 1; fi
+          node vscode/test/unit.js --adapter
+          python3 -m venv "$RUNNER_TEMP/pytest"
+          "$RUNNER_TEMP/pytest/bin/pip" install --quiet "pytest>=8"
+          SEAM_VSIX="$(ls vscode/*.vsix)" "$RUNNER_TEMP/pytest/bin/python" -m pytest -q -rs tests/editors/test_bundle.py
+      - name: "VS Code: install the .vsix, open a project with a virtual environment, press F5"
+        env:
+          SEAM_LOG: ${{ runner.temp }}/seam-vscode.log
+          SEAM_SHOTS: ${{ runner.temp }}/seam-shots
+        run: |
+          if command -v seam; then echo "seam is installed; this check must run without it"; exit 1; fi
+          cd vscode/test
+          npm install --no-save --no-audit --no-fund @vscode/test-electron
+          SEAM_VSIX="$(ls "$GITHUB_WORKSPACE"/vscode/*.vsix)" xvfb-run -a -s "-screen 0 1600x1000x24" node run.js
+      - name: "VS Code with the Python extension: the interpreter selected there is the one debugged"
+        if: ${{ !cancelled() }}
+        env:
+          SEAM_LOG: ${{ runner.temp }}/seam-vscode-python.log
+          SEAM_SHOTS: ${{ runner.temp }}/seam-shots
+        run: |
+          cd vscode/test
+          npm install --no-save --no-audit --no-fund @vscode/test-electron
+          SEAM_VSIX="$(ls "$GITHUB_WORKSPACE"/vscode/*.vsix)" xvfb-run -a -s "-screen 0 1600x1000x24" node run.js python-extension
+      - name: Keep the pictures of the VS Code window, and the adapter logs behind them
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-check-screenshots
+          path: |
+            ${{ runner.temp }}/seam-shots
+            ${{ runner.temp }}/seam-vscode*.log*
+          if-no-files-found: warn
+      - name: Install Seam, which the Neovim configuration starts as `seam dap`
+        if: ${{ !cancelled() }}
         run: |
           python3 -m venv "$HOME/.venvs/seam"
           "$HOME/.venvs/seam/bin/pip" install .
           echo "SEAM_BIN=$HOME/.venvs/seam/bin/seam" >> "$GITHUB_ENV"
-          (cd examples/pyo3-demo && cargo build && cp target/debug/libseam_demo.so seam_demo.so)
-      - name: Package the extension
-        run: scripts/build-vsix.sh
-      - name: "VS Code: install the .vsix and debug the demo in the extension host"
-        env:
-          SEAM_LOG: ${{ runner.temp }}/seam-vscode.log
-        run: |
-          cd vscode/test
-          npm install --no-save --no-audit --no-fund @vscode/test-electron
-          SEAM_VSIX="$(ls "$GITHUB_WORKSPACE"/vscode/*.vsix)" xvfb-run -a node run.js
       - name: "Neovim: the documented nvim-dap configuration debugs the demo"
+        if: ${{ !cancelled() }}
         env:
           SEAM_LOG: ${{ runner.temp }}/seam-nvim.log
         run: |
@@ -190,8 +220,14 @@ jobs:
         run: uvx ruff check src tests tools
       - name: Versions agree
         run: python3 tools/check_versions.py
+      - name: Install what compiles the helper the extension carries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc python3-dev
       - name: Build the .vsix
         run: scripts/build-vsix.sh
+      - name: The extension's own logic (interpreter, process list, adapter command line)
+        run: node vscode/test/unit.js
       - uses: actions/upload-artifact@v4
         with:
           name: seam-vscode-extension

@@ -18,7 +18,8 @@
   "main": "./extension.js",
   "activationEvents": [
     "onDebugResolve:seam",
-    "onDebugDynamicConfigurations:seam"
+    "onDebugDynamicConfigurations:seam",
+    "onCommand:seam.pickProcess"
   ],
   "contributes": {
     "breakpoints": [
@@ -34,8 +35,8 @@
         "seam.adapterCommand": {
           "type": "array",
           "items": { "type": "string" },
-          "default": [ "seam", "dap" ],
-          "description": "Command that starts the Seam debug adapter. Change it if `seam` is not on PATH, e.g. [\"/path/to/venv/bin/seam\", \"dap\"]."
+          "default": [],
+          "description": "Command that starts the Seam debug adapter. Leave it empty to use the adapter that comes with this extension; set it to use an installation of your own, e.g. [\"/path/to/venv/bin/seam\", \"dap\"]."
         },
         "seam.logFile": {
           "type": "string",
@@ -49,6 +50,9 @@
         "type": "seam",
         "label": "Seam: Python + native",
         "languages": [ "python", "c", "cpp", "rust", "cython" ],
+        "variables": {
+          "pickProcess": "seam.pickProcess"
+        },
         "configurationAttributes": {
           "launch": {
             "properties": {
@@ -69,8 +73,7 @@
               },
               "python": {
                 "type": "string",
-                "description": "Python interpreter (3.12 or newer). A name is looked up on PATH.",
-                "default": "python3"
+                "description": "Python interpreter (3.12 or newer). A name is looked up on PATH. If this is left out: the interpreter selected in the Python extension, else the python.defaultInterpreterPath setting, else .venv or venv in the workspace folder, else python3."
               },
               "pythonArgs": {
                 "type": "array",
@@ -138,8 +141,9 @@
             "required": [ "pid" ],
             "properties": {
               "pid": {
-                "type": "number",
-                "description": "Process id of a running CPython 3.12+ process."
+                "type": [ "number", "string" ],
+                "description": "Process id of a running CPython 3.12+ process. \"${command:seam.pickProcess}\" asks which of your Python processes to attach to.",
+                "default": "${command:seam.pickProcess}"
               },
               "timeout": {
                 "type": "number",
@@ -177,7 +181,6 @@
             "request": "launch",
             "name": "Seam: current file",
             "program": "${file}",
-            "python": "python3",
             "cwd": "${workspaceFolder}"
           }
         ],
@@ -190,18 +193,17 @@
               "request": "launch",
               "name": "Seam: ${1:script}",
               "program": "^\"\\${workspaceFolder}/${1:main.py}\"",
-              "python": "python3",
               "cwd": "^\"\\${workspaceFolder}\""
             }
           },
           {
             "label": "Seam: attach to a process",
-            "description": "Attach to a running Python process by pid.",
+            "description": "Attach to a running Python process picked from a list.",
             "body": {
               "type": "seam",
               "request": "attach",
               "name": "Seam: attach",
-              "pid": 0
+              "pid": "^\"\\${command:seam.pickProcess}\""
             }
           }
         ]

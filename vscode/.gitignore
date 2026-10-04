@@ -1,0 +1,4 @@
+# The copy of the seam package that scripts/build-vsix.sh puts inside the extension.
+bundled/seam/
+# Where the editor check keeps its VS Code download and profile.
+test/.vscode-test/

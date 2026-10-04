@@ -1,3 +1,8 @@
+# Everything else in this directory goes into the .vsix, including bundled/ (the adapter
+# and its compiled helper, laid out by scripts/build-vsix.sh).
 *.vsix
 node_modules/**
 test/**
+.gitignore
+**/__pycache__/**
+**/*.pyc
