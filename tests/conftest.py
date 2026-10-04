@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import subprocess
@@ -204,6 +205,28 @@ def capi(request):
             ["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-Wall",
              "-I", sysconfig.get_paths()["include"], CAPI_SRC, "-o", out], check=True)
     return Extension(out_dir, opt)
+
+
+@pytest.fixture(scope="session")
+def wheels_python(python, pyinfo):
+    """The interpreter under test, in a virtual environment with numpy and orjson.
+
+    Real wheels from PyPI: optimised, stripped of debug info, with hand-written assembly
+    inside. Also the commonest real setup: debugging a virtual environment's `python`.
+    """
+    if not shutil.which("uv"):
+        _unavailable("uv is not installed")
+    label = "%s-%s" % (pyinfo["tag"], hashlib.sha1(python.encode()).hexdigest()[:8])
+    venv = os.path.join(os.path.expanduser("~/.cache/seam/wheels"), label)
+    exe = os.path.join(venv, "bin", "python")
+    ready = os.path.join(venv, ".seam-ready")
+    if not os.path.exists(ready):
+        _run(["uv", "venv", "--quiet", "--python", python, venv])
+        _run(["uv", "pip", "install", "--quiet", "--only-binary", ":all:", "--python", exe,
+              "numpy", "orjson"])
+        with open(ready, "w"):
+            pass
+    return exe
 
 
 def target(name):

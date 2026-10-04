@@ -22,6 +22,9 @@ python3 -m venv "$HOME/.venvs/seam"
 export PATH="$HOME/.venvs/seam/bin:$PATH"
 seam --version
 
+echo "### README: check the installation"
+seam doctor --python python3
+
 echo "### Not part of Seam: a Rust toolchain for the demo project"
 if ! command -v cargo >/dev/null; then
   $SUDO apt-get install -y curl

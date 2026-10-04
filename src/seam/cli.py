@@ -3,6 +3,8 @@
 `seam dap` speaks the Debug Adapter Protocol on stdin/stdout. The adapter itself runs
 inside LLDB's embedded Python (see docs/decisions.md); this process only starts LLDB and
 relays bytes over a socket pair.
+
+`seam doctor` checks that this machine can run Seam (see doctor.py).
 """
 import argparse
 import json
@@ -12,54 +14,100 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 
 from seam import __version__
 
 LLDB_CANDIDATES = ("lldb", "lldb-21", "lldb-20", "lldb-19", "lldb-18")
+NO_LLDB = ("LLDB 18 or newer is required but no `lldb` was found on PATH. Install it "
+           "(Debian/Ubuntu: apt install lldb) or set SEAM_LLDB to its location.")
+ADAPTER_ENTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adapter",
+                             "lldb_entry.py")
 
 
 def find_lldb():
+    """Path of the LLDB to use, or None."""
     override = os.environ.get("SEAM_LLDB")
     if override:
-        return override
+        return override if shutil.which(override) else None
     for name in LLDB_CANDIDATES:
         path = shutil.which(name)
         if path:
             return path
-    sys.exit("seam: LLDB 18 or newer is required but no `lldb` was found on PATH "
-             "(set SEAM_LLDB to its location)")
+    return None
+
+
+def lldb_command(lldb):
+    return [lldb, "--batch", "--no-lldbinit", "-o", 'command script import "%s"' % ADAPTER_ENTRY]
+
+
+def _tail(path, lines=8):
+    try:
+        with open(path, errors="replace") as fh:
+            return "".join(fh.readlines()[-lines:]).rstrip()
+    except OSError:
+        return ""
 
 
 def run_dap():
     lldb = find_lldb()
-    entry = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adapter", "lldb_entry.py")
+    if lldb is None:
+        # Editors show a debug adapter's stderr when it dies before answering.
+        sys.stderr.write("seam: %s\n" % NO_LLDB)
+        return 1
     ours, theirs = socket.socketpair()
-    # A second channel on which the adapter reports the programs it launches, so that
-    # they can be cleaned up here if LLDB dies without doing it.
+    # A second channel on which the adapter reports that it is up, and the programs it
+    # launches, so that they can be cleaned up here if LLDB dies without doing it.
     notes_read, notes_write = os.pipe()
     env = dict(os.environ, SEAM_DAP_FD=str(theirs.fileno()), SEAM_NOTE_FD=str(notes_write),
                SEAM_PYTHON=sys.executable)
     log_path = os.environ.get("SEAM_LOG")
-    sink = open(log_path + ".lldb", "ab") if log_path else subprocess.DEVNULL
-    proc = subprocess.Popen(
-        [lldb, "--batch", "--no-lldbinit", "-o", 'command script import "%s"' % entry],
-        stdin=subprocess.DEVNULL, stdout=sink, stderr=sink, env=env,
-        pass_fds=[theirs.fileno(), notes_write])
-    theirs.close()
-    os.close(notes_write)
+    scratch = None
+    if log_path:
+        lldb_output = log_path + ".lldb"
+    else:
+        # Kept only to explain a failure; removed on the way out.
+        handle, scratch = tempfile.mkstemp(prefix="seam-lldb-", suffix=".txt")
+        os.close(handle)
+        lldb_output = scratch
+    try:
+        with open(lldb_output, "ab") as sink:
+            try:
+                proc = subprocess.Popen(
+                    lldb_command(lldb), stdin=subprocess.DEVNULL, stdout=sink, stderr=sink,
+                    env=env, pass_fds=[theirs.fileno(), notes_write])
+            except OSError as exc:
+                sys.stderr.write("seam: cannot start %s: %s\n" % (lldb, exc))
+                return 1
+        theirs.close()
+        os.close(notes_write)
+        return _relay(proc, ours, notes_read, log_path, lldb_output)
+    finally:
+        if scratch:
+            try:
+                os.unlink(scratch)
+            except OSError:
+                pass
+
+
+def _relay(proc, ours, notes_read, log_path, lldb_output):
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     launched = []
+    ready = threading.Event()
 
     def read_notes():
         with os.fdopen(notes_read) as notes:
             for line in notes:
                 kind, _, value = line.strip().partition(" ")
-                if kind == "launched" and value.isdigit():
+                if kind == "ready":
+                    ready.set()
+                elif kind == "launched" and value.isdigit():
                     launched.append(int(value))
 
-    threading.Thread(target=read_notes, daemon=True).start()
+    notes_thread = threading.Thread(target=read_notes, daemon=True)
+    notes_thread.start()
 
     def client_to_adapter():
         try:
@@ -92,6 +140,15 @@ def run_dap():
         proc.kill()
         proc.wait()
         return 0
+    notes_thread.join(2)  # LLDB has gone, so the pipe is at its end
+    if not ready.is_set():
+        # LLDB ran, but Seam's adapter never started inside it.
+        sys.stderr.write(
+            "seam: LLDB did not load Seam's adapter. Its Python scripting support is "
+            "probably missing or broken (Debian/Ubuntu: the python3-lldb package that "
+            "matches your lldb). `seam doctor` checks this. LLDB said:\n%s\n"
+            % (_tail(lldb_output) or "(nothing)"))
+        return 1
     if status == 0:
         return 0
     # LLDB crashed, was killed, or the adapter inside it failed. A program it launched
@@ -125,6 +182,14 @@ def main(argv=None):
     parser.add_argument("--version", action="version", version="seam " + __version__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("dap", help="run the debug adapter on stdin/stdout")
+    doctor = sub.add_parser(
+        "doctor", help="check that this machine can run Seam, with a real debug session")
+    doctor.add_argument("--python", default="python3",
+                        help="the interpreter you want to debug (default: python3)")
     args = parser.parse_args(argv)
     if args.command == "dap":
         sys.exit(run_dap())
+    if args.command == "doctor":
+        from seam import doctor as doctor_module
+
+        sys.exit(doctor_module.run(args.python))

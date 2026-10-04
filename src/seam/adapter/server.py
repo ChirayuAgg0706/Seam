@@ -888,13 +888,58 @@ class Adapter:
             body["reason"] = "pause"
         self._report_native_stop(thread, body)
 
+    def _throw_breakpoint(self):
+        """Breakpoint on the first instruction of `__cxa_throw`.
+
+        Not LLDB's own C++ exception breakpoint: that one stops after the function's
+        prologue, where the argument registers are no longer guaranteed to hold the
+        arguments. The C++ runtime is usually loaded later, with the extension module,
+        so the breakpoint has to be set by name; the command line is the only place
+        where a name breakpoint can be told not to skip the prologue.
+        """
+        before = {self.target.GetBreakpointAtIndex(i).GetID()
+                  for i in range(self.target.GetNumBreakpoints())}
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand(
+            "breakpoint set --name __cxa_throw --skip-prologue false", result)
+        for i in range(self.target.GetNumBreakpoints()):
+            bp = self.target.GetBreakpointAtIndex(i)
+            if bp.GetID() not in before:
+                return bp
+        self.log("could not set the throw breakpoint:", result.GetError())
+        return self.target.BreakpointCreateForException(
+            lldb.eLanguageTypeC_plus_plus, False, True)
+
+    def _thrown_type(self, thread):
+        """Name of the C++ type being thrown, at a stop on entry to `__cxa_throw`.
+
+        Its second argument is the `std::type_info`. The type's name is that object's
+        symbol ("typeinfo for T"); failing that, the mangled name it points to.
+        """
+        frame = thread.GetFrameAtIndex(0)
+        tinfo = frame.FindRegister("rsi").GetValueAsUnsigned()
+        symbol = self.target.ResolveLoadAddress(tinfo).GetSymbol().GetName() or ""
+        mangled = ""
+        if not symbol.startswith("typeinfo for "):
+            try:
+                pointer = struct.unpack("<Q", self._read(tinfo + 8, 8))[0]
+                mangled = self.process.ReadCStringFromMemory(pointer, 256, lldb.SBError()) or ""
+                for ctx in self.target.FindSymbols("_ZTI" + mangled):
+                    symbol = ctx.GetSymbol().GetName() or ""
+                    if symbol.startswith("typeinfo for "):
+                        break
+            except (ValueError, struct.error):
+                pass
+        self.log("throw: pc %#x in %s, type_info %#x, symbol %r, mangled %r"
+                 % (frame.GetPC(), frame.GetFunctionName(), tinfo, symbol, mangled))
+        if symbol.startswith("typeinfo for "):
+            return symbol[len("typeinfo for "):]
+        return mangled
+
     def _report_native_exception(self, thread, kind, body):
         """A stop at a C++ `throw` or a Rust panic (exception breakpoint filters)."""
         if kind == "cpp_throw":
-            # Stopped on entry to __cxa_throw(object, type_info, destructor).
-            tinfo = thread.GetFrameAtIndex(0).FindRegister("rsi").GetValueAsUnsigned()
-            symbol = self.target.ResolveLoadAddress(tinfo).GetSymbol().GetName() or ""
-            name = symbol[len("typeinfo for "):] if symbol.startswith("typeinfo for ") else ""
+            name = self._thrown_type(thread)
             what = "C++ exception thrown" + (": " + name if name else "")
             name = name or "C++ exception"
         else:
@@ -1107,6 +1152,11 @@ class Adapter:
         if self.target is not None:
             raise DapError("this session is already debugging a program")
 
+    def _require_x86_64(self):
+        triple = self.target.GetTriple() or ""
+        if triple and not triple.startswith("x86_64"):
+            raise DapError("Seam supports x86-64 Linux programs only; this one is %s" % triple)
+
     def req_launch(self, args):
         self._require_no_session()
         python = self._resolve_python(args.get("python") or "python3")
@@ -1133,6 +1183,7 @@ class Adapter:
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
         if not self.target or not self.target.IsValid():
             raise DapError("cannot create a target for %s: %s" % (python, err.GetCString()))
+        self._require_x86_64()
         bp_main = self._entry_breakpoint("Py_RunMain")
 
         info = lldb.SBLaunchInfo(argv)
@@ -1372,6 +1423,7 @@ class Adapter:
         self.attached = True
         try:
             self._wait_attached(pid)
+            self._require_x86_64()
             self._apply_signal_policy(args)
             try:
                 self.cwd = os.readlink("/proc/%d/cwd" % pid)
@@ -1630,8 +1682,7 @@ class Adapter:
                     if bp is not None:
                         self.target.BreakpointDelete(bp.GetID())
                     if name == "cpp_throw" and name in self.exc_filters:
-                        self.native_exc_bps[name] = self.target.BreakpointCreateForException(
-                            lldb.eLanguageTypeC_plus_plus, False, True)
+                        self.native_exc_bps[name] = self._throw_breakpoint()
                     elif name in self.exc_filters:
                         self.native_exc_bps[name] = self.target.BreakpointCreateByName(
                             "rust_panic")
@@ -2076,6 +2127,7 @@ def serve(debugger):
     if note_fd:
         os.set_inheritable(int(note_fd), False)
         adapter.note_fd = int(note_fd)
+        adapter._note("ready")
     try:
         adapter.run()
     except Exception:

@@ -41,6 +41,16 @@ Seam itself can live in any Python 3.12+ environment; it does not have to be the
 environment of the program you debug. Put `~/.venvs/seam/bin` on `PATH`, or use the full
 path to `seam` in the editor configuration below.
 
+Check the installation, naming the interpreter you will debug with:
+
+```bash
+~/.venvs/seam/bin/seam doctor --python python3
+```
+
+It checks LLDB and its Python support, the helper, the ptrace setting and the interpreter,
+says how to fix anything that is wrong, and ends by running a short debug session for
+real. If something does not work later, its output is the first thing to look at.
+
 ## Quick start
 
 Suppose `demo.py` calls a function from your extension module:
