@@ -348,6 +348,42 @@ def _set_exception_filters(filters, just_my_code):
     _update_global()
 
 
+# ------------------------------------------------------------ child processes
+
+_dormant = False  # True in a forked child, where the helper has switched itself off
+
+
+def _go_dormant():
+    """Switch the helper off for good. Runs in a child process, right after the fork.
+
+    Seam does not follow children: LLDB lets a forked child go, and nobody would ever
+    answer a trap there. But the child starts as a copy of the parent, with the parent's
+    breakpoints, exception filters and perhaps a step armed in its copy of the helper.
+    Leave no trace of them: no monitoring events, no hooks, and the debugger's slot in
+    sys.monitoring free for whoever wants it in the child.
+    """
+    global _dormant, _in_dispatch
+    if _dormant:
+        return
+    _dormant = True
+    _in_dispatch = False  # the fork may have come from an expression Seam was evaluating
+    _cmd_shutdown(None)
+    del _log_pending[:]
+    _refs.clear()
+    for event in vars(E).values():
+        try:
+            mon.register_callback(TOOL, event, None)
+        except ValueError:
+            pass  # NO_EVENTS, or a name that stands for several events
+    mon.free_tool_id(TOOL)
+
+
+# os.fork() runs the first; a fork made by native code only sets a flag in the C helper,
+# which then calls the function the first time the child reaches any of Seam's callbacks.
+os.register_at_fork(after_in_child=_go_dormant)
+_t.set_dormant(_go_dormant)
+
+
 # ------------------------------------------------------------------- stepping
 
 def _finish_step():

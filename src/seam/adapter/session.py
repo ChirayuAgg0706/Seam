@@ -32,6 +32,8 @@ class SessionMixin:
             match = EXIT_PACKET.search(line)
             if match:
                 self.exit_packet = (match.group(1), int(match.group(2), 16))
+            if "fork" in line:
+                self.log("PACKET", line.strip()[:1500])
 
         self._on_log = on_log  # LLDB does not keep the callable alive
         self.dbg.SetLoggingCallback(on_log)
