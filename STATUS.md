@@ -108,11 +108,11 @@ on the `def` line first; pressing it again gets there (the test allows up to 12,
   failure of the same shape was caught with full logs and traced to LLDB occasionally
   returning a two-frame backtrace; Seam now recovers from it (`docs/decisions.md` §12).
   That this was also the LLDB 18 failure is a guess.
-- **One CI-only failure, probable cause fixed.** In one CI run, on the 3.14 -O2 cell, the
-  adapter exited during the first request after an attach. It did not recur in the next
-  CI run or in 48 local attach runs. A real defect that fits the symptom was then found
-  and removed (`docs/decisions.md` §10, second part), but since the failure was never
-  reproduced I cannot show that this was it. Test failures now include LLDB's own output.
+- **Attach on 3.14 under LLDB 18 failed about 1 time in 13 on CI — fixed.** LLDB itself
+  crashed or hung inside `SBFrame::EvaluateExpression` on the first request after an
+  attach. It never happened locally. My first explanation (a stale process-state reading)
+  was wrong: the failure came back. A CI soak then reproduced it 3 times in 40 attaches;
+  after the fix in `docs/decisions.md` §8 the same soak passed 80 of 80.
 - **Thread-heavy programs run about 2× slower** under Seam even with no breakpoints.
 - **LLDB 19 is untested.** 18.1.3 (CI) and 20.1.2 (local) are. LLDB 20 needed three
   accommodations, all in `docs/decisions.md` §12: internal breakpoints by symbol address,

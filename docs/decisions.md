@@ -141,6 +141,13 @@ breakpoint changes while running).
 - Either way the helper loads at the main thread's next safe point and reports in through
   `seam_trap`. A main thread blocked in a system call never gets there; attach then times
   out and detaches.
+- Before the process is resumed to load the helper, the adapter evaluates one harmless
+  call (`getpid()`). Without it, the PEP 768 path made the session's first LLDB
+  expression at the helper's trap, immediately after the helper library was loaded, and
+  LLDB 18 crashed or hung in `SBFrame::EvaluateExpression` in 3 of 40 attaches in a CI
+  soak (never locally). With it the soak passed 80 of 80. Why LLDB fails there is not
+  understood; the 3.12/3.13 path never showed it, and it already evaluated an expression
+  at the attach stop.
 - On disconnect Seam removes its breakpoints and monitoring events and detaches; the
   helper library stays mapped.
 
@@ -172,9 +179,9 @@ the state to catch up before discarding a stop event.
 
 The same lag works the other way: right after a resume the public state can still read
 "stopped". The helper that waits for a stop used to fall back to that state when no event
-had arrived for a second, which could report a stop that had not happened; this is the
-likely cause of a one-off CI failure where LLDB died during the first request after an
-attach. The wait now trusts events only. The single exception is the stop that completes
+had arrived for a second, which could report a stop that had not happened. (I first blamed
+this for a CI failure where LLDB died after an attach; that was wrong, see §8.) The wait
+now trusts events only. The single exception is the stop that completes
 an attach, for which LLDB does not always send an event and before which nothing has been
 resumed.
 
