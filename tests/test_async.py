@@ -151,6 +151,20 @@ def test_stepping_off_the_end_of_a_task_goes_to_the_next_user_line(dap, iteratio
     assert "tasks ['A', 'B', 'C']" in dap.output
 
 
+def test_step_over_follows_its_own_frame_not_the_function(dap, iteration):
+    tid = launch(dap, "tasks", "worker-sleep")
+    assert dap.evaluate("name", dap.stack(tid)[0]["id"])["result"] == "'a'"
+    dap.cont()
+    assert dap.wait_stopped()["reason"] == "breakpoint"
+    assert dap.evaluate("name", dap.stack(tid)[0]["id"])["result"] == "'b'"
+    dap.set_breakpoints(COROUTINES, [])
+    # While this worker sleeps, asyncio.gather starts the other one: the same function,
+    # the same lines, another frame.
+    assert step(dap, tid) == ("worker", at("worker-return"))
+    assert dap.evaluate("name", dap.stack(tid)[0]["id"])["result"] == "'b'"
+    finish(dap)
+
+
 def test_with_just_my_code_off_a_finished_task_returns_into_the_event_loop(dap, iteration):
     tid = launch(dap, "tasks", "worker-return", justMyCode=False)
     stop = dap.step("next", tid)
