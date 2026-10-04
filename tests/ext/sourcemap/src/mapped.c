@@ -36,6 +36,12 @@ mp_scale(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+mp_calls(PyObject *self, PyObject *noargs)
+{
+    return PyLong_FromLong(calls);
+}
+
+static PyObject *
 mp_crash(PyObject *self, PyObject *noargs)
 {
     volatile int *nowhere = NULL;
@@ -47,6 +53,7 @@ PyObject *shim_call(PyObject *self, PyObject *arg);
 
 static PyMethodDef methods[] = {
     {"scale", mp_scale, METH_VARARGS, NULL},
+    {"calls", mp_calls, METH_NOARGS, NULL},
     {"via_shim", shim_call, METH_O, NULL},
     {"crash", mp_crash, METH_NOARGS, NULL},
     {NULL, NULL, 0, NULL},

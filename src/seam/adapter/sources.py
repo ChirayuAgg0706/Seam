@@ -160,13 +160,18 @@ class SourcesMixin:
             shown = os.path.normpath(path)
             if os.path.realpath(shown) != real:
                 shown = real
-            head, tail = real, ""
-            while self.aliases and head != os.path.dirname(head):
+            # The file may itself be a link out of a directory the client knows: then
+            # it is its place in that directory that the client has a name for.
+            beside = os.path.join(os.path.realpath(os.path.dirname(shown)),
+                                  os.path.basename(shown))
+            for known in (real, beside) if self.aliases else ():
+                head, tail = known, ""
+                while head != os.path.dirname(head) and head not in self.aliases:
+                    head, name = os.path.split(head)
+                    tail = os.sep + name + tail
                 if head in self.aliases:
                     shown = self.aliases[head] + tail
                     break
-                head, name = os.path.split(head)
-                tail = os.sep + name + tail
             self.editor_paths[path] = shown
         return shown
 
