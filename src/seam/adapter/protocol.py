@@ -133,8 +133,21 @@ class ProtocolMixin:
         opts.SetTimeoutInMicroSeconds(int(timeout_s * 1000000))
         return opts
 
-    def _call(self, thread, expr, timeout_s=30):
-        value = thread.GetFrameAtIndex(0).EvaluateExpression(expr, self._expr_options(timeout_s))
+    def _call(self, thread, expr, timeout_s=30, alone_s=None):
+        """Call a function on one thread of the stopped process; the others stay stopped.
+
+        `alone_s`: if the call has not returned after that long, the other threads are let
+        run until it has. For calls that can need a lock a stopped thread is holding.
+        """
+        opts = self._expr_options(timeout_s)
+        if alone_s is not None:
+            opts.SetTryAllThreads(True)
+            opts.SetOneThreadTimeoutInMicroSeconds(int(alone_s * 1000000))
+        started = time.monotonic()
+        value = thread.GetFrameAtIndex(0).EvaluateExpression(expr, opts)
+        if alone_s is not None and time.monotonic() - started > alone_s:
+            self.log("the call needed the other threads to run: %.2f s"
+                     % (time.monotonic() - started))
         err = value.GetError()
         if not err.Success():
             raise DapError("call into the target failed: %s" % err.GetCString())
@@ -166,8 +179,13 @@ class ProtocolMixin:
         if request:
             self.log("withdrawing a request for the GIL before running the agent")
             self._write(*request)
+        # That leaves the rarer case: the agent's code lets go of the GIL itself (around
+        # a system call, say) while a stopped thread is inside the GIL's own mutex or
+        # condition variable, having been stopped a moment after it woke up. Then nothing
+        # moves until that thread does, so after a second on its own the call is finished
+        # with the other threads running (they can do little: this thread has the GIL).
         rc = self._call(self._thread(self.safe_tid),
-                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"])
+                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"], alone_s=1.0)
         if rc != 0:
             raise DapError("the Seam agent failed to answer (code %d)" % rc)
         ptr = struct.unpack("<Q", self._read(self.sym["seam_resp_ptr"], 8))[0]
