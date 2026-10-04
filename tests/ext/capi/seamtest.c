@@ -4,6 +4,7 @@
 #define PY_SSIZE_T_CLEAN
 #define Py_LIMITED_API 0x030C0000
 #include <Python.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 __attribute__((noinline)) static long
@@ -61,11 +62,29 @@ st_sleep_nogil(PyObject *self, PyObject *arg)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+st_crash(PyObject *self, PyObject *noargs)
+{
+    volatile int *nowhere = NULL;
+    int before = 7;
+    *nowhere = before; /* crash-here */
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+st_do_abort(PyObject *self, PyObject *noargs)
+{
+    abort(); /* abort-here */
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
     {"add", st_add, METH_VARARGS, NULL},
     {"call_back", st_call_back, METH_VARARGS, NULL},
     {"fail", st_fail, METH_NOARGS, NULL},
     {"sleep_nogil", st_sleep_nogil, METH_O, NULL},
+    {"crash", st_crash, METH_NOARGS, NULL},
+    {"do_abort", st_do_abort, METH_NOARGS, NULL},
     {NULL, NULL, 0, NULL},
 };
 

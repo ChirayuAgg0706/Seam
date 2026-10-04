@@ -95,6 +95,7 @@ call stack. **Step Out** returns to the Python line.
 | `pythonArgs` | Arguments for the interpreter itself. |
 | `cwd`, `env` | Working directory and extra environment variables. |
 | `stopOnEntry` | Stop on the first line of Python. |
+| `stopOnSignals` | Signals that stop the debugger (default `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGABRT`). Every other signal goes straight to the program. Also valid for attach. |
 | `debugInfoLookup` | Let LLDB find separate debug-info files (default true). |
 | `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
 | `showGlueFrames` | Show binding-layer trampoline frames in the call stack (default false). |
@@ -108,6 +109,17 @@ call stack. **Step Out** returns to the Python line.
 Attaching needs ptrace permission for a non-child process
 (`/proc/sys/kernel/yama/ptrace_scope` must be 0, or the program must allow it). See
 [Limitations](#limitations) for what attach can and cannot do on each Python version.
+
+### Crashes and signals
+
+If the program crashes in native code (a segfault, an `abort()`), Seam stops at the
+faulting line with the usual merged call stack: the native
+frames, then the Python frames that led there, with their locals. Continuing lets the
+signal take its course, and the debug console says which signal ended the program.
+
+Signals a Python program handles itself (`SIGINT`, `SIGTERM`, `SIGUSR1`, timers) do not
+stop the debugger; they are delivered as if it were not there. Use `stopOnSignals` to
+change which ones stop.
 
 ## How it works
 

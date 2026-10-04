@@ -243,6 +243,42 @@ returned the full 24-frame stack. One unexplained failure seen earlier under LLD
 nanobind callback scenario, see STATUS.md) has the same shape, but that run's output was
 not kept, so this is a guess.
 
+## 13. Signals, crashes and how the program ended
+
+**Only fault signals stop the debugger by default.** LLDB's defaults suit C programs: it
+stops on SIGUSR1, SIGTERM, SIGPIPE, SIGWINCH and others, and swallows SIGINT. A Python
+program that installs handlers, uses timers or relies on `KeyboardInterrupt` would stop
+in the debugger at each of them and never see its SIGINT. Seam stops on SIGSEGV, SIGBUS,
+SIGILL, SIGFPE and SIGABRT and delivers every other signal straight to the program. The
+launch/attach option `stopOnSignals` replaces that list (a program that hosts a JVM, which
+uses SIGSEGV internally, can leave it out). SIGTRAP and SIGSTOP are LLDB's own and are
+not touched.
+
+**At a fault stop nothing is run in the process.** Everywhere else Seam may run its own
+bookkeeping at chosen points (arming a step from user native code, queueing a breakpoint
+change with `Py_AddPendingCall`). A process stopped at SIGSEGV may hold any lock and have
+any structure half-written, so those are skipped: a breakpoint change made there is
+accepted and not applied, and a step simply resumes. The merged stack and Python locals
+come from memory as at any native stop. Native expressions the user types are still
+evaluated by LLDB; the test checks that calling a function there does not deliver the
+pending signal.
+
+**Death by signal is reported as such.** LLDB's API gives an exit status and nothing
+else: SIGKILL and `sys.exit(9)` both read 9 with an empty description. The distinction
+exists in one place, the last packet of the debug-server protocol (`W<code>` for an exit,
+`X<signal>` for a kill). Seam enables LLDB's `gdb-remote packets` log with a callback that
+keeps only that packet. When it is an `X`, Seam prints "the program was terminated by
+signal NAME" and reports exit code 128 + signal, as a shell would. If the packet is ever
+not seen (a format change in a future LLDB), the raw status is reported unchanged.
+
+**If LLDB itself dies**, the program it launched is not killed with it: the debug server
+detaches and the program carries on as an orphan, with nobody reading its output. The
+adapter therefore reports each launched pid to `seam dap` over a pipe. When LLDB exits
+abnormally (killed, crashed, or the adapter inside it raised, which it turns into exit
+status 70), `seam dap` kills those programs, sends the client an output event explaining
+what happened followed by `terminated`, and exits with status 1. Programs Seam attached
+to are never killed.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

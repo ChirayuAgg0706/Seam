@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import struct
 import tempfile
 import termios
@@ -54,6 +55,14 @@ SYSTEM_LIB_PREFIXES = ("/usr/lib/", "/lib/", "/usr/lib64/", "/lib64/", "[")
 GLUE = ("framework", "nodebug", "system")
 MAX_STEP_IN_LOCATIONS = 20000
 
+# Signals that mean the program has gone wrong. They stop the debugger by default, and at
+# such a stop Seam runs nothing in the process, not even its own bookkeeping.
+FAULT_SIGNALS = ("SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT")
+# LLDB uses these itself (breakpoints, interrupting); their handling is left alone.
+LLDB_SIGNALS = ("SIGTRAP", "SIGSTOP")
+# The final stop reply of the debug-server protocol: W<code> exited, X<signal> killed.
+EXIT_PACKET = re.compile(r"read packet: \$([WX])([0-9a-fA-F]{2})")
+
 UNSAFE_MESSAGE = (
     "Seam cannot run Python here: the process is stopped in native code, where the "
     "interpreter may be in an inconsistent state. Python can be evaluated at Python "
@@ -63,6 +72,13 @@ UNSAFE_MESSAGE = (
 
 class DapError(Exception):
     pass
+
+
+class _Arguments(dict):
+    """Request arguments: a missing required one is the client's error, not a Seam bug."""
+
+    def __missing__(self, key):
+        raise DapError("missing argument '%s'" % key)
 
 
 class Adapter:
@@ -117,6 +133,35 @@ class Adapter:
         self.native_stepping = None   # {"tid", "hops"} while an LLDB step plan is running
         self.stepout = None           # {"bp", "sp"}: Seam's own run-until-return
         self.py_step_armed = False    # the agent has a Python-level step armed
+        self.exception_info = {}      # tid -> exceptionInfo body for the current stop
+        self.fault_stop = False       # stopped at a fault signal: run nothing in the process
+        self.exit_packet = None       # ("W" | "X", number) from the final stop reply
+        self.note_fd = None           # side channel to `seam dap` (see cli.py)
+        self._watch_exit_packets()
+
+    def _note(self, text):
+        if self.note_fd is not None:
+            try:
+                os.write(self.note_fd, text.encode() + b"\n")
+            except OSError:
+                pass
+
+    def _watch_exit_packets(self):
+        """Learn whether the program exited or was killed by a signal.
+
+        LLDB's API reports both as an exit status (SIGKILL and `sys.exit(9)` both read 9,
+        with no description). The difference survives in one place only: the last packet
+        of the debug-server protocol. So that channel is logged to a callback which keeps
+        nothing but that packet.
+        """
+        def on_log(line):
+            match = EXIT_PACKET.search(line)
+            if match:
+                self.exit_packet = (match.group(1), int(match.group(2), 16))
+
+        self._on_log = on_log  # LLDB does not keep the callable alive
+        self.dbg.SetLoggingCallback(on_log)
+        self.dbg.HandleCommand("log enable gdb-remote packets")
 
     # ------------------------------------------------------------ plumbing
 
@@ -179,7 +224,7 @@ class Adapter:
         try:
             if handler is None:
                 raise DapError("unsupported request: %s" % cmd)
-            result = handler(req.get("arguments") or {})
+            result = handler(_Arguments(req.get("arguments") or {}))
             if isinstance(result, tuple):
                 result, after = result
             if result is not None:
@@ -264,8 +309,21 @@ class Adapter:
         if self.output_thread is not None:
             self.output_thread.join(2)
         self._drain_output()
-        self.event("exited", {"exitCode": self.process.GetExitStatus()})
+        code = self.process.GetExitStatus()
+        if self.exit_packet == ("X", code):
+            self.event("output", {"category": "console", "output":
+                       "Seam: the program was terminated by signal %s.\n"
+                       % self._signal_name(code)})
+            code += 128  # what a shell would report
+        self.event("exited", {"exitCode": code})
         self.event("terminated")
+
+    @staticmethod
+    def _signal_name(number):
+        try:
+            return signal.Signals(number).name
+        except ValueError:
+            return str(number)
 
     def _wait_stop(self, timeout=30):
         """Block until the process stops or exits. Returns the new state."""
@@ -301,6 +359,8 @@ class Adapter:
         self.refs.clear()
         self.safe_tid = None
         self.stop_is_trap = False
+        self.exception_info.clear()
+        self.fault_stop = False
         if self.py:
             self.py.new_stop()
 
@@ -622,7 +682,7 @@ class Adapter:
         native code, where calling into the interpreter is as legal as it would be for
         the user's own function. User-supplied Python is never run here.
         """
-        return (self._landing_class(thread) == "user"
+        return (not self.fault_stop and self._landing_class(thread) == "user"
                 and self.py.holds_gil(thread.GetThreadID()))
 
     def _resume_in_python(self, thread):
@@ -756,6 +816,13 @@ class Adapter:
             body["reason"] = "exception"
             body["description"] = thread.GetStopDescription(200)
             body["text"] = body["description"]
+            name = "exception"
+            if reason == lldb.eStopReasonSignal:
+                name = self._signal_name(thread.GetStopReasonDataAtIndex(0))
+            self.fault_stop = name in FAULT_SIGNALS or reason == lldb.eStopReasonException
+            self.exception_info[thread.GetThreadID()] = {
+                "exceptionId": name, "description": body["description"],
+                "breakMode": "always"}
         else:
             body["reason"] = "pause"
         self._report_native_stop(thread, body)
@@ -875,6 +942,10 @@ class Adapter:
 
     def _agent_pending(self, cmd, **kw):
         """Queue a request to run at the main thread's next safe point (unsafe stop)."""
+        if self.fault_stop:
+            # Queueing means calling into the interpreter, and this process has crashed.
+            self.log("fault stop: not queueing", cmd)
+            return
         kw["cmd"] = cmd
         kw["epoch"] = -1
         data = json.dumps(kw).encode()
@@ -899,9 +970,14 @@ class Adapter:
             "supportsFunctionBreakpoints": True,
             "supportsEvaluateForHovers": True,
             "supportsTerminateRequest": True,
+            "supportsExceptionInfoRequest": True,
         }
 
     def _apply_settings(self, args):
+        unknown = [str(s) for s in args.get("stopOnSignals") or ()
+                   if str(s).upper() not in signal.Signals.__members__]
+        if unknown:
+            raise DapError("stopOnSignals: unknown signal %s" % ", ".join(unknown))
         if not args.get("debugInfoLookup", True):
             self.dbg.HandleCommand("settings set symbols.enable-external-lookup false")
         # A native step that leaves user code must stop as soon as it is back in the
@@ -911,9 +987,40 @@ class Adapter:
         self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
         self.show_glue_frames = bool(args.get("showGlueFrames"))
 
+    def _apply_signal_policy(self, args):
+        """Stop on the signals that mean a crash; hand every other signal to the program.
+
+        LLDB's defaults suit C programs: it stops on SIGUSR1, SIGTERM, SIGPIPE and friends
+        and swallows SIGINT. Python programs use those routinely (handlers, timers,
+        KeyboardInterrupt), so by default only fault signals stop the debugger.
+        """
+        wanted = args.get("stopOnSignals")
+        wanted = FAULT_SIGNALS if wanted is None else tuple(str(s).upper() for s in wanted)
+        signals = self.process.GetUnixSignals()
+        known = {}
+        for i in range(signals.GetNumSignals()):
+            number = signals.GetSignalAtIndex(i)
+            known[signals.GetSignalAsCString(number)] = number
+        unknown = [name for name in wanted if name not in known]
+        if unknown:
+            raise DapError("stopOnSignals: unknown signal %s" % ", ".join(unknown))
+        for name, number in known.items():
+            if name in LLDB_SIGNALS:
+                continue
+            signals.SetShouldStop(number, name in wanted)
+            signals.SetShouldNotify(number, name in wanted)
+            signals.SetShouldSuppress(number, False)
+
+    def _require_no_session(self):
+        if self.target is not None:
+            raise DapError("this session is already debugging a program")
+
     def req_launch(self, args):
+        self._require_no_session()
         python = self._resolve_python(args.get("python") or "python3")
         self.cwd = args.get("cwd") or os.getcwd()
+        if not os.path.isdir(self.cwd):
+            raise DapError("working directory does not exist: %s" % self.cwd)
         argv = list(args.get("pythonArgs") or [])
         if args.get("module"):
             argv += ["-m", args["module"]]
@@ -951,6 +1058,7 @@ class Adapter:
         if not err.Success() or not self.process or not self.process.IsValid():
             os.close(master)
             raise DapError("launch failed: %s" % err.GetCString())
+        self._note("launched %d" % self.process.GetProcessID())
         self.output_thread = threading.Thread(target=self._pump_output, args=(master,),
                                               daemon=True)
         self.output_thread.start()
@@ -964,6 +1072,7 @@ class Adapter:
                 or thread.GetStopReasonDataAtIndex(0) != bp_main.GetID()):
             raise DapError("unexpected stop before Py_RunMain: %s" % thread.GetStopDescription(200))
         self.target.BreakpointDelete(bp_main.GetID())
+        self._apply_signal_policy(args)
         self._inject(thread)
         self.safe_tid = thread.GetThreadID()
         self._sync_native_bps()
@@ -1047,6 +1156,7 @@ class Adapter:
     # --------------------------------------------------------------- attach
 
     def req_attach(self, args):
+        self._require_no_session()
         pid = int(args.get("pid") or 0)
         if pid <= 0:
             raise DapError("attach needs a 'pid'")
@@ -1061,6 +1171,7 @@ class Adapter:
         self.attached = True
         try:
             self._wait_attached(pid)
+            self._apply_signal_policy(args)
             try:
                 self.cwd = os.readlink("/proc/%d/cwd" % pid)
             except OSError:
@@ -1308,6 +1419,13 @@ class Adapter:
 
     def req_setExceptionBreakpoints(self, args):
         return {"breakpoints": []}
+
+    def req_exceptionInfo(self, args):
+        self._require_stopped()
+        info = self.exception_info.get(args.get("threadId"))
+        if info is None:
+            raise DapError("this thread is not stopped at an exception")
+        return info
 
     def _sync_native_bps(self):
         pass  # native breakpoints are created directly on the target
@@ -1713,10 +1831,15 @@ def serve(debugger):
     import socket
 
     fd = int(os.environ["SEAM_DAP_FD"])
+    os.set_inheritable(fd, False)  # neither channel is the debugged program's business
     sock = socket.socket(fileno=fd)
     log_path = os.environ.get("SEAM_LOG")
     log = open(log_path, "a") if log_path else None
     adapter = Adapter(debugger, sock, log)
+    note_fd = os.environ.get("SEAM_NOTE_FD")
+    if note_fd:
+        os.set_inheritable(int(note_fd), False)
+        adapter.note_fd = int(note_fd)
     try:
         adapter.run()
     except Exception:

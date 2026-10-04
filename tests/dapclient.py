@@ -2,6 +2,7 @@
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ class DapFailure(AssertionError):
 
 
 class DapClient:
-    def __init__(self, log_path=None, command=None):
+    def __init__(self, log_path=None, command=None, stderr=None):
         """`command` runs an installed adapter; by default the source tree's is used."""
         env = dict(os.environ)
         if command is None:
@@ -26,7 +27,7 @@ class DapClient:
             env["SEAM_LOG"] = log_path
         self.log_path = log_path
         self.proc = subprocess.Popen(command, stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, env=env)
+                                     stdout=subprocess.PIPE, stderr=stderr, env=env)
         self.seq = 0
         self.inbox = queue.Queue()
         self.events = []
@@ -139,6 +140,14 @@ class DapClient:
         return [e for e in self.events if e["event"] == name]
 
     # ------------------------------------------------------------ helpers
+
+    @property
+    def plain_output(self):
+        """The program's output without terminal colour codes.
+
+        The program runs on a terminal, so Python 3.13+ colours its tracebacks.
+        """
+        return re.sub(r"\x1b\[[0-9;]*m", "", self.output)
 
     def launch(self, program, python, args=(), breakpoints=None, **extra):
         self.request("initialize", {"adapterID": "seam", "clientID": "tests"})

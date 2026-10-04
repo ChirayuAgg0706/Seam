@@ -240,9 +240,9 @@ def make_client(tmp_path, python):
     """Factory for tests that need several sessions (each one is closed by the test)."""
     counter = [0]
 
-    def make():
+    def make(**options):
         counter[0] += 1
-        client = DapClient(log_path=str(tmp_path / ("seam-%d.log" % counter[0])))
+        client = DapClient(log_path=str(tmp_path / ("seam-%d.log" % counter[0])), **options)
         client.python = python
         return client
     return make

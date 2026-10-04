@@ -1,5 +1,7 @@
 # Seam v1 status
 
+Work after v1 is tracked in [ROADMAP.md](ROADMAP.md).
+
 Legend: **done** = run and seen passing; **partial** = part of it runs and passes, the rest
 is listed; **blocked** = needs something from the project owner.
 

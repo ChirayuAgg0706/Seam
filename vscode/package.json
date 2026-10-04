@@ -94,6 +94,12 @@
                 "description": "Stop on the first line of Python code.",
                 "default": false
               },
+              "stopOnSignals": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Signals that stop the debugger. Every other signal is delivered to the program without stopping.",
+                "default": [ "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT" ]
+              },
               "debugInfoLookup": {
                 "type": "boolean",
                 "description": "Let LLDB look for separate debug-info files for system libraries.",
@@ -118,6 +124,28 @@
               "pid": {
                 "type": "number",
                 "description": "Process id of a running CPython 3.12+ process."
+              },
+              "timeout": {
+                "type": "number",
+                "description": "Seconds to wait for the process to reach a point where the helper can load.",
+                "default": 15
+              },
+              "stopOnSignals": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Signals that stop the debugger. Every other signal is delivered to the program without stopping.",
+                "default": [ "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT" ]
+              },
+              "showGlueFrames": {
+                "type": "boolean",
+                "description": "Show binding-layer trampoline frames (pybind11, PyO3, ...) in the call stack.",
+                "default": false
+              },
+              "frameworkPaths": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Extra path fragments marking native source files as glue to step through, e.g. \"/third_party/\".",
+                "default": []
               }
             }
           }
