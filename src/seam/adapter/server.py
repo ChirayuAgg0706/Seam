@@ -39,6 +39,7 @@ R_RETURN_NATIVE = 3
 R_ATTACHED = 5
 R_EXCEPTION = 6
 R_UNCAUGHT = 7
+LOG_FLAG = 0x100  # set in a trap's reason when logpoint messages are waiting
 EVAL_PLEASE_STOP_BIT = 1 << 5   # _PY_EVAL_PLEASE_STOP_BIT in CPython 3.14's pycore_ceval.h
 
 EXCEPTION_FILTERS = [
@@ -98,6 +99,37 @@ class DapError(Exception):
     pass
 
 
+HIT_CONDITION = re.compile(r"^\s*(==|=|>=|>|<=|<|%)?\s*(\d+)\s*$")
+
+
+def parse_hit_condition(text):
+    """A breakpoint's hit-count condition as (operator, number), or None if there is none.
+
+    `5` or `==5`: the fifth hit only. `>=5`, `>5`, `<5`, `<=5`: as written. `%5`: every
+    fifth hit. A hit is counted when the breakpoint's ordinary condition, if any, holds.
+    """
+    if text is None or not str(text).strip():
+        return None
+    match = HIT_CONDITION.match(str(text))
+    if not match or (match.group(1) == "%" and int(match.group(2)) == 0):
+        raise DapError("hit count %r is not understood; use a number, optionally after "
+                       "one of == >= > <= < %%" % text)
+    operator = match.group(1) or "=="
+    return ("==" if operator == "=" else operator, int(match.group(2)))
+
+
+def hit_condition_met(condition, hits):
+    operator, number = condition
+    return {"==": hits == number, ">=": hits >= number, ">": hits > number,
+            "<=": hits <= number, "<": hits < number,
+            "%": hits % number == 0}[operator]
+
+
+def fill_log_message(template, value_of):
+    """A logpoint's message with each {expression} replaced by value_of(expression)."""
+    return re.sub(r"\{([^{}]*)\}", lambda match: value_of(match.group(1)), template)
+
+
 class _Arguments(dict):
     """Request arguments: a missing required one is the client's error, not a Seam bug."""
 
@@ -150,6 +182,7 @@ class Adapter:
         self.user_bps_on = False
         self.unwind_warnings = set()  # functions LLDB failed to unwind (warned once each)
         self.last_native_stop = {}    # tid -> (line key, pc) of the last reported stop
+        self.native_bp_specs = {}     # breakpoint id -> {"hit", "log", "hits"} if it has any
         self.native_bp_lines = {}     # breakpoint id -> line the user asked for
         self.native_bp_state = {}     # breakpoint id -> (verified, line) last reported
         self.attached = False         # attached to an existing process (detach, don't kill)
@@ -748,6 +781,15 @@ class Adapter:
         self.process.SetSelectedThread(thread)
         if self.pending_sync:
             self._sync_py_bps()
+        if reason & LOG_FLAG:
+            for message in self.agent("logs"):
+                self.event("output", {"category": "console", "output": message + "\n"})
+            reason &= ~LOG_FLAG
+            if not reason:
+                # Only a logpoint: carry on, leaving whatever a step has armed alone.
+                self._new_stop()
+                self._continue()
+                return
         if reason == R_RETURN_NATIVE:
             # The stepped Python function is returning to native code that called it:
             # finish with a native step-out into the nearest user frame.
@@ -835,6 +877,16 @@ class Adapter:
                         or self._is_same_line_rehit(thread)):
                     self.log("skipping redundant breakpoint hit in",
                              thread.GetFrameAtIndex(0).GetFunctionName())
+                    self._new_stop()
+                    self._continue()
+                    return
+                if not self._native_breakpoint_wants_a_stop(thread, bp):
+                    # A hit that does not count yet, or a logpoint. Remember the place
+                    # all the same, so the line's other address ranges are not counted
+                    # as further hits.
+                    top = thread.GetFrameAtIndex(0)
+                    self.last_native_stop[thread.GetThreadID()] = (
+                        self._line_key(top), top.GetPC())
                     self._new_stop()
                     self._continue()
                     return
@@ -1102,6 +1154,8 @@ class Adapter:
         return {
             "supportsConfigurationDoneRequest": True,
             "supportsConditionalBreakpoints": True,
+            "supportsHitConditionalBreakpoints": True,
+            "supportsLogPoints": True,
             "supportsFunctionBreakpoints": True,
             "supportsEvaluateForHovers": True,
             "supportsTerminateRequest": True,
@@ -1602,25 +1656,50 @@ class Adapter:
         if not path:
             raise DapError("setBreakpoints needs source.path")
         wanted = args.get("breakpoints") or []
+        # A hit-count condition that cannot be understood makes that one breakpoint
+        # unverified, with the reason; the others are set as usual.
+        hits = []
+        for b in wanted:
+            try:
+                hits.append(parse_hit_condition(b.get("hitCondition")))
+            except DapError as exc:
+                hits.append(exc)
+        refused = [{"line": b["line"], "verified": False, "message": str(hit)}
+                   if isinstance(hit, DapError) else None for b, hit in zip(wanted, hits)]
         if path.endswith(PY_SUFFIXES):
-            items = [{"line": b["line"], "condition": b.get("condition")} for b in wanted]
+            items = [{"line": b["line"], "condition": b.get("condition"), "hit": hit,
+                      "log": b.get("logMessage")}
+                     for b, hit in zip(wanted, hits) if not isinstance(hit, DapError)]
             if items:
                 self.py_bps[path] = items
             else:
                 self.py_bps.pop(path, None)
             result = self._sync_py_bps()
-            answers = (result or {}).get(path) or [{"line": i["line"], "verified": True}
-                                                   for i in items]
-            return {"breakpoints": answers}
+            accepted = iter((result or {}).get(path)
+                            or [{"line": i["line"], "verified": True} for i in items])
+            return {"breakpoints": [r or next(accepted) for r in refused]}
         with self._paused():
             for bp in self.native_bps.pop(path, []):
+                self.native_bp_specs.pop(bp.GetID(), None)
                 self.target.BreakpointDelete(bp.GetID())
             created = []
             answers = []
-            for b in wanted:
+            for b, hit, problem in zip(wanted, hits, refused):
+                if problem:
+                    answers.append(problem)
+                    continue
                 bp = self.target.BreakpointCreateByLocation(path, b["line"])
                 if b.get("condition"):
                     bp.SetCondition(b["condition"])
+                if hit or b.get("logMessage") is not None:
+                    self.native_bp_specs[bp.GetID()] = {
+                        "hit": hit, "log": b.get("logMessage"), "hits": 0}
+                    if hit and hit[0] in ("==", ">=", ">"):
+                        # LLDB skips the hits before the interesting one without
+                        # stopping; Seam only counts from there on.
+                        skipped = hit[1] if hit[0] == ">" else hit[1] - 1
+                        bp.SetIgnoreCount(max(skipped, 0))
+                        self.native_bp_specs[bp.GetID()]["hits"] = max(skipped, 0)
                 self._drop_glue_locations(bp)
                 created.append(bp)
                 self.native_bp_lines[bp.GetID()] = b["line"]
@@ -1629,6 +1708,37 @@ class Adapter:
                 answers.append(answer)
             self.native_bps[path] = created
         return {"breakpoints": answers}
+
+    def _native_breakpoint_wants_a_stop(self, thread, bp):
+        """Apply a native breakpoint's hit-count condition and log message.
+
+        Returns False if the program should simply carry on (the hit does not count,
+        or the breakpoint is a logpoint and its message has been printed).
+        """
+        spec = self.native_bp_specs.get(bp.GetID())
+        if spec is None:
+            return True
+        spec["hits"] += 1
+        if spec["hit"]:
+            operator, number = spec["hit"]
+            last = {"==": number, "<=": number, "<": number - 1}.get(operator)
+            if last is not None and spec["hits"] >= last:
+                bp.SetEnabled(False)  # no later hit can count: stop paying for the stops
+            if not hit_condition_met(spec["hit"], spec["hits"]):
+                return False
+        if spec["log"] is None:
+            return True
+        frame = thread.GetFrameAtIndex(0)
+
+        def value_of(expression):
+            value = frame.EvaluateExpression(expression, self._expr_options(5))
+            if not value.GetError().Success():
+                return "{%s}" % (value.GetError().GetCString() or "error").strip()
+            return value.GetSummary() or value.GetValue() or ""
+
+        self.event("output", {"category": "console",
+                              "output": fill_log_message(spec["log"], value_of) + "\n"})
+        return False
 
     def _native_bp_answer(self, bp):
         """DAP description of a native breakpoint: where it really is, if anywhere."""

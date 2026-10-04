@@ -122,6 +122,22 @@ Attaching needs ptrace permission for a non-child process
 (`/proc/sys/kernel/yama/ptrace_scope` must be 0, or the program must allow it). See
 [Limitations](#limitations) for what attach can and cannot do on each Python version.
 
+### Breakpoints
+
+Conditions, hit counts and log messages work on both sides of the boundary.
+
+- **Condition:** a Python expression on a Python line; a C, C++ or Rust expression
+  (evaluated by LLDB) on a native line.
+- **Hit count:** `5` or `==5` stops on the fifth hit only; `>=5`, `>5`, `<5` and `<=5` mean
+  what they say; `%5` stops on every fifth hit. With a condition as well, only hits where
+  the condition holds are counted.
+- **Log message:** the breakpoint prints the message to the debug console instead of
+  stopping. Text in braces is evaluated: `total is {total}`.
+
+A native breakpoint on a line the compiler left without code (optimised builds) is either
+reported as unverified or moved by LLDB to the next line that has code, which can be in
+the next function; the editor shows where it ended up.
+
 ### Exceptions
 
 The editor's exception-breakpoint list offers four choices:

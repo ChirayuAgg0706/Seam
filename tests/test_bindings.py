@@ -74,10 +74,15 @@ def test_native_breakpoint_then_into_and_out_of_a_python_callback(dap, binding, 
         # Only legitimate with optimisation: the compiler left the statement with no code
         # of its own (it is a single inlined library call), so no breakpoint can be placed
         # on it. Seam must say so rather than pretend, and the program must run normally.
+        # LLDB may instead move the breakpoint to the next line that has code, which can
+        # be in another function altogether; then Seam must report that line.
         assert binding.opt != "O0", "breakpoint on the call line was never hit"
-        assert not resolved and body["exitCode"] == 0
-        pytest.skip("the %s -%s build has no code on the call line; Seam reported the "
-                    "breakpoint as unverified" % (binding.layer, binding.opt))
+        assert body["exitCode"] == 0
+        assert all(b["line"] != line for b in resolved), resolved
+        where = ("moved it to line %d" % resolved[-1]["line"] if resolved
+                 else "reported the breakpoint as unverified")
+        pytest.skip("the %s -%s build has no code on the call line; Seam %s"
+                    % (binding.layer, binding.opt, where))
     tid = body["threadId"]
     stack = dap.stack(tid)
     top = stack[0]

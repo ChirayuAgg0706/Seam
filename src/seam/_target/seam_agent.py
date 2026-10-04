@@ -29,6 +29,9 @@ R_STEP = 2
 R_RETURN_NATIVE = 3
 R_EXCEPTION = 6   # raised (5 is "attached")
 R_UNCAUGHT = 7
+LOG_FLAG = 0x100  # added to a reason (or alone): logpoint messages are waiting
+
+_log_pending = []  # logpoint messages not yet collected by the adapter
 
 _exc_filters = frozenset()  # of "raised", "uncaught"
 _just_my_code = True
@@ -37,7 +40,7 @@ _post_mortem = None  # frames of an uncaught exception, newest first: [(frame, l
 _exc_fresh = False   # set at the trap; lets the stop's own first request keep the above
 _thread_hook = None  # (ours, the one we replaced) while threading.excepthook is wrapped
 
-_bps = {}         # canonical path -> {line: condition or None}
+_bps = {}         # canonical path -> {line: None (plain breakpoint) or _Spec}
 _lines = {}       # id(code) -> set of breakpoint lines (shared with the C callback)
 _codes = {}       # id(code) -> code, for every code object carrying local events
 _paths = {}       # co_filename -> canonical path
@@ -139,7 +142,8 @@ def _update_global():
 
 
 def _update_slow():
-    _t.set_slow(_step is not None or any(c for t in _bps.values() for c in t.values()))
+    _t.set_slow(_step is not None
+                or any(spec is not None for table in _bps.values() for spec in table.values()))
 
 
 def _reinstrument():
@@ -161,17 +165,71 @@ def _on_start(code, offset):
     return mon.DISABLE
 
 
-def _condition_ok(code, line, frame):
+class _Spec:
+    """A breakpoint with a condition, a hit-count condition and/or a log message."""
+    __slots__ = ("condition", "hit", "log", "hits")
+
+    def __init__(self, condition, hit, log):
+        self.condition = condition
+        self.hit = tuple(hit) if hit else None  # (operator, number)
+        self.log = log
+        self.hits = 0
+
+    def same_as(self, other):
+        return (other is not None and self.condition == other.condition
+                and self.hit == other.hit and self.log == other.log)
+
+
+_HIT_TESTS = {
+    "==": lambda hits, n: hits == n,
+    ">=": lambda hits, n: hits >= n,
+    ">": lambda hits, n: hits > n,
+    "<=": lambda hits, n: hits <= n,
+    "<": lambda hits, n: hits < n,
+    "%": lambda hits, n: hits % n == 0,
+}
+
+
+def _log_text(template, frame):
+    """A logpoint's message with each {expression} replaced by its value."""
+    out = []
+    position = 0
+    while True:
+        start = template.find("{", position)
+        end = template.find("}", start + 1) if start >= 0 else -1
+        if end < 0:
+            out.append(template[position:])
+            return "".join(out)
+        out.append(template[position:start])
+        try:
+            out.append(str(eval(template[start + 1:end], frame.f_globals, frame.f_locals)))
+        except Exception as exc:
+            out.append("{%s: %s}" % (type(exc).__name__, exc))
+        position = end + 1
+
+
+def _breakpoint_verdict(code, line, frame):
+    """What a breakpoint on this line wants right now: "stop", "log" or nothing."""
     global _in_dispatch
     table = _bps.get(_canon(code.co_filename))
-    cond = table.get(line) if table else None
-    if not cond:
-        return True
+    spec = table.get(line) if table else None
+    if spec is None:
+        return "stop"
     _in_dispatch = True  # an exception inside a condition is not the program's
     try:
-        return bool(eval(cond, frame.f_globals, frame.f_locals))
-    except Exception:
-        return True  # a broken condition should be noticed, not silently skipped
+        if spec.condition:
+            try:
+                if not eval(spec.condition, frame.f_globals, frame.f_locals):
+                    return None
+            except Exception:
+                pass  # a broken condition should be noticed, not silently skipped
+        spec.hits += 1
+        if spec.hit and not _HIT_TESTS[spec.hit[0]](spec.hits, spec.hit[1]):
+            return None
+        if spec.log is None:
+            return "stop"
+        _log_pending.append(_log_text(spec.log, frame))
+        return "log"
     finally:
         _in_dispatch = False
 
@@ -296,19 +354,25 @@ def _on_line(code, line):
         return None  # code run on behalf of the debugger never stops the debugger
     frame = sys._getframe(1)
     lines = _lines.get(id(code))
-    if lines and line in lines and _condition_ok(code, line, frame):
-        if _step is not None:
-            _finish_step()
-        return (None, code, line, R_BREAKPOINT)
+    log = 0
+    if lines and line in lines:
+        verdict = _breakpoint_verdict(code, line, frame)
+        if verdict == "stop":
+            if _step is not None:
+                _finish_step()
+            return (None, code, line, R_BREAKPOINT)
+        if verdict == "log":
+            log = LOG_FLAG  # deliver the message; a step in progress carries on
     st = _current()
     if st is None:
+        if log:
+            return (None, code, line, log)
         return mon.DISABLE if not lines or line not in lines else None
-    if st.ident != get_ident() or _internal(code):
-        return None
-    if st.mode == "in" or (st.mode == "over" and frame is st.frame):
+    if st.ident == get_ident() and not _internal(code) and (
+            st.mode == "in" or (st.mode == "over" and frame is st.frame)):
         _finish_step()
-        return (None, code, line, R_STEP)
-    return None
+        return (None, code, line, R_STEP | log)
+    return (None, code, line, log) if log else None
 
 
 def _current():
@@ -483,7 +547,15 @@ def _cmd_sync_breakpoints(req):
                 else:
                     verified = False
             if verified:
-                table[line] = item.get("condition") or None
+                spec = None
+                if item.get("condition") or item.get("hit") or item.get("log") is not None:
+                    spec = _Spec(item.get("condition") or None, item.get("hit"),
+                                 item.get("log"))
+                    # An unchanged breakpoint keeps its hit count across edits elsewhere.
+                    old = (_bps.get(cpath) or {}).get(line)
+                    if spec.same_as(old):
+                        spec.hits = old.hits
+                table[line] = spec
             answers.append({"line": line, "verified": verified})
         if not table:
             del new[cpath]
@@ -495,6 +567,13 @@ def _cmd_sync_breakpoints(req):
         _set_exception_filters(exceptions["filters"], bool(exceptions["just_my_code"]))
     _reinstrument()
     return result
+
+
+def _cmd_logs(req):
+    """Hand over (and forget) the logpoint messages produced since the last call."""
+    messages = list(_log_pending)
+    del _log_pending[:]
+    return messages
 
 
 def _cmd_exception(req):
@@ -646,6 +725,7 @@ _COMMANDS = {
     "variables": _cmd_variables,
     "evaluate": _cmd_evaluate,
     "exception": _cmd_exception,
+    "logs": _cmd_logs,
     "status": _cmd_status,
     "shutdown": _cmd_shutdown,
 }

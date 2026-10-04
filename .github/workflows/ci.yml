@@ -45,7 +45,7 @@ jobs:
         env:
           SEAM_TEST_REPEAT: ${{ github.event.inputs.repeat || '1' }}
           SEAM_TEST_PYTHON: /usr/bin/python3.12
-        run: scripts/test.sh -q
+        run: scripts/test.sh -q -rs
 
   smoke:
     if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
@@ -76,7 +76,7 @@ jobs:
       - name: Run the smoke scenarios
         env:
           SEAM_TEST_OPT: ${{ matrix.opt }}
-        run: scripts/test.sh -q -m smoke
+        run: scripts/test.sh -q -rs -m smoke
 
   lldb:
     if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
@@ -100,7 +100,7 @@ jobs:
         env:
           SEAM_LLDB: lldb-${{ matrix.lldb }}
           SEAM_TEST_PYTHON: /usr/bin/python3.12
-        run: scripts/test.sh -q -m smoke
+        run: scripts/test.sh -q -rs -m smoke
 
   editors:
     if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}

@@ -342,6 +342,29 @@ is `/dev/null` rather than a terminal that never answers: a stray `input()` fail
 with `EOFError` instead of hanging the session. A client that asks for a terminal without
 supporting `runInTerminal` gets this mode and a message saying so.
 
+## 16. Hit counts and logpoints
+
+One syntax for both sides: a bare number means "that hit only", as Python users know it
+from debugpy (LLDB's own tools read a bare number as "from that hit on"), and `>=`, `>`,
+`<`, `<=`, `%` are available for the rest. The adapter parses it once; a hit count it
+cannot parse makes that breakpoint unverified with the reason, and leaves the others
+alone.
+
+On Python lines the agent counts and decides inside its line callback, so a hit that does
+not count costs no stop. A logpoint's message is built there too, and delivered by a trap
+whose reason carries a "log" flag: the adapter collects the text, emits an output event
+and resumes without touching whatever a step has armed. If a step ends on the same line,
+the one trap carries both. This costs one stop and resume per message; the alternative, a
+second channel out of the program, was not worth it for something meant for occasional
+messages.
+
+On native lines LLDB's condition is used as is. Hit counts are Seam's own (LLDB only has
+"ignore the first N"): each hit stops, is counted, and resumes if it does not count.
+Where the syntax allows, LLDB skips the leading hits itself (`ignore count`), and the
+breakpoint is disabled once no later hit can count, so `==1000000` in a hot loop does not
+mean a million stops. Message expressions are evaluated by LLDB in the stopped frame.
+The line's other address ranges (§9) are not counted as further hits.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped
