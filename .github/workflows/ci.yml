@@ -39,6 +39,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends lldb gcc g++ python3-dev
           sudo sysctl -w kernel.yama.ptrace_scope=0
       - uses: astral-sh/setup-uv@v5
+      - name: Install interpreters Seam must refuse (3.11, free-threaded)
+        run: uv python install 3.11 3.13t
       - name: Run the suite
         env:
           SEAM_TEST_REPEAT: ${{ github.event.inputs.repeat || '1' }}
@@ -174,7 +176,7 @@ jobs:
           if-no-files-found: error
 
   soak:
-    name: soak (${{ github.event.inputs.soak || 'weekly: stepping, bindings, attach' }})
+    name: soak (${{ github.event.inputs.soak || 'weekly' }})
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.soak != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
