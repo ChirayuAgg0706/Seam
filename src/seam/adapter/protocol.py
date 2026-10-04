@@ -10,6 +10,10 @@ import lldb
 
 from .common import DapError, EXCEPTION_FILTERS, UNSAFE_MESSAGE, _Arguments
 
+# SEAM_LOG_TIMES=1 starts every log line with the seconds since the adapter was loaded, to
+# see where a slow request spends its time (the scale measurements use it).
+LOG_EPOCH = time.monotonic() if os.environ.get("SEAM_LOG_TIMES") else None
+
 
 class ProtocolMixin:
     def _note(self, text):
@@ -21,7 +25,8 @@ class ProtocolMixin:
 
     def log(self, *parts):
         if self.logfile:
-            self.logfile.write(" ".join(str(p) for p in parts) + "\n")
+            stamp = "" if LOG_EPOCH is None else "%9.4f " % (time.monotonic() - LOG_EPOCH)
+            self.logfile.write(stamp + " ".join(str(p) for p in parts) + "\n")
             self.logfile.flush()
 
     def _send(self, msg):
