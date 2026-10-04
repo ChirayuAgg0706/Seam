@@ -146,7 +146,8 @@ def _relay(proc, ours, notes_read, log_path, lldb_output):
         sys.stderr.write(
             "seam: LLDB did not load Seam's adapter. Its Python scripting support is "
             "probably missing or broken (Debian/Ubuntu: the python3-lldb package that "
-            "matches your lldb). `seam doctor` checks this. LLDB said:\n%s\n"
+            "matches your lldb). `seam doctor` checks this (in VS Code: the command "
+            "\"Seam: Check This Machine\"). LLDB said:\n%s\n"
             % (_tail(lldb_output) or "(nothing)"))
         return 1
     if status == 0:

@@ -16,6 +16,10 @@ small compiled helper it loads into your program, and runs the adapter with a Py
 finds on the machine: the interpreter being debugged, else `python3`. If no Python 3.12+
 or no LLDB is found, the session does not start and VS Code shows the reason.
 
+To check a machine before the first session, run **Seam: Check This Machine** from the
+Command Palette. It looks at LLDB, the helper, ptrace permission and the project's
+interpreter, runs one real debug session, and says what to fix.
+
 ## Start debugging
 
 Open a Python file and press F5; no `launch.json` is needed. To keep a configuration:

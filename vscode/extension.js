@@ -224,6 +224,43 @@ async function pickProcess(extensionPath) {
   return picked ? String(picked.pid) : undefined;
 }
 
+function shellQuote(argument) {
+  return /^[\w@%+=:,./-]+$/.test(argument) ? argument : `'${argument.replace(/'/g, "'\\''")}'`;
+}
+
+// "Seam: Check This Machine": `seam doctor` for people who have only the extension. It
+// checks LLDB, the helper and the project's interpreter, then runs a real debug session,
+// in a terminal where the result can be read. Returns the command it ran.
+async function checkMachine(extensionPath) {
+  const folder = (vscode.workspace.workspaceFolders || [])[0];
+  const found = await findInterpreter(folder);
+  let command = vscode.workspace.getConfiguration("seam").get("adapterCommand");
+  try {
+    if (!Array.isArray(command) || !command.length) {
+      if (!adapter.hasBundle(extensionPath)) {
+        throw new Error(NO_BUNDLE);
+      }
+      const python = await adapter.findLauncherPython(
+        adapter.launcherCandidates({ request: "launch", python: found.python }));
+      command = adapter.bundledCommand(python, extensionPath);
+    }
+    if (command[command.length - 1] !== "dap") {
+      throw new Error("Seam: \"seam.adapterCommand\" does not end in \"dap\", so the command "
+        + "that checks that installation cannot be derived from it. Run its `seam doctor`.");
+    }
+  } catch (err) {
+    tell(err.message);
+    return undefined;
+  }
+  const doctor = [...command.slice(0, -1), "doctor", "--python", found.python];
+  const terminal = vscode.window.createTerminal({
+    name: "Seam: check", cwd: folder ? folder.uri.fsPath : undefined,
+  });
+  terminal.show();
+  terminal.sendText(doctor.map(shellQuote).join(" "));
+  return doctor;
+}
+
 function activate(context) {
   output = vscode.window.createOutputChannel("Seam");
   context.subscriptions.push(
@@ -231,7 +268,8 @@ function activate(context) {
     vscode.debug.registerDebugAdapterDescriptorFactory("seam",
       new SeamAdapterFactory(context.extensionPath)),
     vscode.debug.registerDebugConfigurationProvider("seam", new SeamConfigurationProvider()),
-    vscode.commands.registerCommand("seam.pickProcess", () => pickProcess(context.extensionPath))
+    vscode.commands.registerCommand("seam.pickProcess", () => pickProcess(context.extensionPath)),
+    vscode.commands.registerCommand("seam.checkMachine", () => checkMachine(context.extensionPath))
   );
   // Not an API for other extensions: this is what CI's editor check looks at.
   return {

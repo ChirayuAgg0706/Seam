@@ -104,6 +104,17 @@ def test_bundle_runs_the_program_in_a_terminal(bundled, bundle, python):
     client.terminal.read_until("hello seam")
 
 
+def test_bundle_checks_the_machine(bundle, python, monkeypatch):
+    # What "Seam: Check This Machine" types into a terminal: `seam doctor`, run out of
+    # the extension, whose live check has to start the adapter out of the extension too.
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    done = subprocess.run([python, "-I", bundle, "doctor", "--python", python],
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "debug session: launched a program, stopped at a breakpoint" in done.stdout
+    assert done.stdout.rstrip().endswith("Seam is ready to use.")
+
+
 def test_bundle_without_lldb_says_so(bundle, python):
     done = subprocess.run([python, "-I", bundle, "dap"], capture_output=True, text=True,
                           env=dict(os.environ, SEAM_LLDB="/no/such/lldb"),

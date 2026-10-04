@@ -148,12 +148,22 @@ def _check_python(report, python):
     return None
 
 
+def _adapter_command():
+    """The command that starts the adapter of the installation being checked."""
+    launcher = sys.argv[0]
+    if os.path.isdir(launcher):
+        # Run as a directory: the copy inside the VS Code extension, which is installed
+        # nowhere that `-m seam` could find. It is started again the way this was.
+        return [sys.executable, "-I", launcher, "dap"]
+    return [sys.executable, "-m", "seam", "dap"]
+
+
 class _Session:
     """The few lines of DAP client the live check needs."""
 
     def __init__(self, log_path):
         env = dict(os.environ, SEAM_LOG=log_path)
-        self.proc = subprocess.Popen([sys.executable, "-m", "seam", "dap"], env=env,
+        self.proc = subprocess.Popen(_adapter_command(), env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         self.seq = 0

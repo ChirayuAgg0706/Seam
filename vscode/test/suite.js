@@ -467,6 +467,22 @@ async function attachThroughThePicker() {
   }
 }
 
+// "Seam: Check This Machine" runs the bundled `seam doctor` for the project's interpreter.
+async function checkThisMachine() {
+  const doctor = await vscode.commands.executeCommand("seam.checkMachine");
+  assert.ok(Array.isArray(doctor), "the command reports what it ran");
+  assert.deepStrictEqual(doctor.slice(1),
+    ["-I", path.join(vscode.extensions.getExtension("seam.seam-debugger").extensionPath, "bundled"),
+      "doctor", "--python", venvPython]);
+  // The terminal's text cannot be read from here, so the same command is run again.
+  const result = cp.spawnSync(doctor[0], doctor.slice(1), { encoding: "utf8", timeout: 120000 });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  assert.ok(result.stdout.trimEnd().endsWith("Seam is ready to use."), result.stdout);
+  await sleep(3000);  // let the terminal show its copy before the picture
+  await shot("9-check-this-machine");
+  log("\"Seam: Check This Machine\" runs the bundled doctor for the project's interpreter");
+}
+
 // What the user is told when a session cannot start.
 async function refusals() {
   const base = { type: "seam", request: "launch", program: app, console: "internalConsole" };
@@ -577,6 +593,7 @@ exports.run = async function run() {
       await pressF5();
       await stepInTheDebugConsole();
       await attachThroughThePicker();
+      await checkThisMachine();
       await refusals();
     }
   } catch (err) {
