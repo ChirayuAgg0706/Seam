@@ -1025,9 +1025,11 @@ class Adapter:
             self.sym[name] = addr
         self.helper_module = module.GetFileSpec().fullpath
         self.sym["cap"] = struct.unpack("<q", self._read(self.sym["seam_req_cap"], 8))[0]
-        if self.bp_trap is not None:
-            self.target.BreakpointDelete(self.bp_trap.GetID())
-        self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
+        if self.bp_trap is None:
+            # Launch: set by address (see _entry_breakpoint). On attach the breakpoint
+            # was set by name before the helper loaded and the thread is stopped at it
+            # right now, so it is left alone.
+            self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
 
     def _inject(self, thread):
         """Load the agent. The caller guarantees `thread` is at a safe point."""
@@ -1064,9 +1066,19 @@ class Adapter:
             except OSError:
                 pass
             self._find_python()
-            # The helper is not loaded yet, so this one can only be set by name; it is
-            # replaced by an address breakpoint as soon as the helper's symbols exist.
+            # The helper is not loaded yet, so this breakpoint can only be set by name.
+            # (The helper carries its own debug info, so the LLDB 20 problem with name
+            # breakpoints and separate debug files does not apply to it.)
             self.bp_trap = self.target.BreakpointCreateByName("seam_trap")
+            # Evaluate one harmless call now. On 3.14 the PEP 768 path would otherwise
+            # make its first expression at the helper's trap, right after the helper
+            # library was loaded, and LLDB 18 crashed or hung there in about 1 attach
+            # in 13 on CI. The 3.12/3.13 path already evaluates an expression here.
+            try:
+                self._call(self.process.GetSelectedThread(),
+                           "((int(*)(void))%d)()" % self.sym["getpid"], timeout_s=5)
+            except DapError as exc:
+                self.log("warm-up call failed:", exc)
             method = self._request_agent_load()
             thread = self._wait_for_attach_trap(float(args.get("timeout") or 15))
         except DapError:
