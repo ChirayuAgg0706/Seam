@@ -10,7 +10,7 @@ An item is **done** only when a scenario test for it has been seen passing.
 |---|---|---|
 | 1 | **Crashes and signals.** Segfault/abort in an extension stops with the merged stack; signals the program handles do not stop the debugger; death by signal is reported as such. | **done** (`tests/test_crash.py`, 12 scenarios; `docs/decisions.md` §13) |
 | 2 | **Adapter failure paths.** Editor vanishing, `seam dap` killed, LLDB dying, malformed requests, launch errors: a clear message and nothing left behind. | **done** (`tests/test_robust.py`, 7 scenarios) |
-| 3 | **Exception breakpoints.** Stop on uncaught and on raised Python exceptions, with exception details; C++ `throw` and Rust panic. | not started |
+| 3 | **Exception breakpoints.** Stop on uncaught and on raised Python exceptions, with exception details; C++ `throw` and Rust panic. | **done** (`tests/test_exceptions.py`, 9 scenarios; `docs/decisions.md` §14) |
 | 4 | **Program input.** `input()` does not work today. Run the program in the editor's terminal (`console: integratedTerminal`). | not started |
 | 5 | **Editor verification.** Automated checks of the VS Code extension (extension host under a virtual display) and of the Neovim configuration (headless), in CI. | not started |
 

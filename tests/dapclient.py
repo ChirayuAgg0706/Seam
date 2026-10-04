@@ -149,8 +149,9 @@ class DapClient:
         """
         return re.sub(r"\x1b\[[0-9;]*m", "", self.output)
 
-    def launch(self, program, python, args=(), breakpoints=None, **extra):
-        self.request("initialize", {"adapterID": "seam", "clientID": "tests"})
+    def launch(self, program, python, args=(), breakpoints=None, exceptions=None, **extra):
+        self.capabilities = self.request("initialize", {"adapterID": "seam",
+                                                        "clientID": "tests"})
         launch = {"program": program, "python": python, "args": list(args),
                   "cwd": os.path.dirname(program)}
         if os.environ.get("SEAM_TEST_DEBUGINFO") == "0":
@@ -161,6 +162,8 @@ class DapClient:
         self.wait_event("initialized")
         for path, lines in (breakpoints or {}).items():
             self.set_breakpoints(path, lines)
+        if exceptions is not None:
+            self.request("setExceptionBreakpoints", {"filters": list(exceptions)})
         self.request("configurationDone")
 
     def set_breakpoints(self, path, lines):

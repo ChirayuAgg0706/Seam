@@ -96,6 +96,7 @@ call stack. **Step Out** returns to the Python line.
 | `cwd`, `env` | Working directory and extra environment variables. |
 | `stopOnEntry` | Stop on the first line of Python. |
 | `stopOnSignals` | Signals that stop the debugger (default `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGABRT`). Every other signal goes straight to the program. Also valid for attach. |
+| `justMyCode` | For "Raised Python exceptions": ignore exceptions that stay inside libraries (default true). |
 | `debugInfoLookup` | Let LLDB find separate debug-info files (default true). |
 | `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
 | `showGlueFrames` | Show binding-layer trampoline frames in the call stack (default false). |
@@ -109,6 +110,21 @@ call stack. **Step Out** returns to the Python line.
 Attaching needs ptrace permission for a non-child process
 (`/proc/sys/kernel/yama/ptrace_scope` must be 0, or the program must allow it). See
 [Limitations](#limitations) for what attach can and cannot do on each Python version.
+
+### Exceptions
+
+The editor's exception-breakpoint list offers four choices:
+
+| Filter | Stops when |
+|---|---|
+| Uncaught Python exceptions (on by default) | an exception nobody handled is about to end the program or a thread. The call stack shows the frames it passed through, from the `raise` outwards; their variables can be inspected and expressions evaluated in them. |
+| Raised Python exceptions | an exception is raised in your code, or first reaches your code from a library or from native code, even if it is handled afterwards. One stop per exception. |
+| C++ throw | native code executes a `throw`. |
+| Rust panic | Rust code panics. |
+
+"Your code" means anything outside the standard library and `site-packages`; set
+`"justMyCode": false` to treat library code the same as yours. `SystemExit` is not an
+uncaught exception.
 
 ### Crashes and signals
 
@@ -148,7 +164,8 @@ control the process. Seam has a single controller.
    handed to the helper, which stops on the calling Python line.
 
 With no breakpoints set and no step in progress, the helper has no monitoring events
-enabled, so the program runs at full speed.
+enabled, so the program runs at full speed. Stopping on uncaught exceptions costs nothing
+either: it hangs off the hook the interpreter calls when it reports one.
 
 ## Limitations
 
@@ -174,6 +191,11 @@ Known limits of what is in scope:
   presses of Step Into: the generated or optimised code spreads one source line over many
   small ranges, and each press advances to the next one. A breakpoint in the callback is
   the reliable alternative.
+- **Exception stops.** At an uncaught exception, a C++ throw or a Rust panic there is
+  nothing to step through (the frames have unwound, or control is about to leave by
+  unwinding), so a step simply continues. Uncaught exceptions in threads are seen through
+  `threading.excepthook`; a program that replaces that hook after start-up hides them
+  from Seam. A thread started with the low-level `_thread` module is not covered.
 - **Extension modules with more than 20,000 functions** are excluded from step-in from
   Python (a message says so); breakpoints in them work normally.
 - **Changing Python breakpoints while the program runs** is applied by the main thread at

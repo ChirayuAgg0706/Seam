@@ -100,6 +100,11 @@
                 "description": "Signals that stop the debugger. Every other signal is delivered to the program without stopping.",
                 "default": [ "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT" ]
               },
+              "justMyCode": {
+                "type": "boolean",
+                "description": "For the \"Raised Python exceptions\" breakpoint: ignore exceptions that stay inside the standard library and installed packages.",
+                "default": true
+              },
               "debugInfoLookup": {
                 "type": "boolean",
                 "description": "Let LLDB look for separate debug-info files for system libraries.",
@@ -129,6 +134,11 @@
                 "type": "number",
                 "description": "Seconds to wait for the process to reach a point where the helper can load.",
                 "default": 15
+              },
+              "justMyCode": {
+                "type": "boolean",
+                "description": "For the \"Raised Python exceptions\" breakpoint: ignore exceptions that stay inside the standard library and installed packages.",
+                "default": true
               },
               "stopOnSignals": {
                 "type": "array",

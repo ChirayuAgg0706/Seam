@@ -27,6 +27,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 R_BREAKPOINT = 1
 R_STEP = 2
 R_RETURN_NATIVE = 3
+R_EXCEPTION = 6   # raised (5 is "attached")
+R_UNCAUGHT = 7
+
+_exc_filters = frozenset()  # of "raised", "uncaught"
+_just_my_code = True
+_exc_pending = None  # (exception, break mode) of the stop in progress, until fetched
+_post_mortem = None  # frames of an uncaught exception, newest first: [(frame, line)]
+_exc_fresh = False   # set at the trap; lets the stop's own first request keep the above
+_thread_hook = None  # (ours, the one we replaced) while threading.excepthook is wrapped
 
 _bps = {}         # canonical path -> {line: condition or None}
 _lines = {}       # id(code) -> set of breakpoint lines (shared with the C callback)
@@ -123,7 +132,8 @@ def _compute(code):
 
 
 def _update_global():
-    want = (E.PY_START if _bps else 0) | (_step.glob if _step else 0)
+    want = ((E.PY_START if _bps else 0) | (_step.glob if _step else 0)
+            | (E.RAISE if "raised" in _exc_filters else 0))
     if mon.get_events(TOOL) != want:
         mon.set_events(TOOL, want)
 
@@ -152,14 +162,114 @@ def _on_start(code, offset):
 
 
 def _condition_ok(code, line, frame):
+    global _in_dispatch
     table = _bps.get(_canon(code.co_filename))
     cond = table.get(line) if table else None
     if not cond:
         return True
+    _in_dispatch = True  # an exception inside a condition is not the program's
     try:
         return bool(eval(cond, frame.f_globals, frame.f_locals))
     except Exception:
         return True  # a broken condition should be noticed, not silently skipped
+    finally:
+        _in_dispatch = False
+
+
+# ----------------------------------------------------------------- exceptions
+
+_library_prefixes = None
+_user_code = {}  # co_filename -> bool
+
+
+def _is_user(code):
+    """True for code the user wrote: not the standard library, not installed packages."""
+    global _library_prefixes
+    name = code.co_filename
+    known = _user_code.get(name)
+    if known is None:
+        if _internal(code):
+            known = False
+        elif not _just_my_code or name.startswith("<"):
+            known = True
+        else:
+            if _library_prefixes is None:
+                found = [os.path.dirname(os.path.realpath(os.__file__)) + os.sep]
+                for entry in sys.path:
+                    if entry.rstrip(os.sep).endswith(("site-packages", "dist-packages")):
+                        found.append(os.path.realpath(entry) + os.sep)
+                _library_prefixes = tuple(found)
+            known = not _canon(name).startswith(_library_prefixes)
+        _user_code[name] = known
+    return known
+
+
+def _stop_for_exception(exc, mode, frames):
+    global _exc_pending, _post_mortem, _exc_fresh
+    _exc_pending = (exc, mode)
+    _post_mortem = frames
+    _exc_fresh = True
+    if _step is not None:
+        _finish_step()
+
+
+def _on_raise(code, offset, exc):
+    if _in_dispatch or "raised" not in _exc_filters or not _is_user(code):
+        return None
+    # The event fires in every frame the exception passes through. Stop once: where it
+    # is raised in the user's code, or where it first reaches it from a library.
+    tb = exc.__traceback__
+    tb = tb.tb_next if tb is not None else None
+    while tb is not None:
+        if _is_user(tb.tb_frame.f_code):
+            return None
+        tb = tb.tb_next
+    _stop_for_exception(exc, "always", None)
+    return (None, code, sys._getframe(1).f_lineno or 0, R_EXCEPTION)
+
+
+def _on_uncaught(exc):
+    """The interpreter (or threading) is about to report an exception nobody handled."""
+    if (_in_dispatch or "uncaught" not in _exc_filters
+            or not isinstance(exc, BaseException) or isinstance(exc, SystemExit)):
+        return None
+    # Its frames have unwound, but the traceback keeps them alive: show those.
+    frames = []
+    tb = exc.__traceback__
+    while tb is not None:
+        if not _internal(tb.tb_frame.f_code):
+            frames.append((tb.tb_frame, tb.tb_lineno))
+        tb = tb.tb_next
+    if not frames:
+        return None
+    frames.reverse()
+    _stop_for_exception(exc, "unhandled", frames)
+    return (None, None, 0, R_UNCAUGHT)
+
+
+def _on_thread_exception(args):
+    return _on_uncaught(args.exc_value)
+
+
+def _set_exception_filters(filters, just_my_code):
+    global _exc_filters, _just_my_code, _thread_hook
+    if just_my_code != _just_my_code:
+        _just_my_code = just_my_code
+        _user_code.clear()
+    _exc_filters = frozenset(filters)
+    if "uncaught" in _exc_filters:
+        _t.set_uncaught(_on_uncaught)
+        if _thread_hook is None:
+            ours = _t.chain(_on_thread_exception, threading.excepthook)
+            _thread_hook = (ours, threading.excepthook)
+            threading.excepthook = ours
+    else:
+        _t.set_uncaught(None)
+        if _thread_hook is not None:
+            if threading.excepthook is _thread_hook[0]:
+                threading.excepthook = _thread_hook[1]
+            _thread_hook = None
+    _update_global()
 
 
 # ------------------------------------------------------------------- stepping
@@ -291,6 +401,12 @@ def _frames(ident):
 
 
 def _frame_for(req):
+    position = req.get("pm")
+    if position is not None:
+        # A frame of the uncaught exception being shown; it is no longer on any stack.
+        if _post_mortem is None or position >= len(_post_mortem):
+            raise LookupError("that frame is no longer available")
+        return _post_mortem[position][0]
     ident = _ident_for(req.get("tid"))
     if ident is None:
         raise LookupError("thread %s is not known to the threading module" % req.get("tid"))
@@ -374,8 +490,41 @@ def _cmd_sync_breakpoints(req):
         result[path] = answers
     _bps.clear()
     _bps.update(new)
+    exceptions = req.get("exceptions")
+    if exceptions is not None:
+        _set_exception_filters(exceptions["filters"], bool(exceptions["just_my_code"]))
     _reinstrument()
     return result
+
+
+def _cmd_exception(req):
+    """Describe the exception this stop is about, and where its frames are."""
+    global _exc_pending
+    if _exc_pending is None:
+        raise LookupError("not stopped at an exception")
+    exc, mode = _exc_pending
+    _exc_pending = None  # the object is not kept alive beyond this request
+    kind = type(exc)
+    module = getattr(kind, "__module__", None)
+    full = kind.__qualname__
+    if module and module not in ("builtins", "__main__"):
+        full = "%s.%s" % (module, full)
+    try:
+        message = str(exc)
+    except BaseException as failure:  # str() runs arbitrary user code
+        message = "<str() failed: %s>" % type(failure).__name__
+    try:
+        trace = "".join(traceback.format_exception(kind, exc, exc.__traceback__))
+    except BaseException:
+        trace = ""
+    out = {"type": kind.__qualname__, "full_type": full, "message": message,
+           "trace": trace, "mode": mode}
+    if _post_mortem is not None:
+        out["frames"] = [
+            {"filename": frame.f_code.co_filename, "name": frame.f_code.co_qualname,
+             "line": line}
+            for frame, line in _post_mortem]
+    return out
 
 
 def _cmd_step(req):
@@ -458,9 +607,12 @@ def _cmd_evaluate(req):
 
 def _cmd_shutdown(req):
     """The debugger is detaching: leave no trace in the running program."""
+    global _post_mortem, _exc_pending
     if _step is not None:
         _finish_step()
     _bps.clear()
+    _set_exception_filters((), True)
+    _post_mortem = _exc_pending = None
     _reinstrument()
     for code in list(_codes.values()):
         mon.set_local_events(TOOL, code, 0)
@@ -482,6 +634,7 @@ def _cmd_status(req):
         },
         "stepping": _step.mode if _step else None,
         "breakpoints": {p: sorted(t) for p, t in _bps.items()},
+        "exception_filters": sorted(_exc_filters),
     }
 
 
@@ -492,6 +645,7 @@ _COMMANDS = {
     "threads": _cmd_threads,
     "variables": _cmd_variables,
     "evaluate": _cmd_evaluate,
+    "exception": _cmd_exception,
     "status": _cmd_status,
     "shutdown": _cmd_shutdown,
 }
@@ -507,12 +661,18 @@ def dispatch(raw):
 
 
 def _dispatch(raw):
-    global _epoch
+    global _epoch, _post_mortem, _exc_pending, _exc_fresh
     try:
         req = json.loads(raw)
         if req.get("epoch") != _epoch:
             _epoch = req.get("epoch")
             _refs.clear()
+            # Whatever an earlier stop held on to is released; what the stop now in
+            # progress has just recorded is kept.
+            if _exc_fresh:
+                _exc_fresh = False
+            else:
+                _post_mortem = _exc_pending = None
         out = {"ok": True, "result": _COMMANDS[req["cmd"]](req)}
     except BaseException as exc:
         out = {
@@ -532,6 +692,7 @@ def _install():
     mon.register_callback(TOOL, E.PY_YIELD, _t.wrap(_on_return))
     mon.register_callback(TOOL, E.PY_UNWIND, _t.wrap(_on_unwind))
     mon.register_callback(TOOL, E.INSTRUCTION, _t.wrap(_on_instruction))
+    mon.register_callback(TOOL, E.RAISE, _t.wrap(_on_raise))
 
 
 _install()

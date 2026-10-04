@@ -149,6 +149,96 @@ trap_wrap(PyObject *mod, PyObject *handler)
     return PyCFunction_NewEx(&wrapped_def, handler, NULL);
 }
 
+/* chain(handler, next): run the handler (which may trap), then call `next` with the same
+ * arguments and return its result. Used to sit in front of threading.excepthook without
+ * leaving a Seam Python frame on the stack while the original hook runs. */
+static PyObject *
+chained_call(PyObject *self, PyObject *args)
+{
+    PyObject *r = run_handler(PyTuple_GetItem(self, 0), args);
+    Py_XDECREF(r);
+    return PyObject_CallObject(PyTuple_GetItem(self, 1), args);
+}
+
+static PyMethodDef chained_def = {"seam_chain", chained_call, METH_VARARGS, NULL};
+
+static PyObject *
+trap_chain(PyObject *mod, PyObject *args)
+{
+    (void)mod;
+    PyObject *handler, *next;
+    if (!PyArg_ParseTuple(args, "OO", &handler, &next)) {
+        return NULL;
+    }
+    PyObject *pair = PyTuple_Pack(2, handler, next);
+    if (pair == NULL) {
+        return NULL;
+    }
+    PyObject *fn = PyCFunction_NewEx(&chained_def, pair, NULL);
+    Py_DECREF(pair);
+    return fn;
+}
+
+/*
+ * Uncaught exceptions. The interpreter raises the audit event "sys.excepthook" just
+ * before it reports an exception nobody handled, whatever sys.excepthook has been
+ * replaced with. A C audit hook costs a string comparison per audit event; a Python one
+ * would run for every open(), import and ctypes call in the program.
+ *
+ * PySys_AddAuditHook is the one function used here that is outside the stable ABI. It
+ * has been exported by every CPython since 3.8. A hook cannot be removed, so it is only
+ * added the first time uncaught-exception stops are switched on, and does nothing while
+ * g_uncaught is NULL.
+ */
+typedef int (*seam_audit_hook)(const char *, PyObject *, void *);
+extern int PySys_AddAuditHook(seam_audit_hook, void *);
+
+static PyObject *g_uncaught = NULL; /* handler(exception), or NULL when switched off */
+static int g_audit_installed = 0;
+
+static int
+audit_hook(const char *event, PyObject *args, void *data)
+{
+    (void)data;
+    if (g_uncaught == NULL || strcmp(event, "sys.excepthook") != 0) {
+        return 0;
+    }
+    /* args is (hook, type, value, traceback). */
+    PyObject *value = PyTuple_Check(args) && PyTuple_Size(args) == 4
+        ? PyTuple_GetItem(args, 2) : NULL;
+    if (value != NULL) {
+        PyObject *call_args = PyTuple_Pack(1, value);
+        if (call_args != NULL) {
+            Py_XDECREF(run_handler(g_uncaught, call_args));
+            Py_DECREF(call_args);
+        }
+    }
+    if (PyErr_Occurred()) {
+        PyErr_Clear(); /* never veto the audited operation */
+    }
+    return 0;
+}
+
+static PyObject *
+trap_set_uncaught(PyObject *mod, PyObject *handler)
+{
+    (void)mod;
+    if (handler == Py_None) {
+        Py_CLEAR(g_uncaught);
+        Py_RETURN_NONE;
+    }
+    if (!g_audit_installed) {
+        if (PySys_AddAuditHook(audit_hook, NULL) != 0) {
+            return NULL;
+        }
+        g_audit_installed = 1;
+    }
+    Py_INCREF(handler);
+    Py_XDECREF(g_uncaught);
+    g_uncaught = handler;
+    Py_RETURN_NONE;
+}
+
 static PyObject *
 line_cb(PyObject *mod, PyObject *const *args, Py_ssize_t nargs)
 {
@@ -221,6 +311,8 @@ static PyMethodDef methods[] = {
     {"configure", trap_configure, METH_VARARGS, "configure(bps, DISABLE, py_line, dispatch)"},
     {"set_slow", trap_set_slow, METH_O, "Route every LINE event through the Python handler."},
     {"wrap", trap_wrap, METH_O, "Wrap a Python handler so the trap fires from C."},
+    {"chain", trap_chain, METH_VARARGS, "chain(handler, next): handler (may trap), then next."},
+    {"set_uncaught", trap_set_uncaught, METH_O, "Handler for uncaught exceptions, or None."},
     {"line_cb", (PyCFunction)(void (*)(void))line_cb, METH_FASTCALL, "LINE callback."},
     {NULL, NULL, 0, NULL},
 };

@@ -13,9 +13,15 @@ fn call_back(fn_: &Bound<'_, PyAny>, x: i64) -> PyResult<Py<PyAny>> {
     Ok(res.unbind()) // callback-after
 }
 
+#[pyfunction]
+fn fail(reason: &str) -> i64 {
+    panic!("{}", reason); // panic-here
+}
+
 #[pymodule]
 fn seam_pyo3(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(add, m)?)?;
     m.add_function(wrap_pyfunction!(call_back, m)?)?;
+    m.add_function(wrap_pyfunction!(fail, m)?)?;
     Ok(())
 }

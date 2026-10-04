@@ -29,7 +29,23 @@ R_BREAKPOINT = 1
 R_STEP = 2
 R_RETURN_NATIVE = 3
 R_ATTACHED = 5
+R_EXCEPTION = 6
+R_UNCAUGHT = 7
 EVAL_PLEASE_STOP_BIT = 1 << 5   # _PY_EVAL_PLEASE_STOP_BIT in CPython 3.14's pycore_ceval.h
+
+EXCEPTION_FILTERS = [
+    {"filter": "uncaught", "label": "Uncaught Python exceptions", "default": True,
+     "description": "Stop when an exception nobody handled is about to end the program "
+                    "or a thread. The frames it passed through can still be inspected."},
+    {"filter": "raised", "label": "Raised Python exceptions", "default": False,
+     "description": "Stop when an exception is raised in your code, or first reaches it "
+                    "from a library, even if it is handled afterwards."},
+    {"filter": "cpp_throw", "label": "C++ throw", "default": False,
+     "description": "Stop when native code throws a C++ exception."},
+    {"filter": "rust_panic", "label": "Rust panic", "default": False,
+     "description": "Stop when Rust code panics."},
+]
+PYTHON_EXCEPTION_FILTERS = ("uncaught", "raised")
 
 HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",
@@ -137,6 +153,11 @@ class Adapter:
         self.fault_stop = False       # stopped at a fault signal: run nothing in the process
         self.exit_packet = None       # ("W" | "X", number) from the final stop reply
         self.note_fd = None           # side channel to `seam dap` (see cli.py)
+        self.exc_filters = []         # exception breakpoint filters in force
+        self.native_exc_bps = {}      # filter -> SBBreakpoint (cpp_throw, rust_panic)
+        self.just_my_code = True
+        self.post_mortem = {}         # tid -> frames of the uncaught exception shown there
+        self.throw_stop = False       # stopped at a C++ throw or Rust panic
         self._watch_exit_packets()
 
     def _note(self, text):
@@ -360,7 +381,9 @@ class Adapter:
         self.safe_tid = None
         self.stop_is_trap = False
         self.exception_info.clear()
+        self.post_mortem.clear()
         self.fault_stop = False
+        self.throw_stop = False
         if self.py:
             self.py.new_stop()
 
@@ -726,9 +749,27 @@ class Adapter:
                     return
         self._finish_steps(thread, cancel_py=False)
         self.last_native_stop.pop(tid, None)
-        self.event("stopped", {
-            "reason": "breakpoint" if reason == R_BREAKPOINT else "step",
-            "threadId": tid, "allThreadsStopped": True})
+        body = {"reason": "breakpoint" if reason == R_BREAKPOINT else "step",
+                "threadId": tid, "allThreadsStopped": True}
+        if reason in (R_EXCEPTION, R_UNCAUGHT):
+            body["reason"] = "exception"
+            try:
+                info = self.agent("exception")
+            except DapError as exc:
+                self.log("no exception details:", exc)
+            else:
+                summary = info["type"] + (": " + info["message"] if info["message"] else "")
+                body["description"] = summary[:300]
+                body["text"] = info["type"]
+                self.exception_info[tid] = {
+                    "exceptionId": info["full_type"], "description": info["message"],
+                    "breakMode": info["mode"],
+                    "details": {"message": info["message"], "typeName": info["type"],
+                                "fullTypeName": info["full_type"],
+                                "stackTrace": info["trace"]}}
+                if info.get("frames"):
+                    self.post_mortem[tid] = info["frames"]
+        self.event("stopped", body)
 
     def _on_stop(self):
         self._new_stop()
@@ -758,6 +799,13 @@ class Adapter:
             body["reason"] = "step"
             self._report_native_stop(thread, body)
             return
+        if reason == lldb.eStopReasonBreakpoint and not self.pause_requested:
+            hit = thread.GetStopReasonDataAtIndex(0)
+            for name, bp in self.native_exc_bps.items():
+                if bp.GetID() == hit:
+                    self._finish_steps(thread)
+                    self._report_native_exception(thread, name, body)
+                    return
         if reason == lldb.eStopReasonBreakpoint and not self.pause_requested:
             # A source-line breakpoint can also resolve into generated glue that carries
             # the user's line numbers (Cython's module-init code does). Never stop there.
@@ -825,6 +873,23 @@ class Adapter:
                 "breakMode": "always"}
         else:
             body["reason"] = "pause"
+        self._report_native_stop(thread, body)
+
+    def _report_native_exception(self, thread, kind, body):
+        """A stop at a C++ `throw` or a Rust panic (exception breakpoint filters)."""
+        if kind == "cpp_throw":
+            # Stopped on entry to __cxa_throw(object, type_info, destructor).
+            tinfo = thread.GetFrameAtIndex(0).FindRegister("rsi").GetValueAsUnsigned()
+            symbol = self.target.ResolveLoadAddress(tinfo).GetSymbol().GetName() or ""
+            name = symbol[len("typeinfo for "):] if symbol.startswith("typeinfo for ") else ""
+            what = "C++ exception thrown" + (": " + name if name else "")
+            name = name or "C++ exception"
+        else:
+            name, what = "Rust panic", "Rust panic"
+        body.update({"reason": "exception", "description": what, "text": name})
+        self.throw_stop = True
+        self.exception_info[thread.GetThreadID()] = {
+            "exceptionId": name, "description": what, "breakMode": "always"}
         self._report_native_stop(thread, body)
 
     def _report_native_stop(self, thread, body):
@@ -971,6 +1036,7 @@ class Adapter:
             "supportsEvaluateForHovers": True,
             "supportsTerminateRequest": True,
             "supportsExceptionInfoRequest": True,
+            "exceptionBreakpointFilters": EXCEPTION_FILTERS,
         }
 
     def _apply_settings(self, args):
@@ -986,6 +1052,7 @@ class Adapter:
             "settings set target.process.thread.step-out-avoid-nodebug false")
         self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
         self.show_glue_frames = bool(args.get("showGlueFrames"))
+        self.just_my_code = bool(args.get("justMyCode", True))
 
     def _apply_signal_policy(self, args):
         """Stop on the signals that mean a crash; hand every other signal to the program.
@@ -1418,7 +1485,24 @@ class Adapter:
         return {"breakpoints": answers}
 
     def req_setExceptionBreakpoints(self, args):
-        return {"breakpoints": []}
+        wanted = list(args.get("filters") or [])
+        wanted += [option.get("filterId") for option in args.get("filterOptions") or []]
+        known = [f["filter"] for f in EXCEPTION_FILTERS]
+        self.exc_filters = [name for name in known if name in wanted]
+        if self.process is not None and not self.exited:
+            with self._paused():
+                for name in ("cpp_throw", "rust_panic"):
+                    bp = self.native_exc_bps.pop(name, None)
+                    if bp is not None:
+                        self.target.BreakpointDelete(bp.GetID())
+                    if name == "cpp_throw" and name in self.exc_filters:
+                        self.native_exc_bps[name] = self.target.BreakpointCreateForException(
+                            lldb.eLanguageTypeC_plus_plus, False, True)
+                    elif name in self.exc_filters:
+                        self.native_exc_bps[name] = self.target.BreakpointCreateByName(
+                            "rust_panic")
+            self._sync_py_bps()
+        return {"breakpoints": [{"verified": name in known} for name in wanted]}
 
     def req_exceptionInfo(self, args):
         self._require_stopped()
@@ -1434,13 +1518,16 @@ class Adapter:
         """Push the full Python breakpoint table to the agent, now or at the next safe point."""
         if self.process is None or self.exited:
             return None
+        exceptions = {"filters": [name for name in self.exc_filters
+                                  if name in PYTHON_EXCEPTION_FILTERS],
+                      "just_my_code": self.just_my_code}
         if self.safe_tid is not None:
             if self.pending_sync:
                 self._write(self.sym["seam_pend_len"], struct.pack("<q", 0))
                 self.pending_sync = False
-            return self.agent("sync_breakpoints", files=self.py_bps)
+            return self.agent("sync_breakpoints", files=self.py_bps, exceptions=exceptions)
         with self._paused():
-            self._agent_pending("sync_breakpoints", files=self.py_bps)
+            self._agent_pending("sync_breakpoints", files=self.py_bps, exceptions=exceptions)
             self.pending_sync = True
         return None
 
@@ -1558,6 +1645,14 @@ class Adapter:
                 if record["cls"] == "user":
                     del out[:position]
                     break
+        if tid in self.post_mortem:
+            # Stopped at an uncaught exception. The frames it passed through have already
+            # unwound; the traceback keeps them alive, and they are what the user wants
+            # to see. They go on top of whatever is still on the stack.
+            out[:0] = [{"kind": "py", "tid": tid, "index": 0, "pm": position,
+                        "name": frame["name"], "path": self._py_path(frame["filename"]),
+                        "line": frame["line"], "pf": None}
+                       for position, frame in enumerate(self.post_mortem[tid])]
         for record in out:
             record["id"] = self._new_id()
             self.frames[record["id"]] = record
@@ -1645,10 +1740,10 @@ class Adapter:
             if self.safe_tid is not None:
                 try:
                     items = self.agent("variables", kind=scope, tid=frame["tid"],
-                                       index=frame["index"])
+                                       index=frame["index"], pm=frame.get("pm"))
                     return {"variables": [self._py_var(i) for i in items]}
                 except DapError:
-                    if scope != "locals":
+                    if scope != "locals" or frame["pf"] is None:
                         raise
             elif scope != "locals":
                 raise DapError(UNSAFE_MESSAGE)
@@ -1680,7 +1775,8 @@ class Adapter:
         if record["kind"] == "py":
             if self.safe_tid is None:
                 raise DapError(UNSAFE_MESSAGE)
-            item = self.agent("evaluate", tid=record["tid"], index=record["index"], expr=expr)
+            item = self.agent("evaluate", tid=record["tid"], index=record["index"],
+                              pm=record.get("pm"), expr=expr)
             var = self._py_var(item)
             return {"result": var["value"], "type": var["type"],
                     "variablesReference": var["variablesReference"]}
@@ -1709,8 +1805,14 @@ class Adapter:
     def _step(self, args, mode):
         self._require_stopped()
         thread = self._thread(args["threadId"])
-        stack = self._merged_stack(thread)
         tid = thread.GetThreadID()
+        if tid in self.post_mortem or self.throw_stop:
+            # An uncaught exception (its frames are gone) or a native throw (control
+            # leaves by unwinding, not by returning): there is nothing to step through.
+            self._new_stop()
+            self._continue()
+            return None
+        stack = self._merged_stack(thread)
         # Step relative to the newest frame the user cares about: a Python frame or user
         # native code. System-library and glue frames above it (e.g. being paused inside
         # nanosleep under time.sleep) do not count.

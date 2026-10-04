@@ -279,6 +279,46 @@ status 70), `seam dap` kills those programs, sends the client an output event ex
 what happened followed by `terminated`, and exits with status 1. Programs Seam attached
 to are never killed.
 
+## 14. Exception breakpoints
+
+**Uncaught exceptions are taken from the interpreter, not guessed.** Deciding at `raise`
+time whether an exception will be caught is guesswork in pure Python and impossible in a
+mixed program (native frames in between can clear or translate it). The interpreter
+knows: it raises the audit event `sys.excepthook` immediately before reporting an
+exception nobody handled, whatever `sys.excepthook` has been replaced with, and never for
+`SystemExit`. The helper registers a C audit hook for that one event. A Python-level
+audit hook would run for every audited operation in the program (`open`, `import`, every
+`ctypes` call); the C hook costs a string comparison. `PySys_AddAuditHook` is outside the
+stable ABI, the only such function the helper uses; it has been exported since 3.8. An
+audit hook cannot be removed, so it is added the first time the filter is switched on and
+is inert otherwise.
+
+Threads never reach that path (`threading` catches the exception and calls
+`threading.excepthook`), so the agent puts a C-level callable in front of that hook while
+the filter is on and restores the original when it is switched off. A program that
+replaces `threading.excepthook` afterwards hides thread exceptions from Seam.
+
+**The stack at an uncaught exception comes from the traceback.** By the time the
+interpreter reports it, every frame the exception passed through has unwound. The
+traceback keeps those frame objects alive, so Seam shows them (newest first, at the line
+each was on) on top of whatever is still on the real stack, and variables and expressions
+work in them through the agent as in any Python frame. They are released at the next
+stop. A step from such a stop continues the program: there is nothing left to step
+through.
+
+**Raised exceptions use `sys.monitoring`'s RAISE event**, which fires in every frame an
+exception passes through. Seam stops once per exception: in the first frame of user code
+it touches, judged from the traceback (no deeper traceback entry is user code). That
+covers a `raise` in user code, an exception coming out of a library call, and one set by
+native code, with nothing remembered between events. User code is anything outside the
+standard library and `site-packages`/`dist-packages`; `justMyCode: false` widens it to
+everything. Code Seam runs itself (expressions, breakpoint conditions) never triggers a
+stop.
+
+**C++ throw and Rust panic** are LLDB breakpoints (`__cxa_throw` through LLDB's exception
+breakpoint, and the `rust_panic` symbol, which the Rust runtime keeps for debuggers). The
+C++ exception type is read from the `type_info` argument's symbol name.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped
