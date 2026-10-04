@@ -30,12 +30,16 @@ EXCEPTION_FILTERS = [
     {"filter": "raised", "label": "Raised Python exceptions", "default": False,
      "description": "Stop when an exception is raised in your code, or first reaches it "
                     "from a library, even if it is handled afterwards."},
+    {"filter": "user_unhandled", "label": "User-unhandled Python exceptions", "default": False,
+     "description": "Stop when an exception leaves your code for the library code that "
+                    "called it: a failing assert on its way back to the test runner, an "
+                    "error in a callback or a request handler."},
     {"filter": "cpp_throw", "label": "C++ throw", "default": False,
      "description": "Stop when native code throws a C++ exception."},
     {"filter": "rust_panic", "label": "Rust panic", "default": False,
      "description": "Stop when Rust code panics."},
 ]
-PYTHON_EXCEPTION_FILTERS = ("uncaught", "raised")
+PYTHON_EXCEPTION_FILTERS = ("uncaught", "raised", "user_unhandled")
 
 HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",

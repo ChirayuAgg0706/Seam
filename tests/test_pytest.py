@@ -236,6 +236,46 @@ def test_pytest_in_the_terminal(dap, run_pytest):
     assert "1 passed" not in dap.output
 
 
+def test_stop_where_a_test_fails(dap, run_pytest):
+    # pytest catches the failure, so "uncaught" never fires; "user_unhandled" stops as
+    # the exception leaves the test for pytest.
+    run_pytest("-q", "-k", "fails or expected_exceptions or addition",
+               exceptions=["uncaught", "user_unhandled"])
+    stop = dap.wait_stopped()
+    assert stop["reason"] == "exception" and stop["text"] == "AssertionError"
+    assert "assert 3 == 4" in stop["description"]
+    tid = stop["threadId"]
+    stack = dap.stack(tid)
+    assert python_part(stack)[0] == ("test_fails", marker_line(TESTS, "failing-assert"))
+    assert stack[1]["name"] == "pytest_pyfunc_call"
+    local = dap.scope(stack[0]["id"])
+    assert (local["expected"]["value"], local["actual"]["value"]) == ("4", "3")
+    assert dap.evaluate("expected - actual", stack[0]["id"])["result"] == "1"
+    info = dap.request("exceptionInfo", {"threadId": tid})
+    assert info["exceptionId"] == "AssertionError" and info["breakMode"] == "userUnhandled"
+    assert "assert actual == expected" in info["details"]["stackTrace"]
+
+    # The second failure is raised in a helper the test calls: the helper's frame has
+    # unwound by the time the exception leaves the test, and is shown on top.
+    dap.cont()
+    stop = dap.wait_stopped()
+    assert "helper says no" in stop["description"]
+    stack = dap.stack(tid)
+    assert python_part(stack)[:2] == [
+        ("helper_that_checks", marker_line(TESTS, "helper-assert")),
+        ("test_fails_in_a_helper", marker_line(TESTS, "helper-call"))]
+    assert stack[2]["name"] == "pytest_pyfunc_call"
+    local = dap.scope(stack[0]["id"])
+    assert (local["actual"]["value"], local["expected"]["value"]) == ("3", "4")
+
+    # Nothing else stops: not the exception `pytest.raises` expects, not the one caught
+    # in the test, not the "skip" that pytest raises through the test.
+    dap.cont()
+    name, body = dap.wait_any(["stopped", "exited"], timeout=60)
+    assert name == "exited" and body["exitCode"] == 1, (body, dap.output)
+    assert "2 failed, 1 passed, 1 skipped" in dap.plain_output, dap.output
+
+
 def test_xdist_workers_are_child_processes(dap, run_pytest):
     lines = [marker_line(TESTS, m) for m in ("addition-total", "param-body", "method-body")]
     run_pytest("-q", "-n", "2", "-k", SOUND, breakpoints={

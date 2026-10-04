@@ -226,6 +226,9 @@ class StopsMixin:
                                 "stackTrace": info["trace"]}}
                 if info.get("frames"):
                     self.post_mortem[tid] = info["frames"]
+                if info["mode"] == "userUnhandled":
+                    # The frame on top is on its way out: nothing to step through.
+                    self.throw_stop = True
         self.event("stopped", body)
 
     def _on_stop(self):
