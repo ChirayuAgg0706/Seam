@@ -1,0 +1,11 @@
+{
+  "name": "seam-editor-check-driver",
+  "displayName": "Seam editor check driver",
+  "description": "Empty extension that carries Seam's editor check into the VS Code extension host.",
+  "version": "0.0.0",
+  "publisher": "seam-tests",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  }
+}

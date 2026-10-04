@@ -43,10 +43,18 @@ Breakpoints set with `:lua require("dap").toggle_breakpoint()` in `.py`, `.c`, `
 `.rs` and `.pyx` buffers all go to the same session. Seam routes them by file extension:
 `.py`/`.pyw` are Python breakpoints, everything else is a native breakpoint.
 
-Launch options are the same as in the VS Code extension: `program` or `module`, `args`,
-`python`, `pythonArgs`, `cwd`, `env`, `stopOnEntry`, `debugInfoLookup`, `frameworkPaths`.
+Launch options are the same as in the VS Code extension; the README lists them. Two are
+worth knowing here:
 
-This configuration has not been exercised inside Neovim by the Seam test suite; the suite
-drives the same adapter over the same protocol with a scripted client. If something
-misbehaves, set the environment variable `SEAM_LOG=/tmp/seam.log` before starting Neovim
-and attach the log to a bug report.
+- `console = "integratedTerminal"` runs the program in a Neovim terminal split, where it
+  can read input. Without it the program's output goes to the nvim-dap REPL and its
+  standard input is empty.
+- Exception stops: nvim-dap enables the adapter's default (uncaught Python exceptions).
+  `:lua require("dap").set_exception_breakpoints({ "uncaught", "raised" })` chooses others
+  (`cpp_throw` and `rust_panic` are the native ones).
+
+CI runs this exact configuration: `tests/editors/nvim_check.lua` reads the Lua block above
+out of this file, loads it into a headless Neovim with nvim-dap, and debugs
+`examples/pyo3-demo` with it (breakpoint, step into Rust, step out, run to the end, and
+once more in a terminal). If something misbehaves for you, set the environment variable
+`SEAM_LOG=/tmp/seam.log` before starting Neovim and attach the log to a bug report.

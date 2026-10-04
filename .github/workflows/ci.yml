@@ -2,6 +2,10 @@ name: tests
 
 on:
   push:
+  schedule:
+    # Weekly: the whole suite against whatever the runner image, uv, PyO3 and friends
+    # have become, plus a looped run of the stepping scenarios to catch nondeterminism.
+    - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
       repeat:
@@ -72,6 +76,75 @@ jobs:
           SEAM_TEST_OPT: ${{ matrix.opt }}
         run: scripts/test.sh -q -m smoke
 
+  lldb:
+    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    name: smoke (3.12, -O0, LLDB ${{ matrix.lldb }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        lldb: ["19", "20"]   # the other jobs use the distribution's default, LLDB 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLDB ${{ matrix.lldb }} and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lldb-${{ matrix.lldb }} gcc g++ python3-dev
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          lldb-${{ matrix.lldb }} --version
+      - uses: astral-sh/setup-uv@v5
+      - name: Run the smoke scenarios
+        env:
+          SEAM_LLDB: lldb-${{ matrix.lldb }}
+          SEAM_TEST_PYTHON: /usr/bin/python3.12
+        run: scripts/test.sh -q -m smoke
+
+  editors:
+    if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
+    name: editors (VS Code extension host, Neovim headless)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SEAM_DEMO_DIR: ${{ github.workspace }}/examples/pyo3-demo
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLDB, build tools and a display server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lldb gcc python3-dev python3-venv xvfb
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+      - name: Install Seam and build the demo project
+        run: |
+          python3 -m venv "$HOME/.venvs/seam"
+          "$HOME/.venvs/seam/bin/pip" install .
+          echo "SEAM_BIN=$HOME/.venvs/seam/bin/seam" >> "$GITHUB_ENV"
+          (cd examples/pyo3-demo && cargo build && cp target/debug/libseam_demo.so seam_demo.so)
+      - name: Package the extension
+        run: scripts/build-vsix.sh
+      - name: "VS Code: install the .vsix and debug the demo in the extension host"
+        env:
+          SEAM_LOG: ${{ runner.temp }}/seam-vscode.log
+        run: |
+          cd vscode/test
+          npm install --no-save --no-audit --no-fund @vscode/test-electron
+          SEAM_VSIX="$(ls "$GITHUB_WORKSPACE"/vscode/*.vsix)" xvfb-run -a node run.js
+      - name: "Neovim: the documented nvim-dap configuration debugs the demo"
+        env:
+          SEAM_LOG: ${{ runner.temp }}/seam-nvim.log
+        run: |
+          curl -fsSL https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz | tar xz -C "$HOME"
+          git clone --quiet --depth 1 https://github.com/mfussenegger/nvim-dap "$HOME/nvim-dap"
+          "$HOME/nvim-linux-x86_64/bin/nvim" --version | head -1
+          "$HOME/nvim-linux-x86_64/bin/nvim" --headless -u NONE --cmd "set rtp+=$HOME/nvim-dap" -l tests/editors/nvim_check.lua
+      - name: Keep the adapter logs if something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-check-logs
+          path: ${{ runner.temp }}/seam-*.log*
+          if-no-files-found: ignore
+
   clean-machine:
     if: ${{ github.event.inputs.soak == '' || github.event.inputs.soak == null }}
     name: clean machine (README install, PyO3 demo)
@@ -101,10 +174,12 @@ jobs:
           if-no-files-found: error
 
   soak:
-    name: soak (${{ github.event.inputs.soak }})
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.soak != '' }}
+    name: soak (${{ github.event.inputs.soak || 'weekly: stepping, bindings, attach' }})
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.soak != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      SOAK_PYTHON: ${{ github.event.inputs.soak_python || '3.14' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install LLDB and build tools
@@ -115,9 +190,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Install the interpreter under test
         run: |
-          uv python install ${{ github.event.inputs.soak_python }}
-          echo "SEAM_TEST_PYTHON=$(uv python find --python-preference only-managed ${{ github.event.inputs.soak_python }})" >> "$GITHUB_ENV"
+          uv python install "$SOAK_PYTHON"
+          echo "SEAM_TEST_PYTHON=$(uv python find --python-preference only-managed "$SOAK_PYTHON")" >> "$GITHUB_ENV"
       - name: Loop the selected scenarios
         env:
-          SEAM_TEST_REPEAT: ${{ github.event.inputs.repeat }}
-        run: scripts/test.sh -q -k "${{ github.event.inputs.soak }}"
+          # The weekly run loops the stepping, binding-layer and attach scenarios.
+          SEAM_TEST_REPEAT: ${{ github.event_name == 'schedule' && '8' || github.event.inputs.repeat }}
+          SOAK_SELECT: ${{ github.event.inputs.soak || 'test_stepping or test_bindings or test_attach' }}
+        run: scripts/test.sh -q -k "$SOAK_SELECT"
