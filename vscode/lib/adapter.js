@@ -100,6 +100,10 @@ class AdapterProcess {
     this.disposed = false;      // VS Code has ended the session
     this.finished = false;      // the adapter itself said the session is over
     this.child = cp.spawn(command[0], command.slice(1), { env, stdio: ["pipe", "pipe", "pipe"] });
+    this.child.on("error", (error) => this._ended(`cannot start ${command[0]}: ${error.message}`));
+    if (!this.child.stdout) {
+      return;   // it could not be started at all; "error" says why
+    }
     this.child.stdout.on("data", (chunk) => this._read(chunk));
     this.child.stderr.on("data", (chunk) => {
       this.stderr = (this.stderr + chunk).slice(-STDERR_KEPT);
@@ -109,7 +113,6 @@ class AdapterProcess {
     });
     // Writing to an adapter that has just gone; its end is reported by "close".
     this.child.stdin.on("error", () => {});
-    this.child.on("error", (error) => this._ended(`cannot start ${command[0]}: ${error.message}`));
     // "close", not "exit": everything the adapter wrote has been read by then.
     this.child.on("close", (code, signal) => {
       const how = signal ? `signal ${signal}` : `status ${code}`;
@@ -201,14 +204,16 @@ class AdapterProcess {
     if (message.type === "request") {
       this.pending.set(message.seq, message.command);
     }
-    const data = Buffer.from(JSON.stringify(message), "utf8");
-    this.child.stdin.write(`Content-Length: ${data.length}\r\n\r\n`);
-    this.child.stdin.write(data);
+    if (this.child.stdin) {
+      const data = Buffer.from(JSON.stringify(message), "utf8");
+      this.child.stdin.write(`Content-Length: ${data.length}\r\n\r\n`);
+      this.child.stdin.write(data);
+    }
   }
 
   dispose() {
     this.disposed = true;
-    if (this.over) {
+    if (this.over || !this.child.stdin) {
       return;
     }
     // Closing its input is how a client tells `seam dap` that it has left: the adapter

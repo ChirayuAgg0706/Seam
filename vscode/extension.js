@@ -2,6 +2,7 @@
 // with it and lets VS Code talk the Debug Adapter Protocol to it. All debugging logic
 // lives in the adapter. What is decided here is what only the editor knows: which
 // interpreter the project uses, and which process the user wants to attach to.
+const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
 
@@ -30,6 +31,14 @@ function tell(message) {
   vscode.window.showErrorMessage(message);
 }
 
+function isFile(file) {
+  try {
+    return fs.statSync(file).isFile();
+  } catch (err) {
+    return false;
+  }
+}
+
 function within(milliseconds, promise) {
   let timer;
   const late = new Promise((resolve, reject) => {
@@ -55,7 +64,13 @@ async function selectedInterpreter(folder) {
     await api.ready;
     if (api.environments) {
       const active = api.environments.getActiveEnvironmentPath(resource);
-      const environment = await api.environments.resolveEnvironment(active);
+      // The path names the interpreter itself, except for an environment that has none
+      // (a bare conda environment), which is named by its folder; and when nothing was
+      // ever selected or found it is the bare word "python".
+      if (active && path.isAbsolute(active.path) && isFile(active.path)) {
+        return active.path;
+      }
+      const environment = active && await api.environments.resolveEnvironment(active);
       const uri = environment && environment.executable && environment.executable.uri;
       if (uri) {
         return uri.fsPath;

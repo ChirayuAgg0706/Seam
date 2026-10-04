@@ -34,8 +34,10 @@ jobs:
             chown -R '"$(id -u):$(id -g)"' /io/dist
           '
           ls -l dist
-      - name: Build the .vsix
-        run: scripts/build-vsix.sh && cp vscode/*.vsix dist/
+      - name: Build the .vsix around the wheel's adapter and helper
+        # The extension carries the seam package. Taking it from the manylinux wheel gives
+        # the released extension a helper that loads on old distributions too.
+        run: scripts/build-vsix.sh dist/*.whl && cp vscode/*.vsix dist/
       - name: The wheel works on a machine with no compiler involved
         run: |
           sudo apt-get update
@@ -45,6 +47,12 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install --quiet --no-index --find-links dist seam-debugger
           "$RUNNER_TEMP/venv/bin/seam" --version
           "$RUNNER_TEMP/venv/bin/seam" doctor --python python3
+      - name: The adapter inside the .vsix works
+        run: |
+          python3 -m zipfile -e dist/*.vsix "$RUNNER_TEMP/vsix"
+          python3 -m zipfile -e dist/*.whl "$RUNNER_TEMP/wheel"
+          cmp "$RUNNER_TEMP/vsix/extension/bundled/seam/_target/_seam_trap.abi3.so"               "$RUNNER_TEMP/wheel/seam/_target/_seam_trap.abi3.so"
+          node vscode/test/unit.js --adapter
       - uses: actions/upload-artifact@v4
         with:
           name: seam-release-artifacts

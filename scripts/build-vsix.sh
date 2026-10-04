@@ -88,8 +88,7 @@ vsix="$(ls -1 ./*.vsix)"
 contents="$(python3 -m zipfile -l "$vsix")"
 for wanted in extension/bundled/__main__.py extension/bundled/seam/cli.py "extension/bundled/$HELPER" \
               extension/lib/adapter.js; do
-  grep -q " *$wanted " <<<"$contents" || grep -q "^$wanted " <<<"$contents" ||
-    fail "$vsix does not contain $wanted"
+  grep -q "^$wanted " <<<"$contents" || fail "$vsix does not contain $wanted"
 done
 if grep -q 'extension/test/\|__pycache__' <<<"$contents"; then
   fail "$vsix contains files that should not ship"
