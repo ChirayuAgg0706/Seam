@@ -152,7 +152,7 @@ def test_stop_on_cpp_throw(dap, build_layer):
     dap.launch(THROWS, dap.python, args=[ext.module], env=ext.env, exceptions=["cpp_throw"])
     stop = dap.wait_stopped()
     assert stop["reason"] == "exception"
-    assert stop["description"] == "C++ exception thrown: std::runtime_error", dap.tail_log()
+    assert stop["description"] == "C++ exception thrown: boom", dap.tail_log()
     tid = stop["threadId"]
     stack = dap.stack(tid)
     position = names(stack).index("call_native")

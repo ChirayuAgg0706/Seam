@@ -306,10 +306,9 @@ class SourcesMixin:
 
     def _on_modules_loaded(self, ev):
         """A library was loaded: a breakpoint still without code may have its reason now."""
-        if not any(self.native_bps.values()):
-            return
         modules = [lldb.SBTarget.GetModuleAtIndexFromEvent(i, ev)
                    for i in range(lldb.SBTarget.GetNumModulesFromEvent(ev))]
+        self._notice_no_debug_info(modules)
         for path, group in self.native_bps.items():
             reason = self._unbound_reason(path, modules)
             for bp in group if reason else ():
@@ -317,6 +316,36 @@ class SourcesMixin:
                     self.event("breakpoint", {"reason": "changed", "breakpoint": {
                         "id": bp.GetID(), "verified": False, "message": reason,
                         "line": self.native_bp_lines.get(bp.GetID(), 0)}})
+
+    def _notice_no_debug_info(self, modules):
+        """Explain why stepping cannot enter a user library built without DWARF."""
+        changed = False
+        for module in modules:
+            path = module.GetFileSpec().fullpath or ""
+            name = os.path.basename(path)
+            if (not module.IsValid() or not path.startswith("/")
+                    or path.startswith(SYSTEM_LIB_PREFIXES)
+                    or path in (self.interp_module, self.helper_module)
+                    or ".so" not in name or name.startswith("_seam_trap.")
+                    or any(part in path.split("/") for part in
+                           ("site-packages", "dist-packages", "lib-dynload"))
+                    or name in self.no_debug_info):
+                continue
+            # Counting compile units parses DWARF on first use. Do not make a normal
+            # extension import pay for that: an embedded debug-info section suffices.
+            # Without one, LLDB still gets a chance to find a separate debug file.
+            if (module.FindSection(".debug_info").IsValid()
+                    or module.FindSection(".zdebug_info").IsValid()
+                    or module.GetNumCompileUnits()):
+                continue
+            self.no_debug_info.append(name)
+            changed = True
+            self.event("output", {"category": "console", "output":
+                       "Seam: %s has no debug info: its functions cannot be stepped into "
+                       "and breakpoints in its source will not bind; build it with -g.\n"
+                       % name})
+        if changed:
+            self._refresh_native_bp_status()
 
     def req_source(self, args):
         """The editor asks for the text of a source it was given no path for.

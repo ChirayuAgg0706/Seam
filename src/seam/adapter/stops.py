@@ -442,7 +442,8 @@ class StopsMixin:
         """A stop at a C++ `throw` or a Rust panic (exception breakpoint filters)."""
         if kind == "cpp_throw":
             name = self._thrown_type(thread)
-            what = "C++ exception thrown" + (": " + name if name else "")
+            message = self._thrown_message(thread)
+            what = "C++ exception thrown" + (": " + message if message else "")
             name = name or "C++ exception"
         else:
             name, what = "Rust panic", "Rust panic"
@@ -451,6 +452,53 @@ class StopsMixin:
         self.exception_info[thread.GetThreadID()] = {
             "exceptionId": name, "description": what, "breakMode": "always"}
         self._report_native_stop(thread, body)
+
+    def _thrown_message(self, thread):
+        """Read what() only for a known single-inheritance std::exception object.
+
+        The object and RTTI registers are intact at __cxa_throw's first instruction.
+        Itanium RTTI describes each single base at +16; other RTTI kinds are not walked.
+        This evaluates a native method, never Python (decisions §32).
+        """
+        frame = thread.GetFrameAtIndex(0)
+        pointer = frame.FindRegister("rdi").GetValueAsUnsigned()
+        info = frame.FindRegister("rsi").GetValueAsUnsigned()
+        seen = set()
+        try:
+            while info and info not in seen and len(seen) < 32:
+                seen.add(info)
+                vtable, name_pointer = struct.unpack("<QQ", self._read(info, 16))
+                name = self.process.ReadCStringFromMemory(name_pointer, 256, lldb.SBError())
+                if (name or "").lstrip("*") == "St9exception":
+                    value, problem = self._evaluate(
+                        frame, "((const std::exception*)%d)->what()" % pointer, 2)
+                    if problem is not None and any(text in problem for text in (
+                            "no type named", "unknown type name", "undeclared identifier 'std'",
+                            "incomplete type", "no member named 'what'")):
+                        # A stripped libstdc++ often has no std::exception declaration
+                        # available to Clang. Its Itanium vtable has two destructor
+                        # entries followed by what(); single inheritance needs no
+                        # adjustment of `this`.
+                        methods = struct.unpack("<Q", self._read(pointer, 8))[0]
+                        what = struct.unpack("<Q", self._read(methods + 16, 8))[0]
+                        value, problem = self._evaluate(
+                            frame, "((const char*(*)(const void*))%d)((const void*)%d)"
+                            % (what, pointer), 2)
+                    if problem is None:
+                        address = value.GetValueAsUnsigned()
+                        error = lldb.SBError()
+                        message = self.process.ReadCStringFromMemory(address, 4096, error)
+                        if error.Success():
+                            return message
+                    self.log("could not read C++ exception message:", problem)
+                    return None
+                symbol = self.target.ResolveLoadAddress(vtable).GetSymbol().GetName() or ""
+                if "__si_class_type_info" not in symbol:
+                    break
+                info = struct.unpack("<Q", self._read(info + 16, 8))[0]
+        except (ValueError, struct.error):
+            pass
+        return None
 
     def _report_native_stop(self, thread, body):
         frame = thread.GetFrameAtIndex(0)

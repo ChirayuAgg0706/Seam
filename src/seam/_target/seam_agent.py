@@ -179,8 +179,9 @@ def _on_start(code, offset):
             if _spec_verdict(spec, frame) == "stop":
                 if _step is not None:
                     _finish_step()
-                return (None, code, code.co_firstlineno, R_BREAKPOINT)
-    return None
+                return (None, code, code.co_firstlineno,
+                        R_BREAKPOINT | (LOG_FLAG if _log_pending else 0))
+    return (None, code, code.co_firstlineno, LOG_FLAG) if _log_pending else None
 
 
 class _Spec:
@@ -250,8 +251,8 @@ def _spec_verdict(spec, frame):
                 if not spec.complained:
                     spec.complained = True
                     _log_pending.append(
-                        "Seam: the condition of this breakpoint could not be evaluated, so "
-                        "it stops at every hit: %s  (%s: %s)"
+                        "Seam: the condition of this breakpoint could not be evaluated; "
+                        "treating it as true: %s  (%s: %s)"
                         % (spec.condition, type(exc).__name__, exc))
         spec.hits += 1
         if spec.hit and not _HIT_TESTS[spec.hit[0]](spec.hits, spec.hit[1]):
@@ -542,7 +543,7 @@ def _on_line(code, line):
                 _finish_step()
             # With LOG_FLAG if the verdict left something to say (a condition that failed).
             return (None, code, line, R_BREAKPOINT | (LOG_FLAG if _log_pending else 0))
-        if verdict == "log":
+        if _log_pending:
             log = LOG_FLAG  # deliver the message; a step in progress carries on
     st = _current()
     if st is None:
@@ -745,7 +746,7 @@ def _describe(name, value, expr=None):
     out = {
         "name": str(name),
         "value": _safe_repr(value),
-        "type": type(value).__qualname__,
+        "type": type(value).__name__,
         "ref": _new_ref(value, expr) if _has_children(value) else 0,
     }
     if expr:

@@ -1,4 +1,7 @@
-"""With no breakpoints set, a program under Seam must run within 10% of its normal speed."""
+"""With no breakpoints set, steady work must run within 10% of its normal speed.
+
+Interpreter startup and initial extension loading are excluded from the work timer.
+"""
 import os
 import re
 import subprocess

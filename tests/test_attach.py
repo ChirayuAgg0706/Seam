@@ -34,6 +34,8 @@ def test_attach_break_inspect_detach(dap, python, pyinfo, iteration):
         assert stop["reason"] == "breakpoint"
         tid = stop["threadId"]
         stack = dap.stack(tid)
+        assert dap.evaluate("'seam_agent' in __import__('__main__').__dict__",
+                            stack[0]["id"])["result"] == "False"
         assert [(f["name"], f["line"]) for f in stack[:1]] == [("tick", line)]
         assert [f["name"] for f in stack] == ["tick", "main", "<module>"]
         n = int(dap.scope(stack[0]["id"])["n"]["value"])

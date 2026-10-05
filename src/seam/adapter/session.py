@@ -550,6 +550,7 @@ class SessionMixin:
         self.stop_is_trap = True
         self.event("output", {"category": "console", "output":
                    "Seam: attached to pid %d (helper loaded via %s).\n" % (pid, method)})
+        self._notice_no_debug_info(self.target.module_iter())
         return None, lambda: self.event("initialized")
 
     def _wait_attached(self, pid, timeout=30):

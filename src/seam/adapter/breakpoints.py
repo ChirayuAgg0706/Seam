@@ -1,4 +1,5 @@
 """Breakpoints of every kind: source lines, functions, data, exceptions."""
+import os
 import struct
 
 import lldb
@@ -97,6 +98,8 @@ class BreakpointsMixin:
         with self._paused():
             for bp in self.native_bps.pop(path, []):
                 self.native_bp_specs.pop(bp.GetID(), None)
+                self.conditions_checked.pop(bp.GetID(), None)
+                self.condition_errors.pop(bp.GetID(), None)
                 self.native_bp_group.pop(bp.GetID(), None)
                 self.target.BreakpointDelete(bp.GetID())
             created = []
@@ -179,9 +182,10 @@ class BreakpointsMixin:
         evaluated once more to find out; one that works is not evaluated again.
         """
         condition = bp.GetCondition()
-        if not condition or self.conditions_checked.get(bp.GetID()) == condition:
+        first = self.native_bp_group.get(bp.GetID(), [bp])[0]
+        if not condition or self.conditions_checked.get(first.GetID()) == condition:
             return
-        self.conditions_checked[bp.GetID()] = condition
+        self.conditions_checked[first.GetID()] = condition
         frame = thread.GetFrameAtIndex(0)
         error = frame.EvaluateExpression(condition, self._expr_options(5)).GetError()
         if error.Success():
@@ -191,14 +195,14 @@ class BreakpointsMixin:
         where = "%s:%d" % (os.path.basename(entry.GetFileSpec().fullpath or "")
                            or frame.GetFunctionName(), entry.GetLine())
         self.event("output", {"category": "console", "output":
-                   "Seam: the condition of the breakpoint at %s could not be evaluated, so "
-                   "it stops at every hit:  %s\n  %s\n" % (where, condition, reason)})
-        first = self.native_bp_group.get(bp.GetID(), [bp])[0]
+                   "Seam: the condition of the breakpoint at %s could not be evaluated; "
+                   "treating it as true:  %s\n  %s\n" % (where, condition, reason)})
+        self.condition_errors[first.GetID()] = "the condition could not be evaluated: " + reason
         if first.GetID() in self.native_bp_lines:   # a source-line breakpoint the client knows
-            self.event("breakpoint", {"reason": "changed", "breakpoint": {
-                "id": first.GetID(), "verified": True,
-                "line": self.native_bp_lines[first.GetID()],
-                "message": "the condition could not be evaluated: " + reason}})
+            answer = self._native_bp_answer(first)
+            self.native_bp_state[first.GetID()] = (
+                answer["verified"], answer["line"], answer.get("message"))
+            self.event("breakpoint", {"reason": "changed", "breakpoint": answer})
 
     def _native_bp_answer(self, bp):
         """DAP description of a native breakpoint: where it really is, if anywhere."""
@@ -222,6 +226,8 @@ class BreakpointsMixin:
                                  "line with no code of its own")
         elif best.GetLineEntry().IsValid() and best.GetLineEntry().GetLine():
             answer["line"] = best.GetLineEntry().GetLine()
+        if best is not None and group[0].GetID() in self.condition_errors:
+            answer["message"] = self.condition_errors[group[0].GetID()]
         return answer
 
     def _refresh_native_bp_status(self):
@@ -250,6 +256,8 @@ class BreakpointsMixin:
         with self._paused():
             for bp in self.function_bps:
                 self.native_bp_specs.pop(bp.GetID(), None)
+                self.conditions_checked.pop(bp.GetID(), None)
+                self.condition_errors.pop(bp.GetID(), None)
                 self.target.BreakpointDelete(bp.GetID())
             self.function_bps = []
             for b in args.get("breakpoints") or []:
@@ -287,17 +295,22 @@ class BreakpointsMixin:
         name = args["name"]
         record = self.refs.get(args.get("variablesReference"))
         value = None
+        owner = None
         if record is not None:
             if record[0] in ("py", "pyref"):
                 return {"dataId": None, "description":
                         "Data breakpoints work on native variables; %s is a Python "
                         "variable." % name}
             value = self._native_variable(record, name)
+            if record[0] == "native":
+                owner = self._native_frame(record[1])
         elif args.get("frameId") is not None:
             frame = self._frame_record(args["frameId"])
             if frame["kind"] == "native":
-                value = self._native_frame(frame).EvaluateExpression(
-                    name, self._expr_options(5))
+                owner = self._native_frame(frame)
+                value = owner.FindVariable(name)
+                if not value.IsValid():
+                    value = owner.EvaluateExpression(name, self._expr_options(5))
                 if not value.GetError().Success():
                     value = None
         address = value.GetLoadAddress() if value is not None else lldb.LLDB_INVALID_ADDRESS
@@ -306,7 +319,14 @@ class BreakpointsMixin:
             return {"dataId": None, "description":
                     "%s cannot be watched: it has no address in memory, or is not 1, 2, 4 "
                     "or 8 bytes long." % name}
-        return {"dataId": "%x/%d/%s" % (address, size, name), "description": name,
+        lifetime = ""
+        if value is not None and value.GetFrame().IsValid():
+            owner = value.GetFrame()
+        if (owner is not None and value.GetValueType() in
+                (lldb.eValueTypeVariableLocal, lldb.eValueTypeVariableArgument)):
+            start = owner.GetFunction().GetStartAddress().GetLoadAddress(self.target)
+            lifetime = "/%x/%x/%x" % (owner.GetThread().GetThreadID(), owner.GetCFA(), start)
+        return {"dataId": "%x/%d/%s%s" % (address, size, name, lifetime), "description": name,
                 "accessTypes": ["write", "readWrite", "read"], "canPersist": False}
 
     def req_setDataBreakpoints(self, args):
@@ -319,8 +339,12 @@ class BreakpointsMixin:
             self.watchpoints = {}
             for b in args.get("breakpoints") or []:
                 try:
-                    address, size, name = str(b.get("dataId")).split("/", 2)
+                    parts = str(b.get("dataId")).split("/")
+                    if len(parts) not in (3, 6):
+                        raise ValueError("invalid data breakpoint id")
+                    address, size, name = parts[:3]
                     address, size = int(address, 16), int(size)
+                    lifetime = tuple(int(p, 16) for p in parts[3:]) or None
                     hit = parse_hit_condition(b.get("hitCondition"))
                 except (ValueError, DapError) as exc:
                     answers.append({"verified": False, "message": str(exc)})
@@ -337,17 +361,32 @@ class BreakpointsMixin:
                 if b.get("condition"):
                     watch.SetCondition(b["condition"])
                 self.watchpoints[watch.GetID()] = {
-                    "name": name, "address": address, "size": size, "hit": hit, "hits": 0}
+                    "name": name, "address": address, "size": size, "hit": hit, "hits": 0,
+                    "lifetime": lifetime}
                 answers.append({"verified": True})
         return {"breakpoints": answers}
 
     def _watchpoint_stop(self, thread, body):
         """A watched variable was touched. Returns False if the hit does not count."""
-        watch = self.watchpoints.get(thread.GetStopReasonDataAtIndex(0))
+        watch_id = thread.GetStopReasonDataAtIndex(0)
+        watch = self.watchpoints.get(watch_id)
         if watch is None:
             body.update({"reason": "data breakpoint",
                          "description": thread.GetStopDescription(120)})
             return True
+        if watch["lifetime"] is not None:
+            tid, cfa, start = watch["lifetime"]
+            owner = self.process.GetThreadByID(tid)
+            if not owner.IsValid() or not any(
+                    f.GetCFA() == cfa
+                    and f.GetFunction().GetStartAddress().GetLoadAddress(self.target) == start
+                    for f in owner):
+                self.target.DeleteWatchpoint(watch_id)
+                del self.watchpoints[watch_id]
+                self.event("output", {"category": "console", "output":
+                           "Seam: removed the data breakpoint on %s: its function has "
+                           "returned.\n" % watch["name"]})
+                return False
         watch["hits"] += 1
         if watch["hit"] and not hit_condition_met(watch["hit"], watch["hits"]):
             return False

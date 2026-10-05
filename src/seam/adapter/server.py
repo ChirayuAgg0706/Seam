@@ -79,7 +79,7 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.native_bps = {}          # path -> [SBBreakpoint]
         self.function_bps = []
         self.py_function_bps = []     # [{name, condition, hit}] for the agent
-        self.watchpoints = {}         # watchpoint id -> {name, address, size, hit, hits}
+        self.watchpoints = {}         # watchpoint id -> address, hit count and local lifetime
         self.pending_sync = False
         self.pause_requested = False
         self.output_thread = None
@@ -94,7 +94,7 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.last_native_stop = {}    # tid -> (line key, pc) of the last reported stop
         self.native_bp_specs = {}     # breakpoint id -> {"hit", "log", "hits"} if it has any
         self.native_bp_lines = {}     # breakpoint id -> line the user asked for
-        self.native_bp_state = {}     # breakpoint id -> (verified, line) last reported
+        self.native_bp_state = {}     # breakpoint id -> (verified, line, message) last reported
         self.attached = False         # attached to an existing process (detach, don't kill)
         self.temp_files = []
         self.native_stepping = None   # {"tid", "hops"} while an LLDB step plan is running
@@ -116,6 +116,8 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.child_noticed = False    # the user has been told that children are not debugged
         self.vfork_children = {}      # parent thread -> pid of a vfork child not yet on its own
         self.conditions_checked = {}  # native breakpoint id -> condition already looked at
+        self.condition_errors = {}    # breakpoint group id -> persistent condition error
+        self.thread_names = {}        # Python thread names, cached only at safe stops
         self.no_debug_info = []       # user-built libraries loaded without debug info
         self.source_map = []          # [(prefix in the debug info, prefix on this machine)]
         self.aliases = {}             # real path -> the client's spelling (symbolic links)

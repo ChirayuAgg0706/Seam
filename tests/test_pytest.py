@@ -101,6 +101,12 @@ def test_breakpoint_in_a_test_function(dap, run_pytest):
     assert python_part(stack) == python_truth(dap, stack[0]["id"])
     assert len(python_part(stack)) > 20
     assert "pytest_pyfunc_call" in names(stack) and names(stack)[-1] == "_run_module_as_main"
+    libraries = [f for f in stack if "/site-packages/" in
+                 f.get("source", {}).get("path", "")]
+    assert libraries
+    assert all(f.get("presentationHint") == "subtle" and
+               f["source"].get("presentationHint") == "deemphasize" and
+               f["source"].get("origin") for f in libraries)
     local = dap.scope(stack[0]["id"])
     assert (local["a"]["value"], local["b"]["value"]) == ("2", "3") and "total" not in local
     assert dap.evaluate("a * b", stack[0]["id"])["result"] == "6"

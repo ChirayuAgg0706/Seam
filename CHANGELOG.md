@@ -57,6 +57,14 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 ### Changed
 
+- Python library frames are deemphasized with `justMyCode`; native stops retain cached
+  Python thread names, and Python variable types have the same short name at either stop.
+- Native Globals show declarations from the current file, including file-level constants.
+- `seam --help` names the requirements, editors and documentation.
+- The native-call throughput benchmark reports initial library loading separately from
+  steady work; its 10% bound is unchanged. The exception fixture uses CPython's standard
+  hook, with a separate replacement-hook scenario, to exclude Ubuntu's crash reporter.
+
 - In the debug console (`internalConsole`) the program's standard input is empty instead
   of a terminal nobody can type into.
 - The VS Code extension runs the program in the integrated terminal by default, and
@@ -70,6 +78,16 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
   opened through a symbolic link), not under the resolved path.
 
 ### Fixed
+
+- Launch and attach no longer add `sys` or `seam_agent` to the program's globals.
+- Unevaluable breakpoint conditions report their error once instead of silently stopping.
+- User libraries built without debug info explain their unbound breakpoints and skipped
+  Step Into calls, including libraries already loaded when attaching.
+- Local native data breakpoints expire when their stack slot is reused after return.
+- C++ throw stops show `std::exception::what()` where RTTI identifies the base, keeping
+  the type in the exception identifier.
+- Failed expressions in a native frame explain how to reach a Python frame; unavailable
+  native locals show a reason instead of an empty value.
 
 - A program left running, with nobody attached, when LLDB died.
 - An internal error instead of an error message for a request with a missing argument.

@@ -184,7 +184,12 @@ def _relay(proc, ours, notes_read, log_path, lldb_output):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="seam", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        prog="seam", description="A mixed Python and native debugger for Linux x86-64.",
+        epilog=("Requires CPython 3.12+ and LLDB 18+ with Python scripting support. "
+                "Use the Seam extension in VS Code (a WSL window on Windows), or configure "
+                "Neovim's nvim-dap with `seam dap`. "
+                "Docs: https://github.com/ChirayuAgg0706/Seam#readme"))
     parser.add_argument("--version", action="version", version="seam " + __version__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("dap", help="run the debug adapter on stdin/stdout")

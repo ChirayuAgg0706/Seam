@@ -141,6 +141,7 @@ class PyReader:
             if tname == "dict":
                 used = struct.unpack("<q", self.read(obj + L.dict_used, 8))[0]
                 return "<dict, %d items>" % used, tname
+            tname = tname.rsplit(".", 1)[-1]
             return "<%s object at %#x>" % (tname, obj), tname
         except (ValueError, struct.error, UnicodeError):
             return "<unreadable object at %#x>" % obj, "?"

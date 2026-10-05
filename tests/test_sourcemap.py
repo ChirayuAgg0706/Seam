@@ -442,7 +442,7 @@ def test_cpp_throw_in_a_mapped_file(dap, built):
                exceptions=["cpp_throw"])
     stop = dap.wait_stopped()
     assert stop["reason"] == "exception"
-    assert stop["description"] == "C++ exception thrown: std::runtime_error"
+    assert stop["description"] == "C++ exception thrown: thrown on purpose"
     stack = dap.stack(stop["threadId"])
     thrower = [f for f in stack if path_of(f) == THROWING]
     assert thrower, stack

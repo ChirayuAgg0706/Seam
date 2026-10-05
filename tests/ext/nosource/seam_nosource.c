@@ -16,7 +16,7 @@ nosource_leaf(long value)
 __attribute__((noinline)) long
 nosource_work(long value)
 {
-    long tripled = nosource_leaf(value);
+    long tripled = nosource_leaf(value); /* work-loop */
     return tripled + nosource_leaf(tripled);
 }
 

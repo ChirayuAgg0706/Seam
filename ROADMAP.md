@@ -42,6 +42,7 @@ reasons.
 | 26 | **The race fix confirmed on LLDB 18 and 19 under load** | §18 |
 | 27 | Completion in the debug console | `tests/test_completions.py` |
 | 28 | The newer features on an attached process; a refused attach takes its request back | `tests/test_attach_features.py`, `tests/test_attach_blocked.py`; §8 |
+| 29 | Developer-trial fixes: clean program globals, actionable condition and debug-info errors, local watchpoint lifetimes, C++ exception messages, thread names and clearer stack/variable inspection | `tests/test_inspection.py`, attach, no-source, exception and source-map scenarios; §32 |
 
 ## Open
 
@@ -61,6 +62,10 @@ user is most likely to meet.
   the await (§24).
 - Python objects read as `<Order object at 0x…>` at native stops; reading their
   attributes from memory would make native and Python stops agree.
+- Extension-type objects (pybind11 instances, numpy arrays) have no expandable fields
+  unless Python can safely expose them; a terminal front end is also still open.
+- Logpoint and conditional-breakpoint overhead: the trial measured about 8 ms per Python
+  logpoint hit and 1.8 ms per never-true native condition. Those costs have not been reduced.
 - Python and native frames in the call stack differ only by their file. A marker where
   the stack crosses the boundary would make it plainer.
 - `_asyncio`'s C frames show in coroutine stacks on Ubuntu's own Python.

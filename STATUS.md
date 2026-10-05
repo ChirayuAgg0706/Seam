@@ -7,10 +7,16 @@ Every "done" below refers to scenario tests that launch real programs under Seam
 scripted DAP client (`tests/`), or through a real editor where it says so. Nothing is
 marked done on the strength of reading code. What remains is in [ROADMAP.md](ROADMAP.md).
 
-The suite has 275 scenarios; 13 of them are opt-in (timings with a 15,000-function module,
-and sessions against four real projects built from source). On the current code the other
-262 pass locally on `/usr/bin/python3.12` and on uv's 3.14 under LLDB 20, and the CI
-section says what runs under LLDB 18 and 19.
+The suite has 292 scenarios; 13 are opt-in (timings with a 15,000-function module,
+and sessions against four real projects built from source), and one specifically tests
+optimised-away locals at -O2. The CI section records validation under each LLDB version.
+
+The developer-trial fixes were checked locally on 2026-10-05 under LLDB 20: 278 pass
+on system Python 3.12 and uv's 3.14, with the 13 opt-in skips and the -O2-only local
+inspection check skipped. The -O2 smoke selection passes on both: 229 pass and three
+expected skips (two callback lines with no code and one local with no address to change).
+CPU/native throughput ratios are 0.942/0.988 on 3.12 and 1.006/1.000 on 3.14; thread-heavy
+ratios are 1.98 and 2.23. The throughput timer excludes initial library loading (§32).
 
 ## The v1 checklist
 
@@ -47,6 +53,7 @@ section says what runs under LLDB 18 and 19.
 | Data breakpoints on native variables | **done** | `test_breakpoints.py` (hardware watchpoints; pass under WSL2 and on GitHub's runners) |
 | Set variable (Python locals, globals, members; native), paged lists, expressions for nested values | **done** | `test_variables.py` |
 | Completion in the debug console | **done** | `test_completions.py` |
+| Developer-trial diagnostics and inspection fixes | **done** | `test_inspection.py`: clean launch globals, broken source/function conditions reported once (including hits filtered by a count), native string conditions, local watchpoint expiry through both DAP request forms, Python thread names cached for native stops, consistent type names, file-level constants without header statics, library frame hints, Python-expression guidance, unavailable locals at -O2, help text, derived and non-standard C++ throws. `test_attach.py` checks clean globals through pending-call and PEP 768 attach; `test_nosource.py` checks missing debug-info messages on load and attach; exception/source-map tests check `what()`, and `test_pytest.py` checks installed library frame hints. |
 | Stepping in coroutines, tasks, async generators and plain generators | **done** | `test_async.py` (23 scenarios) on 3.12.3, 3.12.15, 3.13, 3.14 and once on 3.15.0rc3; looped 15 times on 3.12 and 3.14 |
 | Stepping keeps to the user's code (`justMyCode`) | **done** | `test_justmycode.py` (17 scenarios): heapq, contextlib, unittest, pytest, numpy callbacks |
 | Debugging a pytest run, including pytest-xdist | **done** | `test_pytest.py` |
@@ -81,7 +88,7 @@ The extended set (about 30 more minutes), run once a week, when started by hand,
 a push whose commit message contains `[ci full]`:
 
 - `smoke` × 5: 3.12 -O2, 3.13 -O0, 3.14 -O0 and -O2, 3.15 -O0, on uv's standalone
-  interpreters, with LLDB 18. The smoke selection is 215 of the scenarios.
+  interpreters, with LLDB 18. The smoke selection is 232 of the scenarios.
 - `lldb` × 2: the smoke scenarios under LLDB 19 and LLDB 20.
 - `editors`: VS Code and Neovim, see item 11.
 - `clean machine`: see item 14.
@@ -91,7 +98,7 @@ A run started by hand can be narrowed to one job (`-f only=editors`), and the so
 can pick the LLDB version, repeat a selection and keep cores busy; see `CONTRIBUTING.md`.
 A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`).
 
-Where the current code has run on CI:
+Recent CI runs:
 
 - The whole extended set passed on the final code (commit `370d31f`, started by hand on
   2026-10-05): the full suite and the five smoke cells under LLDB 18, the smoke scenarios

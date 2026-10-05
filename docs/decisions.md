@@ -325,7 +325,8 @@ stop.
 
 **C++ throw and Rust panic** are LLDB breakpoints (`__cxa_throw` through LLDB's exception
 breakpoint, and the `rust_panic` symbol, which the Rust runtime keeps for debuggers). The
-C++ exception type is read from the `type_info` argument's symbol name.
+C++ exception type is read from the `type_info` argument's symbol name. Its message is
+read through `std::exception::what()` when RTTI proves that base exists (see §32).
 
 ## 15. Running the program in the client's terminal
 
@@ -993,6 +994,61 @@ Cython gives the frame it adds to a traceback the .pyx path as it was at build t
 relative and nowhere to be found at run time. Such a name is not the user's code
 (otherwise "Raised Python exceptions" never stops for an exception from a Cython library)
 and the frame is shown without a source.
+
+## 32. Inspection and diagnostics after the developer trial
+
+The bootstrap executes in a fresh namespace. `PyRun_SimpleStringFlags` and the attach
+mechanisms otherwise put helper imports in the user's `__main__`, making a missing
+`import sys` work only under the debugger.
+
+A condition which fails to evaluate still stops, as LLDB does, but now explains the
+failure once. Python's explanation travels with the trap, including function
+breakpoints and hit-count conditions. Native conditions are checked at their first
+reported hit. Libraries without debug-info sections or external compile units are reported
+once when loaded or when attaching, excluding the interpreter, helper, system libraries
+and installed wheels. Embedded debug-info sections are checked before asking LLDB to
+parse compile units, so a normal import does not need full DWARF parsing for this warning.
+
+A local watchpoint carries the owning thread, frame CFA and function address. A hit
+after that frame has disappeared deletes it and continues: a reused stack slot is not
+the original variable. The function address distinguishes another function reusing the
+same CFA. This cannot distinguish a later invocation of the very same function at the
+same CFA if no watched access happens between them. Globals have no frame lifetime.
+
+At `__cxa_throw`, the object is fully constructed and its RTTI and object arguments are
+still in `rsi` and `rdi`. The adapter walks only Itanium single-inheritance RTTI, stopping
+at other RTTI kinds, to prove that the object derives from `std::exception`. Only then
+does it evaluate `what()` with a two-second timeout. When LLDB cannot find the C++ type
+declaration (stripped libstdc++), it calls the third entry in the Itanium virtual table:
+the two destructor entries precede `what()`. This runs a native virtual method:
+the standard implementations are safe to call here; a user's override may have side
+effects, just like a native expression typed in the console. Python is never run. The
+type stays in `exceptionId` and the message appears in the description. Unreadable or
+unsupported RTTI and a failed evaluation fall back to the type alone.
+
+Thread names are read through the agent only at safe stops and cached for native stops.
+The cache cannot know a new or renamed Python thread until another safe thread request.
+With `justMyCode`, Python library frames stay in the merged stack but are marked subtle
+and their sources deemphasized. Native globals are filtered by declaration file, with
+lexical-scope filtering disabled so file-level constants remain visible. Variables whose
+debug info cannot describe their value say `<optimized out>` or show the LLDB error.
+Python variable types use the short class name on both sides of the boundary.
+
+The uncaught-exception target restores CPython's standard `sys.excepthook`; its `hooked`
+mode still tests a replacement. Ubuntu's apport hook loads many native libraries on the
+way out, costing about 24 seconds under local LLDB 20 and sometimes exceeding the
+scenario's 30-second exit deadline. The same hook was slow on the pre-trial code. It
+does finish when given longer; the regression fixture should exercise reporting the
+exception rather than the distribution's crash reporter.
+
+The native overhead workload now imports its extension before the work timer and reports
+that import as `import_seconds` separately. The old timer included a fixed LLDB loader
+pause: about 0.67 seconds on this machine on both `1139fdb` and the new code. The 12-million
+native calls themselves took 1.119 seconds plain and 1.131 under the old adapter, 1.114
+and 1.131 under the new one. Including that one-time pause produced an 84% reported
+slowdown on a fast machine, despite unchanged steady throughput. The 10% assertion still
+covers all CPU work and native calls; interpreter startup and initial library loading
+are setup costs, with the latter now visible rather than folded into the work timer.
 
 ## 5. Toolchain for development
 

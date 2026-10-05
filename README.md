@@ -169,7 +169,13 @@ Conditions, hit counts and log messages work on both sides of the boundary.
 - **Data breakpoint:** stop when a native variable changes ("Break on Value Change" in
   the Variables view). Works for variables of 1, 2, 4 or 8 bytes that live in memory;
   a native frame's Globals scope lists the statics of its file. Not available for Python
-  variables.
+  variables. A watch on a local variable is removed when a later access finds that its
+  function has returned, so reusing its stack slot does not stop the program.
+
+A condition which cannot be evaluated is reported once in the debug console; the
+breakpoint then behaves as if the condition were true. Native breakpoints also show the
+error in their message. When a library built without debug info loads, the console says
+why Step Into cannot enter its functions and its source breakpoints cannot bind.
 
 A native breakpoint on a line the compiler left without code (optimised builds) is either
 reported as unverified or moved by LLDB to the next line that has code, which can be in
@@ -384,6 +390,13 @@ Known limits of what is in scope:
   leave by unwinding), so a step simply continues. Uncaught exceptions in threads are seen through
   `threading.excepthook`; a program that replaces that hook after start-up hides them
   from Seam. A thread started with the low-level `_thread` module is not covered.
+- **C++ exception messages.** `what()` is read for exceptions whose RTTI describes a
+  single-inheritance chain to `std::exception`; other throws show their type. This calls
+  a native virtual method, so a custom `what()` can have side effects.
+- **Local data breakpoints.** A later invocation of the same function reusing the same
+  stack position cannot be distinguished if no watched access happened between them.
+- **Thread names.** Python names are cached at safe stops. Native stops use the last
+  cached names; new or renamed threads need a safe stop and a thread-list request first.
 - **Very large extension modules.** The first Step Into of a session looks up every
   function of each large module once: about 0.4 s for 15,000 functions, about 4 s for
   pydantic-core (123,000 functions and inlined instances; the debug console says so).
@@ -407,6 +420,8 @@ Known limits of what is in scope:
   input is empty: `input()` raises `EOFError`.
 - **Thread-heavy programs** run about twice as slowly under Seam even with no breakpoints,
   because LLDB handles every thread start and exit. CPU-bound work is unaffected.
+- **Initial library loading** pauses while LLDB processes the new module. The no-breakpoint
+  throughput checks exclude interpreter startup and this one-time import cost.
 - **Embedded interpreters.** Launch expects a normal `python` executable (it injects the
   helper at `Py_RunMain`). Programs that embed Python are not supported.
 - **LLDB quirks.** Seam works around LLDB showing stale or cut-short frame lists (see

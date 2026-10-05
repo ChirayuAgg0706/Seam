@@ -1,7 +1,8 @@
 """Benchmark workloads for the overhead check: python bench.py cpu|threads|native <module dir>.
 
 Prints "elapsed <seconds>", timed inside the program so interpreter start-up and the
-debugger's launch work are not counted.
+debugger's launch work are not counted. The native extension is loaded before that
+timer; its one-time load cost is reported separately as "import_seconds <seconds>".
 """
 import sys
 import threading
@@ -39,6 +40,10 @@ WORKLOADS = {"cpu": cpu, "threads": threads, "native": native}
 
 if __name__ == "__main__":
     work = WORKLOADS[sys.argv[1]]
+    if sys.argv[1] == "native":
+        start = time.perf_counter()
+        __import__("seamtest")
+        print("import_seconds %.6f" % (time.perf_counter() - start))
     start = time.perf_counter()
     work()
     print("elapsed %.6f" % (time.perf_counter() - start))

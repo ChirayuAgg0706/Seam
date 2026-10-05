@@ -5,6 +5,11 @@ import threading
 
 import seamtest
 
+# Exercise CPython's exception reporting. Ubuntu's apport hook imports many native
+# libraries and can consume the scenario's exit deadline under LLDB; a replaced hook
+# is covered explicitly by the `hooked` mode below.
+sys.excepthook = sys.__excepthook__
+
 
 def deepest(kind):
     detail = "deep-local"

@@ -59,9 +59,9 @@ class StackMixin:
         if kind in ("native", "statics"):
             frame = self._native_frame(record[1])
             values = (frame.GetVariables(True, True, False, True) if kind == "native"
-                      else frame.GetVariables(False, False, True, True))
+                      else self._file_globals(frame))
             for value in values:
-                if value.GetName() == name:
+                if (value.GetName() or "").removeprefix("::") == name:
                     return value
             return None
         if kind == "sb":
@@ -74,9 +74,14 @@ class StackMixin:
     def req_threads(self, args):
         if self.process is None:
             return {"threads": []}
+        if self.safe_tid is not None and not self.running and not self.exited:
+            try:
+                self.thread_names = {t["tid"]: t["name"] for t in self.agent("threads")}
+            except DapError as exc:
+                self.log("could not read Python thread names:", exc)
         threads = []
         for thread in self.process:
-            name = thread.GetName() or "Thread"
+            name = self.thread_names.get(thread.GetThreadID()) or thread.GetName() or "Thread"
             threads.append({"id": thread.GetThreadID(),
                             "name": "%s (%d)" % (name, thread.GetThreadID())})
         return {"threads": threads}
@@ -236,8 +241,29 @@ class StackMixin:
                 frame["instructionPointerReference"] = "%#x" % record["at"][0]
             if not record["path"] or record.get("cls") in GLUE:
                 frame["presentationHint"] = "subtle"
+            if (self.just_my_code and record["kind"] == "py" and record["path"]
+                    and self._python_library_path(record["path"])):
+                frame["presentationHint"] = "subtle"
+                frame["source"].update(presentationHint="deemphasize",
+                                       origin="Python library code (justMyCode)")
             frames.append(frame)
         return {"stackFrames": frames, "totalFrames": len(stack)}
+
+    @staticmethod
+    def _python_library_path(path):
+        path = os.path.realpath(path)
+        return (any(p in path.split("/") for p in ("site-packages", "dist-packages"))
+                or re.search(r"/(?:lib|lib64)/python\d+\.\d+(?:/|$)", path) is not None)
+
+    def _file_globals(self, frame):
+        """Globals declared in this source file, including constants outside lexical scope."""
+        path = frame.GetLineEntry().GetFileSpec().fullpath
+        if not path:
+            path = frame.GetCompileUnit().GetFileSpec().fullpath
+        if not path:
+            return []
+        values = frame.GetVariables(False, False, True, False)
+        return [v for v in values if v.GetDeclaration().GetFileSpec().fullpath == path]
 
     def _native_frame(self, record):
         return self._thread(record["tid"]).GetFrameAtIndex(record["index"])
@@ -275,9 +301,16 @@ class StackMixin:
     def _sb_var(self, value):
         text = value.GetSummary() or value.GetValue()
         expandable = value.MightHaveChildren()
-        if text is None:
+        error = value.GetError()
+        if not error.Success():
+            reason = error.GetCString() or "value unavailable"
+            optimized = "optim" in reason.lower() or "variable not available" in reason.lower()
+            text = "<optimized out>" if optimized else "<unavailable: %s>" % reason
+            expandable = False
+        elif text is None:
             text = "{...}" if expandable else ""
-        return {"name": value.GetName() or "", "value": text, "type": value.GetTypeName() or "",
+        return {"name": (value.GetName() or "").removeprefix("::"), "value": text,
+                "type": value.GetTypeName() or "",
                 "variablesReference": self._new_ref(("sb", value)) if expandable else 0}
 
     def req_variables(self, args):
@@ -310,7 +343,7 @@ class StackMixin:
         if kind in ("native", "statics"):
             frame = self._native_frame(record[1])
             values = (frame.GetVariables(True, True, False, True) if kind == "native"
-                      else frame.GetVariables(False, False, True, True))
+                      else self._file_globals(frame))
             return {"variables": [self._sb_var(v) for v in values]}
         value = record[1]
         count = min(value.GetNumChildren(), 500)
@@ -402,6 +435,11 @@ class StackMixin:
                     "variablesReference": var["variablesReference"]}
         value, problem = self._evaluate(self._native_frame(record), expr, 10)
         if problem is not None:
+            stack = self._merged_stack(self._thread(record["tid"]))
+            if any(f["kind"] == "py" for f in stack):
+                problem += ("\nThis is a native frame: expressions here use its native language. "
+                            "For a Python expression, step or continue to a Python line "
+                            "and select a Python frame.")
             raise DapError(problem)
         var = self._sb_var(value)
         return {"result": var["value"], "type": var["type"],

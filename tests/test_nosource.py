@@ -1,6 +1,7 @@
 """Code without source: a stripped library, libc, a wheel from PyPI, the interpreter itself."""
 import os
 import signal
+import subprocess
 import sysconfig
 
 import pytest
@@ -59,6 +60,44 @@ def stop_in_work(dap, stripped):
     assert stop["reason"] == "breakpoint"
     dap.request("setFunctionBreakpoints", {"breakpoints": []})
     return stop["threadId"]
+
+
+def test_stripped_library_explains_unbound_source_breakpoint(dap, stripped):
+    tid = stop_in_work(dap, stripped)
+    assert dap.output.count(LIBRARY + " has no debug info") == 1
+    assert "cannot be stepped into" in dap.output and "build it with -g" in dap.output
+    source = os.path.join(EXT, "nosource", "seam_nosource.c")
+    answer = dap.set_breakpoints(source, [marker_line(source, "work-loop")])[0]
+    assert answer["verified"] is False
+    assert LIBRARY in answer["message"] and "no debug info" in answer["message"]
+    dap.set_breakpoints(source, [])
+    dap.cont(tid)
+    assert dap.wait_exit() == 0
+
+
+def test_attach_notices_already_loaded_stripped_library(dap, stripped, python, tmp_path):
+    script = tmp_path / "attach_stripped.py"
+    script.write_text(
+        "import ctypes, os, time\n"
+        "import seam_nosource\n"
+        "ctypes.CDLL(None).prctl(0x59616d61, -1, 0, 0, 0)\n"
+        "print('ready', flush=True)\n"
+        "while True:\n"
+        "    time.sleep(0.02)\n")
+    proc = subprocess.Popen([python, str(script)], env=dict(os.environ, **stripped),
+                            stdout=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout.readline().strip() == "ready"
+        dap.request("initialize", {"adapterID": "seam"})
+        dap.request("attach", {"pid": proc.pid})
+        dap.wait_event("initialized")
+        assert dap.output.count(LIBRARY + " has no debug info") == 1
+        assert "build it with -g" in dap.output
+        dap.close()
+        assert proc.poll() is None
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def disassemble(dap, reference, count, **more):
