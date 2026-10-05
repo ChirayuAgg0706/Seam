@@ -81,6 +81,7 @@ class BreakpointsMixin:
                 hits.append(exc)
         refused = [{"line": b["line"], "verified": False, "message": str(hit)}
                    if isinstance(hit, DapError) else None for b, hit in zip(wanted, hits)]
+        self._note_client_path(path)  # frames of this file are reported under this name
         if path.endswith(PY_SUFFIXES):
             items = [{"line": b["line"], "condition": b.get("condition"), "hit": hit,
                       "log": b.get("logMessage")}
@@ -96,25 +97,40 @@ class BreakpointsMixin:
         with self._paused():
             for bp in self.native_bps.pop(path, []):
                 self.native_bp_specs.pop(bp.GetID(), None)
+                self.native_bp_group.pop(bp.GetID(), None)
                 self.target.BreakpointDelete(bp.GetID())
             created = []
             answers = []
+            # The debug info may know the file under another name (a `sourceMap` entry,
+            # a symbolic link). The breakpoint is set under each; usually that is one.
+            spellings = self._debug_spellings(path)
             for b, hit, problem in zip(wanted, hits, refused):
                 if problem:
                     answers.append(problem)
                     continue
-                bp = self.target.BreakpointCreateByLocation(path, b["line"])
-                if b.get("condition"):
-                    bp.SetCondition(b["condition"])
-                if hit or b.get("logMessage") is not None:
-                    self._set_native_hit_condition(bp, hit, b.get("logMessage"))
-                self._drop_glue_locations(bp)
-                created.append(bp)
-                self.native_bp_lines[bp.GetID()] = b["line"]
-                answer = self._native_bp_answer(bp)
-                self.native_bp_state[bp.GetID()] = (answer["verified"], answer["line"])
+                group = [self.target.BreakpointCreateByLocation(spelling, b["line"])
+                         for spelling in spellings]
+                for bp in group:
+                    if b.get("condition"):
+                        bp.SetCondition(b["condition"])
+                    if hit or b.get("logMessage") is not None:
+                        self._set_native_hit_condition(bp, hit, b.get("logMessage"))
+                        # To the user they are one breakpoint: one count of its hits.
+                        self.native_bp_specs[bp.GetID()] = self.native_bp_specs[group[0].GetID()]
+                    self._drop_glue_locations(bp)
+                    self.native_bp_lines[bp.GetID()] = b["line"]
+                    self.native_bp_group[bp.GetID()] = group
+                created += group
+                answer = self._native_bp_answer(group[0])
+                self.native_bp_state[group[0].GetID()] = (answer["verified"], answer["line"])
                 answers.append(answer)
             self.native_bps[path] = created
+            # Nothing bound although the library is loaded: perhaps it knows the file
+            # under another path. Then the answer says so, and what to do about it.
+            reason = self._unbound_reason(path)
+            for answer in answers if reason else ():
+                if "id" in answer:
+                    answer["message"] = reason
         return {"breakpoints": answers}
 
     def _native_breakpoint_wants_a_stop(self, thread, bp):
@@ -154,14 +170,15 @@ class BreakpointsMixin:
     def _native_bp_answer(self, bp):
         """DAP description of a native breakpoint: where it really is, if anywhere."""
         line = self.native_bp_lines.get(bp.GetID(), 0)
+        group = self.native_bp_group.get(bp.GetID(), [bp])  # one per spelling of the file
         best = None
-        for i in range(bp.GetNumLocations()):
-            location = bp.GetLocationAtIndex(i)
+        for location in (member.GetLocationAtIndex(i) for member in group
+                         for i in range(member.GetNumLocations())):
             if location.IsEnabled():
                 address = location.GetAddress()
                 if best is None or address.GetFileAddress() < best.GetFileAddress():
                     best = address
-        answer = {"id": bp.GetID(), "verified": best is not None, "line": line}
+        answer = {"id": group[0].GetID(), "verified": best is not None, "line": line}
         if best is None:
             answer["message"] = ("no code for this line yet: its module is not loaded, or "
                                  "the compiler left the line with no code of its own")
@@ -173,6 +190,8 @@ class BreakpointsMixin:
         """Tell the client when a pending native breakpoint resolves (or moves)."""
         for group in self.native_bps.values():
             for bp in group:
+                if self.native_bp_group.get(bp.GetID(), [bp])[0].GetID() != bp.GetID():
+                    continue  # another spelling of a breakpoint already looked at
                 answer = self._native_bp_answer(bp)
                 state = (answer["verified"], answer["line"])
                 if self.native_bp_state.get(bp.GetID()) != state:

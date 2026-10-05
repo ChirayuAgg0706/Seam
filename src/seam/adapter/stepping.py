@@ -13,8 +13,7 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        path = spec.fullpath or ""
-        if any(part in path for part in self.framework_paths):
+        if self._is_glue_path(spec.fullpath or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(self._function_name(address)):
             return "framework"
@@ -48,8 +47,7 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        path = spec.fullpath or ""
-        if any(part in path for part in self.framework_paths):
+        if self._is_glue_path(spec.fullpath or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or ""):
             return "framework"
@@ -251,6 +249,12 @@ class SteppingMixin:
             # leaves by unwinding, not by returning): there is nothing to step through.
             self._new_stop()
             self._continue()
+            return None
+        if (args.get("granularity") == "instruction" and mode != "out"
+                and not (self.stop_is_trap and tid == self.safe_tid)):
+            # The disassembly view steps by machine instruction. At a Python stop there
+            # is no machine code of the user's to step through; the step is by line.
+            self._step_instruction(thread, mode == "over")
             return None
         stack = self._merged_stack(thread)
         # Step relative to the newest frame the user cares about: a Python frame or user

@@ -204,6 +204,9 @@ class SessionMixin:
         self.framework_paths = FRAMEWORK_PATHS + tuple(args.get("frameworkPaths") or ())
         self.show_glue_frames = bool(args.get("showGlueFrames"))
         self.just_my_code = bool(args.get("justMyCode", True))
+        self._set_source_map(args.get("sourceMap"))
+        for named in (args.get("cwd"), args.get("program")):
+            self._note_client_path(named)  # how the editor spells the project's directory
 
     def _apply_signal_policy(self, args):
         """Stop on the signals that mean a crash; hand every other signal to the program.
@@ -404,9 +407,11 @@ class SessionMixin:
             pass
 
     def _watch_breakpoints(self):
-        """Receive LLDB's breakpoint events (locations resolving when a module loads)."""
+        """Receive LLDB's breakpoint events (locations resolving when a module loads), and
+        the loading itself (a breakpoint that did not resolve may be explained by it)."""
         self.target.GetBroadcaster().AddListener(
-            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged)
+            self.listener, lldb.SBTarget.eBroadcastBitBreakpointChanged
+            | lldb.SBTarget.eBroadcastBitModulesLoaded)
 
     def _entry_breakpoint(self, name):
         """Breakpoint on a function's first instruction, located through the symbol table.
