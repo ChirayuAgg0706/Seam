@@ -39,10 +39,12 @@ FILES = max(1, FUNCTIONS // 500)
 SCALE_DIR = os.environ.get("SEAM_SCALE_DIR", os.path.expanduser("~/.cache/seam/scale"))
 PROBE = FUNCTIONS // 2  # the function the scenarios step into: one in the middle
 
-# Seconds. A step or a request on the large module may take this long...
-LIMIT = 2.0
-# ...except starting the program, which also pays for LLDB reading the module's symbols.
-LAUNCH_LIMIT = 15.0
+# Seconds. With 15,000 functions a step or a request takes 0.05 s or less on an idle
+# machine, as it does with seamtest alone; before entry traps a step-in took 1.3 s.
+LIMIT = 1.0
+# The first step-in of a session resolves and classifies every function of the module
+# (0.6 s for 15,000), and starting the program pays for LLDB reading its symbols.
+ONCE_LIMITS = {"first time": 5.0, "launch": 15.0, "run to": 15.0}
 
 
 class Subject:
@@ -343,11 +345,12 @@ def timed_client(make_client, monkeypatch):
         client.close()
 
 
-def too_slow(rows, launch_label="launch"):
+def too_slow(rows):
+    def limit(label):
+        return next((seconds for word, seconds in ONCE_LIMITS.items() if word in label), LIMIT)
+
     return ["%s took %.2f s (%s)" % (label, seconds, where or "no log detail")
-            for label, seconds, where in rows
-            if seconds > (LAUNCH_LIMIT if launch_label in label or "run to" in label
-                          else LIMIT)]
+            for label, seconds, where in rows if seconds > limit(label)]
 
 
 def test_stepping_and_breakpoints_do_not_slow_down_with_module_size(
