@@ -326,8 +326,12 @@ Known limits of what is in scope:
   client which). Debug builds do not have these problems.
 - **Stepping into a Python callback from Cython or from optimised code** can take several
   presses of Step Into: the generated or optimised code spreads one source line over many
-  small ranges, and each press advances to the next one. A breakpoint in the callback is
-  the reliable alternative.
+  small ranges, and each press advances to the next one. Pieces of binding-layer glue
+  inlined into the line no longer count as presses. A breakpoint in the callback is the
+  reliable alternative.
+- **Names in generated and generic code.** Cython functions and variables appear under
+  their generated C names (`__pyx_pf_...`, `__pyx_v_...`) unless the module was built
+  with line directives; Rust names are correct but can be very long.
 - **Child processes are not debugged** (see above). While a child started by
   `subprocess`, `os.system` or `os.posix_spawn` has not yet replaced itself with the new
   program, LLDB takes every breakpoint out of the parent; a breakpoint another thread
@@ -365,8 +369,16 @@ Known limits of what is in scope:
   leave by unwinding), so a step simply continues. Uncaught exceptions in threads are seen through
   `threading.excepthook`; a program that replaces that hook after start-up hides them
   from Seam. A thread started with the low-level `_thread` module is not covered.
-- **Extension modules with more than 20,000 functions** are excluded from step-in from
-  Python (a message says so); breakpoints in them work normally.
+- **Very large extension modules.** The first Step Into of a session looks up every
+  function of each large module once: about 0.4 s for 15,000 functions, about 4 s for
+  pydantic-core (123,000 functions and inlined instances; the debug console says so).
+  Later steps take the usual few hundredths of a second. This uses `/proc/<pid>/mem`;
+  where that cannot be written, modules with more than 20,000 functions are excluded
+  from step-in from Python, as before. `SEAM_ENTRY_TRAPS=off` in the environment of
+  `seam dap` switches the mechanism off.
+- **Programs with busy Python threads.** If a request Seam runs in the program cannot
+  finish on its own thread because another thread holds an interpreter lock, the other
+  threads are let run for the moment it takes (after one second).
 - **Changing Python breakpoints while the program runs** is applied by the main thread at
   its next bytecode boundary. If the main thread is blocked in a long native call, the
   change takes effect when that call returns.

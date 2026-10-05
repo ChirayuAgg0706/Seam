@@ -19,7 +19,14 @@ SEAM_TEST_OPT=O2 scripts/test.sh -q -m smoke              # optimised native tes
 SEAM_TEST_REPEAT=20 scripts/test.sh -q -k stepping        # loop the stepping scenarios
 SEAM_LLDB=lldb-19 scripts/test.sh -q -m smoke             # another LLDB
 uvx ruff check src tests tools                            # lint
+SEAM_TEST_SCALE=1 scripts/test.sh -q tests/test_scale.py  # timings with a 15,000-function module
+tools/build_projects.sh                                   # regex, msgpack, contourpy, pydantic-core
+SEAM_TEST_PROJECTS=1 scripts/test.sh -q tests/test_projects.py   # ... and sessions against them
 ```
+
+The last three are opt-in: they are not part of the ordinary suite or of CI. The projects
+are built from source with debug info under `~/.cache/seam/scale` (about 5 minutes and
+1 GB).
 
 ## How the code is laid out
 
@@ -31,6 +38,7 @@ uvx ruff check src tests tools                            # lint
 | &nbsp;&nbsp;`session.py` | launch, attach, the terminal, exit, detach |
 | &nbsp;&nbsp;`stops.py` | process events: deciding what a stop is, reporting it or carrying on |
 | &nbsp;&nbsp;`stepping.py` | stepping across the boundary; what counts as user code |
+| &nbsp;&nbsp;`entrytraps.py` | step-in for large modules: trap instructions Seam places itself |
 | &nbsp;&nbsp;`breakpoints.py` | source-line, function, data and exception breakpoints |
 | &nbsp;&nbsp;`stack.py` | the merged call stack, variables, expressions |
 | &nbsp;&nbsp;`sources.py` | source paths: the debug info's, this machine's (`sourceMap`), the editor's |

@@ -36,6 +36,9 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - `sourceMap`: native code built in a container, in CI or with remapped paths can be
   debugged against the sources on this machine. A breakpoint that cannot bind, or a stop
   whose source is missing, says which path the library was built from and what to add.
+- Step Into no longer slows down with the size of the loaded extension modules (it took
+  1.3 s per step with a 15,000-function module loaded, and never reached native code in
+  modules over 20,000 functions such as pydantic-core).
 - Frames without source are named `library!function`; the `disassemble` request and
   stepping by instruction make VS Code's disassembly view work for them. A crash inside
   the interpreter shows the interpreter function that faulted.
@@ -73,6 +76,12 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - Rare extra or missing stops on a busy machine. Seam shared its debugger object with
   the `lldb` program it runs in, whose own event thread handled the same events; it now
   has a debugger of its own.
+- Stepping from a line where binding-layer code is inlined into your function (optimised
+  Rust and C++) could run the program to its end; it also took one press of Step Into
+  per inlined piece.
+- Stepping out of native code failed after 30 seconds in programs with busy Python
+  threads.
+- "Raised Python exceptions" never stopped for an exception raised by a Cython library.
 - An expression that starts a process (`subprocess.run(...)` typed into the debug
   console) ended the session.
 - Ctrl-C in the program's terminal did nothing while the program sat in `os.system()`.

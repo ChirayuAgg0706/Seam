@@ -51,13 +51,21 @@ def step(dap, command, tid):
 
 def test_one_step_in_gets_through_glue_inlined_into_the_line(dap, inline_ext, iteration):
     line = marker_line(SOURCE, "keep-incref")
-    dap.launch(INLINE, dap.python, env=inline_ext.env, breakpoints={SOURCE: [line]})
+    # At -O0 the line is reached by stepping from the one before. A breakpoint on it does
+    # not do: all its code is the inlined Py_INCREF, and LLDB before 20 moves a breakpoint
+    # on such a line to the next line with code of its own (seen on CI with 18 and 19).
+    first = marker_line(SOURCE, "keep-first") if inline_ext.opt == "O0" else line
+    dap.launch(INLINE, dap.python, env=inline_ext.env, breakpoints={SOURCE: [first]})
     event, body = dap.wait_any(("stopped", "exited"))
     if event == "exited":
         pytest.skip("this build has no code of its own on the Py_INCREF line")
     tid = body["threadId"]
     assert top(dap, tid)[0] == "si_keep"
     dap.set_breakpoints(SOURCE, [])
+    if inline_ext.opt == "O0":
+        assert top(dap, tid) == ("si_keep", first)
+        step(dap, "next", tid)
+        assert top(dap, tid) == ("si_keep", line)
     # Py_INCREF is several lines of a header, inlined here. None of them is a place the
     # user can see: one press ends on the next line of the user's function (or, with
     # optimisation, wherever the function goes next), not on the same line again.
