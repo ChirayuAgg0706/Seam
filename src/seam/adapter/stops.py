@@ -355,6 +355,21 @@ class StopsMixin:
                     return
                 except DapError as exc:
                     self.log("cannot leave glue:", exc)  # report the stop where it is
+            again = self.native_stepping.get("again")
+            hops = self.native_stepping["hops"]
+            if (kind == "user" and again and not self.pause_requested and hops < 64
+                    and (hops or self._classify_frame(thread.GetFrameAtIndex(0)) in GLUE)
+                    and self._visible_position(thread) == self.native_stepping["from"]):
+                # The step went into a piece of glue inlined into the user's function, or
+                # through one and back, and the user's own line has not changed. Optimised
+                # code is full of these (seven on the line of pydantic-core that calls a
+                # Python validator); to the user none of them is a step. Take the same
+                # step again.
+                self.native_stepping["hops"] += 1
+                self._new_stop()
+                again(thread)
+                self.running = True
+                return
         self._finish_steps(thread)
         if self.pause_requested:
             self.pause_requested = False

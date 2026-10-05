@@ -72,6 +72,23 @@ class SteppingMixin:
                     return "user"
         return kind
 
+    def _visible_position(self, thread):
+        """Where the user sees a thread in native code: the newest frame, or the user
+        function it is inlined into, as (function, file, line, stack pointer)."""
+        first = thread.GetFrameAtIndex(0)
+        frame = first
+        if self._classify_frame(first) in GLUE:
+            for i in range(1, thread.GetNumFrames()):
+                candidate = thread.GetFrameAtIndex(i)
+                if not self._same_function_body(candidate, first):
+                    break
+                if self._classify_frame(candidate) == "user":
+                    frame = candidate
+                    break
+        entry = frame.GetLineEntry()
+        return (frame.GetFunctionName(), entry.GetFileSpec().fullpath, entry.GetLine(),
+                frame.GetSP())
+
     def _user_modules(self):
         """Loaded modules that carry debug info and are not the interpreter or system libs."""
         for module in self.target.module_iter():
@@ -333,6 +350,12 @@ class SteppingMixin:
             except DapError as exc:
                 self.log("cannot arm a Python step from native code:", exc)
         self.native_stepping = {"tid": tid, "hops": 0}
+        if start == 0 and mode != "out":
+            # What the step is repeated with if it only gets through inlined glue, and
+            # where the user is now (see the end of _on_stop).
+            self.native_stepping["again"] = (lldb.SBThread.StepOver if mode == "over"
+                                             else lldb.SBThread.StepInto)
+            self.native_stepping["from"] = self._visible_position(thread)
         self._new_stop()
         if start > 0:
             # Stopped inside a library call made by user code: any step returns to it.
