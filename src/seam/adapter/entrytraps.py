@@ -136,8 +136,14 @@ class EntryTraps:
                 if load != lldb.LLDB_INVALID_ADDRESS:
                     sites.add(load)
         self.resolver.BreakpointDelete(bp.GetID())
+        took = time.monotonic() - started
         a.log("entry traps for", path, len(sites), "of", count, "(resolved in %.2f s, "
-              "classified in %.2f s)" % (resolved - started, time.monotonic() - resolved))
+              "classified in %.2f s)" % (resolved - started, took - (resolved - started)))
+        if took > 2:
+            # A module the size of pydantic-core takes seconds; say what the wait was.
+            a.event("output", {"category": "console", "output":
+                    "Seam: looked up the %d functions of %s for stepping in (%.1f s, once "
+                    "per session).\n" % (count, os.path.basename(path), took)})
         if not sites:
             return None
         sites = sorted(sites)
