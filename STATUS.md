@@ -93,18 +93,18 @@ A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`).
 
 Where the current code has run on CI:
 
-- The extended set ran on the merged code (commit `6c860dc`). Every job passed except
-  that one new scenario failed on the LLDB 18 and 19 jobs at -O0. The scenario was wrong,
-  not Seam: it set a breakpoint on a line whose code is all an inlined call, which LLDB
-  before 20 moves to the next line. It was corrected and then passed three rounds each
-  under LLDB 18.1.3 and 19.1.1. The extended set has not been run again as a whole since
-  that correction.
+- The whole extended set passed on the final code (commit `370d31f`, started by hand on
+  2026-10-05): the full suite and the five smoke cells under LLDB 18, the smoke scenarios
+  under LLDB 19 and 20, the editors, the clean machine, lint and the extension package.
+- The run before it, the first on the merged code, had failed one new scenario on the
+  LLDB 18 and 19 jobs at -O0. The scenario was wrong, not Seam: it set a breakpoint on a
+  line whose code is all an inlined call, which LLDB before 20 moves to the next line.
 - The race fix (decisions §18) was looped under load: the breakpoint scenarios 12 times
   over on a 2-core runner with both cores busy, under LLDB 18.1.3 and 19.1.1: 288
   scenario runs and 2,448 continues each, no failures, no leftover stops, no stale frame
   lists.
 
-As of 2026-10-05 this repository had used about 430 of the month's 2,000 minutes.
+As of 2026-10-05 this repository had used about 470 of the month's 2,000 minutes.
 
 ## Test matrix
 
@@ -190,8 +190,11 @@ case was not re-measured.
   adapter, and never from a version tag. The glibc version the manylinux-built helper
   needs is printed by that build and has not been read.
 - **Python 3.15.0 final**: only the release candidate (rc3) exists so far.
-- **The weekly schedule**: its first Monday is 2026-10-05; the job it runs was run by
-  hand with the weekly settings before (165 scenario runs, all passed, LLDB 18).
+- **The weekly schedule** did not start a run on its first Monday (2026-10-05, due at
+  03:17 UTC, nothing by 06:20 UTC). GitHub delays and sometimes drops scheduled runs;
+  whether this one was dropped or the schedule is not taking effect is not known. The
+  jobs it would have run were run by hand instead: the extended set above, and the looped
+  soak with the weekly settings earlier (165 scenario runs, all passed, LLDB 18).
 
 ## Needs the project owner
 
