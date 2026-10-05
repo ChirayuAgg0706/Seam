@@ -244,6 +244,11 @@ def test_children_started_by_several_threads_at_once(dap, capi):
     all_breakpoints(dap)
     dap.cont()
     stops, code = run_to_exit(dap)
+    if code == -1 and "lldb version 18." in dap.output:
+        # llvm-project #81564: LLDB 18 cannot follow child processes started by several
+        # threads at the same moment and loses the program. Seam can only say so.
+        assert "LLDB lost contact with the program" in dap.output, dap.output
+        pytest.skip("LLDB 18 lost the program (llvm-project #81564); Seam reported it")
     assert "concurrent: all 16 children exited as expected" in dap.output, dap.output
     assert (stops, code) == ([], 0)
 

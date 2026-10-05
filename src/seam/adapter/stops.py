@@ -9,6 +9,9 @@ from .common import (
     R_UNCAUGHT,
 )
 
+# What a thread that has just started a child process reports. Never a stop to show.
+FORK_STOPS = (lldb.eStopReasonFork, lldb.eStopReasonVFork, lldb.eStopReasonVForkDone)
+
 
 class StopsMixin:
     def _on_event(self, ev):
@@ -132,6 +135,7 @@ class StopsMixin:
     def _interesting(self, thread):
         reason = thread.GetStopReason()
         return (reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
+                and reason not in FORK_STOPS
                 and not self._is_leftover(thread))
 
     def _trap_thread(self):
@@ -239,10 +243,17 @@ class StopsMixin:
         # First make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
         if not self.pause_requested and not any(self._interesting(t) for t in self.process):
-            # No thread has a current reason to be stopped: the stop is a leftover of
-            # stepping off a breakpoint (see _is_leftover). Nothing is reported.
-            self.leftover_stops += 1
-            self.log("stop without a current reason; resuming")
+            if any(t.GetStopReason() in FORK_STOPS for t in self.process):
+                # The program started a child process. LLDB deals with that and carries
+                # on by itself, except that LLDB 18 leaves the program stopped when
+                # other threads are running at that moment (seen on CI: the stop
+                # arrived without the "restarted" flag and was shown as a pause).
+                self.log("stop for a child process; resuming")
+            else:
+                # No thread has a current reason to be stopped: the stop is a leftover
+                # of stepping off a breakpoint (see _is_leftover). Nothing is reported.
+                self.leftover_stops += 1
+                self.log("stop without a current reason; resuming")
             self._continue()
             return
         self._drain_output()

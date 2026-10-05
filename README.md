@@ -331,7 +331,11 @@ Known limits of what is in scope:
 - **Child processes are not debugged** (see above). While a child started by
   `subprocess`, `os.system` or `os.posix_spawn` has not yet replaced itself with the new
   program, LLDB takes every breakpoint out of the parent; a breakpoint another thread
-  reaches in that moment, normally well under a millisecond, is missed.
+  reaches in that moment, normally well under a millisecond, is missed. With LLDB 18, a
+  program in which several threads start child processes at the same moment (threads in
+  `os.system`, native code spawning in parallel; Python's `subprocess` module is not
+  affected) is lost by LLDB, and the session ends with a message saying so. LLDB 19 and
+  newer handle it.
 - **Under pytest, a segfault stops twice**: at the fault, and again when `faulthandler`
   (which pytest enables) re-raises the signal after writing its report. `pytest.fail()`
   does not trigger the user-unhandled stop (it is not an `Exception`); a failing `assert`

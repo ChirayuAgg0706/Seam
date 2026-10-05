@@ -132,6 +132,15 @@ class SessionMixin:
                        "Seam: the program was terminated by signal %s.\n"
                        % self._signal_name(code)})
             code += 128  # what a shell would report
+        elif self.exit_packet is None and code == -1:
+            # No exit was reported: LLDB lost the program. The one known cause is
+            # LLDB 18 meeting child processes started by several threads at the same
+            # moment (llvm-project #81564, fixed in LLDB 19).
+            self.event("output", {"category": "console", "output":
+                       "Seam: LLDB lost contact with the program, so the session is over; "
+                       "this is a failure inside LLDB (%s). LLDB 18 does this when several "
+                       "threads start child processes at the same moment; LLDB 19 and "
+                       "newer do not.\n" % self.dbg.GetVersionString().split("\n")[0]})
         self.event("exited", {"exitCode": code})
         self.event("terminated")
 
