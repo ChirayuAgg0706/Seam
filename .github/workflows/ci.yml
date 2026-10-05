@@ -287,3 +287,10 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           kill $(jobs -p) 2>/dev/null || true
           exit $status
+      - name: Keep the adapter logs if a scenario failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-logs
+          path: ${{ runner.temp }}/soak/**/seam*.log*
+          if-no-files-found: ignore

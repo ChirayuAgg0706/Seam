@@ -132,6 +132,29 @@ class StopsMixin:
                  "(pc %#x):" % pc, thread.GetStopDescription(80))
         return True
 
+    def _condition_fails(self, thread, bp):
+        """True if LLDB stopped at a breakpoint whose condition does not hold.
+
+        LLDB evaluates a breakpoint's condition itself and does not stop when it is
+        false. LLDB 18 was seen on CI to deliver the stop all the same when another
+        thread started a child process at that moment, so the condition is checked once
+        more here. A condition that cannot be evaluated stops, as it does in LLDB.
+        """
+        condition = bp.GetCondition()
+        if not condition:
+            return False
+        value = thread.GetFrameAtIndex(0).EvaluateExpression(condition, self._expr_options(5))
+        error = value.GetError()
+        if not error.Success():
+            self.log("condition", repr(condition), "could not be checked:", error.GetCString())
+            return False
+        if value.GetValueAsUnsigned(0) != 0:
+            return False
+        self.log("LLDB stopped at breakpoint", bp.GetID(), "although its condition",
+                 repr(condition), "does not hold; resuming. Threads:",
+                 ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40)) for t in self.process])
+        return True
+
     def _interesting(self, thread):
         reason = thread.GetStopReason()
         return (reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
@@ -309,6 +332,10 @@ class StopsMixin:
                     self._new_stop()
                     self._continue()
                     return
+                if self._condition_fails(thread, bp):
+                    self._new_stop()
+                    self._continue()
+                    return
                 if not self._native_breakpoint_wants_a_stop(thread, bp):
                     # A hit that does not count yet, or a logpoint. Remember the place
                     # all the same, so the line's other address ranges are not counted
@@ -320,7 +347,8 @@ class StopsMixin:
                     self._continue()
                     return
             elif (bp.IsValid() and any(bp.GetID() == b.GetID() for b in self.function_bps)
-                    and not self._native_breakpoint_wants_a_stop(thread, bp)):
+                    and (self._condition_fails(thread, bp)
+                         or not self._native_breakpoint_wants_a_stop(thread, bp))):
                 self._new_stop()  # a function breakpoint whose hit count says "not yet"
                 self._continue()
                 return
