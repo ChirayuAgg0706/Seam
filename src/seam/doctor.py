@@ -73,6 +73,13 @@ def _check_lldb(report):
                        "Seam needs LLDB 18 or newer (Debian/Ubuntu: apt install lldb-18).")
         return False
     report.ok("LLDB: %s, version %s" % (lldb, version.group(0)[8:]))
+    if int(version.group(1)) == 18:
+        report.note("LLDB 18 has one known weakness: in a program with several threads "
+                    "that starts child processes (subprocess, os.system), it can lose "
+                    "track of the program if another thread reaches a breakpoint at the "
+                    "moment a child is started. LLDB 19 and newer do not; to use one, "
+                    "install it (Debian/Ubuntu: apt install lldb-19) and set "
+                    "SEAM_LLDB=lldb-19.")
     status, text = _run([lldb, "--batch", "--no-lldbinit", "-o",
                          "script import sys; print('seam-python', *sys.version_info[:2])"])
     scripting = re.search(r"seam-python (\d+) (\d+)", text or "")

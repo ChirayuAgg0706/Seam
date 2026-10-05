@@ -336,6 +336,7 @@ class ProtocolMixin:
             "nativeStepInProgress": self.native_stepping is not None,
             "pythonStepArmed": self.py_step_armed,
             "leftoverStops": self.leftover_stops,
+            "lldb": self.dbg.GetVersionString().split("\n")[0],
         }
         if self.safe_tid is not None:
             body["agent"] = self.agent("status")

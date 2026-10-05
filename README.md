@@ -331,11 +331,16 @@ Known limits of what is in scope:
 - **Child processes are not debugged** (see above). While a child started by
   `subprocess`, `os.system` or `os.posix_spawn` has not yet replaced itself with the new
   program, LLDB takes every breakpoint out of the parent; a breakpoint another thread
-  reaches in that moment, normally well under a millisecond, is missed. With LLDB 18, a
-  program in which several threads start child processes at the same moment (threads in
-  `os.system`, native code spawning in parallel; Python's `subprocess` module is not
-  affected) is lost by LLDB, and the session ends with a message saying so. LLDB 19 and
-  newer handle it.
+  reaches in that moment, normally well under a millisecond, is missed.
+- **LLDB 18 and child processes in programs with several threads.** LLDB 18 mishandles a
+  child being started (`subprocess`, `os.system`) at the moment another thread is at a
+  breakpoint, including a conditional one whose condition is false, and several threads
+  starting children at once. It then cannot evaluate expressions any more or loses the
+  program; Seam says so when the program is lost, and the session has to be restarted.
+  A breakpoint in a loop that another thread runs constantly makes this likely;
+  otherwise it takes a coincidence. LLDB 19 and newer are not affected: install one
+  (`apt install lldb-19`) and set `SEAM_LLDB=lldb-19` in the environment of `seam dap`
+  (for VS Code: of the editor).
 - **Under pytest, a segfault stops twice**: at the fault, and again when `faulthandler`
   (which pytest enables) re-raises the signal after writing its report. `pytest.fail()`
   does not trigger the user-unhandled stop (it is not an `Exception`); a failing `assert`

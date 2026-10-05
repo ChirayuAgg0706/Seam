@@ -1,5 +1,4 @@
 """Process events: deciding what a stop is, and reporting it or carrying on."""
-import re
 import struct
 import time
 
@@ -12,8 +11,6 @@ from .common import (
 
 # What a thread that has just started a child process reports. Never a stop to show.
 FORK_STOPS = (lldb.eStopReasonFork, lldb.eStopReasonVFork, lldb.eStopReasonVForkDone)
-_VERSION = re.search(r"version (\d+)", lldb.SBDebugger.GetVersionString())
-LLDB_MAJOR = int(_VERSION.group(1)) if _VERSION else 0
 
 
 class StopsMixin:
@@ -135,40 +132,6 @@ class StopsMixin:
                  "(pc %#x):" % pc, thread.GetStopDescription(80))
         return True
 
-    def _condition_fails(self, thread, bp):
-        """True if LLDB stopped at a breakpoint whose condition does not hold.
-
-        LLDB evaluates a breakpoint's condition itself and does not stop when it is
-        false; when it cannot evaluate the condition it stops, and so does Seam. One
-        case is different. While a child made by vfork (`subprocess`, `os.system`) has
-        not yet started its own program, LLDB 18 cannot evaluate anything in the parent
-        ("Couldn't allocate space for the stack frame", seen on CI), so every hit of a
-        conditional breakpoint by another thread in that moment became a stop, whatever
-        the condition. Breakpoints are unreliable in that window anyway (LLDB has them
-        out of the program), so such a hit is passed over. The condition is evaluated
-        here once more to tell the cases apart.
-        """
-        condition = bp.GetCondition()
-        if not condition:
-            return False
-        value = thread.GetFrameAtIndex(0).EvaluateExpression(condition, self._expr_options(5))
-        error = value.GetError()
-        if not error.Success():
-            # A child is under way if the debug server announced one that has not been
-            # reported done, or if a thread's stop reason at this very stop is the fork.
-            under_way = bool(self.vfork_children) or any(
-                t.GetStopReason() in FORK_STOPS for t in self.process)
-            self.log("condition", repr(condition), "could not be checked:", error.GetCString(),
-                     "- child under way:", under_way, dict(self.vfork_children),
-                     ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40)) for t in self.process])
-            return under_way
-        if value.GetValueAsUnsigned(0) != 0:
-            return False
-        self.log("LLDB stopped at breakpoint", bp.GetID(), "although its condition",
-                 repr(condition), "does not hold; resuming. Threads:",
-                 ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40)) for t in self.process])
-        return True
-
     def _interesting(self, thread):
         reason = thread.GetStopReason()
         return (reason not in (lldb.eStopReasonNone, lldb.eStopReasonInvalid)
@@ -281,29 +244,14 @@ class StopsMixin:
         # ran into one is put back on the instruction (see entrytraps.py).
         trapped = self.traps.stopped()
         landed, self.traps.landed = self.traps.landed, None
-        if (LLDB_MAJOR < 19 and not self.pause_requested
-                and any(t.GetStopReason() in FORK_STOPS for t in self.process)
-                and (landed is not None or any(self._interesting(t) for t in self.process))):
-            # Another thread stopped at the very moment this one started a child process
-            # with vfork. LLDB 18 cannot evaluate anything in the program until the child
-            # has started its own program, and after an attempt it loses the program
-            # altogether (both seen on CI; LLDB 19 and 20 are not affected). So nothing is
-            # looked at and the stop is passed over: the other thread's breakpoint or step
-            # is missed, as any breakpoint reached in that moment is (decisions §21).
-            self.log("LLDB 18: a stop while a child process is being started; passed over:",
-                     ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40))
-                      for t in self.process])
-            self._continue()
-            return
         # Then make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
         if (not self.pause_requested and landed is None
                 and not any(self._interesting(t) for t in self.process)):
             if any(t.GetStopReason() in FORK_STOPS for t in self.process):
                 # The program started a child process. LLDB deals with that and carries
-                # on by itself, except that LLDB 18 leaves the program stopped when
-                # other threads are running at that moment (seen on CI: the stop
-                # arrived without the "restarted" flag and was shown as a pause).
+                # on by itself; should such a stop ever be left standing, it is not one
+                # to show (it used to be reported as a pause).
                 self.log("stop for a child process; resuming")
             else:
                 # No thread has a current reason to be stopped: the stop is a leftover
@@ -375,10 +323,6 @@ class StopsMixin:
                     self._new_stop()
                     self._continue()
                     return
-                if self._condition_fails(thread, bp):
-                    self._new_stop()
-                    self._continue()
-                    return
                 if not self._native_breakpoint_wants_a_stop(thread, bp):
                     # A hit that does not count yet, or a logpoint. Remember the place
                     # all the same, so the line's other address ranges are not counted
@@ -390,8 +334,7 @@ class StopsMixin:
                     self._continue()
                     return
             elif (bp.IsValid() and any(bp.GetID() == b.GetID() for b in self.function_bps)
-                    and (self._condition_fails(thread, bp)
-                         or not self._native_breakpoint_wants_a_stop(thread, bp))):
+                    and not self._native_breakpoint_wants_a_stop(thread, bp)):
                 self._new_stop()  # a function breakpoint whose hit count says "not yet"
                 self._continue()
                 return

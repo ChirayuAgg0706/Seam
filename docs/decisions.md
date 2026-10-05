@@ -624,9 +624,34 @@ with `_exit(0)`.
 
 Known limits. While a vfork child has not yet called `exec`, LLDB has every breakpoint out
 of the program, so a breakpoint another thread reaches in that moment (normally well under
-a millisecond) is missed. LLDB before 19 cannot handle vforks made by several threads at
-once (llvm-project #81564); CPython's `subprocess` holds the GIL across its vfork,
-`os.system` does not.
+a millisecond) is missed.
+
+**LLDB 18 and vfork with several threads.** The first CI run of these scenarios failed two
+of them on every LLDB 18 job and on no LLDB 19 or 20 job.
+
+- Several threads calling `os.system` at once: LLDB 18 loses the program (the process is
+  reported as exited with status -1 and no exit packet). This is llvm-project #81564,
+  fixed in 19. CPython's `subprocess` holds the GIL across its vfork, so it cannot do
+  this; `os.system` and native code can. Seam now says what happened when an exit comes
+  without an exit packet.
+- One thread starting a child while another reaches a breakpoint in the same stop (the
+  scenario has threads running over a conditional native breakpoint whose condition is
+  false): LLDB 18 cannot evaluate the condition ("Couldn't allocate space for the stack
+  frame: Couldn't malloc: address space is full"), so it stops. Three things were tried
+  from Seam's side over six CI runs, each read from the adapter logs the soak job keeps:
+  evaluating the condition again (fails the same way, and after the resume LLDB lost the
+  program); passing such a hit over while a vfork child is under way (same); resuming
+  without looking at anything (the program ran on, but a later expression failed with
+  "memory write failed" and the adapter hung). LLDB 18's own state is wrong after the
+  coincidence, and nothing done from outside cured it, so all three were taken out
+  again. Re-evaluating conditions would also have run a condition with side effects
+  twice.
+
+What stays: a thread's fork, vfork or vfork-done stop reason is never a stop to show (it
+had been reported as a pause); `seam doctor` notes the weakness when it finds LLDB 18;
+the README says how to use LLDB 19 instead; and under LLDB 18 the first scenario skips
+after asserting Seam's message, and the second runs without the breakpoint the other
+threads keep reaching.
 
 ## 22. Debugging a pytest run
 
@@ -861,6 +886,113 @@ ascending. LLDB's default syntax (AT&T) is used.
 keeps `_on_stop` from walking on out of glue or handing the step to Python: an
 instruction step ends where it ends. At a Python stop (the thread is in Seam's trap) and
 for `stepOut` the granularity is ignored. No Python is run for it.
+
+## 28. Step-in for large modules: entry traps
+
+Stepping in from Python arms a breakpoint on every user function of every extension
+module (§7). LLDB inserts and removes sites one at a time, each a round trip to its debug
+server: about 45 microseconds per function per direction. With a 15,000-function module
+loaded every step-in took 1.3 to 1.8 s (0.02 s without), wherever it was going, and
+modules over 20,000 functions were excluded: pydantic-core has 123,456 functions and
+inlined instances.
+
+For modules with 2,000 symbols or more Seam places the trap instructions itself
+(`adapter/entrytraps.py`).
+
+- The functions are found by a breakpoint in a second target that has no process, so
+  resolving inserts nothing; its locations are the addresses LLDB's own breakpoint would
+  use.
+- Arming writes the trap byte to all of them through `/proc/<pid>/mem`, one read and one
+  write per module; disarming puts the bytes back.
+- The traps are in memory only while the process runs. At every stop, and when Seam
+  interrupts the process itself, they come out before anything else happens, so LLDB
+  never sees patched code and creates or removes no site of its own while they are in.
+- Where memory does not hold the original byte (a breakpoint site of LLDB's), the address
+  is left alone.
+- A thread that runs into a trap stops with SIGTRAP one byte past it. The stepping thread
+  is put back on the instruction and the step ends there. Any other thread is put back
+  too, and that one address becomes an ordinary thread-specific LLDB breakpoint for the
+  rest of the step.
+- A child forked while traps are in would inherit them, and unlike LLDB's breakpoints
+  nobody removes them; the helper restores the bytes in a `pthread_atfork` child handler
+  from a list the adapter leaves in the process.
+- Smaller modules keep LLDB's breakpoints, as does everything when `/proc/<pid>/mem`
+  cannot be opened. `SEAM_ENTRY_TRAPS` overrides the threshold (`0`: traps everywhere,
+  `off`: LLDB breakpoints everywhere).
+
+Measured (python3.12, LLDB 20, -O0; before / after):
+
+| | before | after |
+|---|---|---|
+| step in, Python to native, first time, 15,000 functions | 1.67 to 1.80 s | 0.39 to 0.42 s |
+| the same, repeated | 1.27 to 1.43 s | 0.025 to 0.029 s |
+| step in, Python to Python, large module loaded | 1.34 to 1.43 s | 0.020 to 0.024 s |
+| the same steps with only the small test extension | 0.020 s | 0.018 to 0.025 s |
+| repeated step-in, 60,000 functions | refused (over the limit) | 0.035 to 0.056 s |
+| first step-in, pydantic-core (123,456 locations) | 14.6 s, and never reached Rust | 3.7 to 4.5 s, then 0.02 s |
+
+Everything else is flat in the number of functions: launch, breakpoints, stack,
+variables, native steps, and the no-breakpoint overhead (cpu 1.001, native 1.001 with the
+large module loaded). Raw LLDB on the 15,043 sites takes 0.83 s to enable and 0.69 s to
+disable them.
+
+Rejected: bulk writes through LLDB (its debug server writes eight bytes per system call,
+and LLDB's write path skips its own sites); narrowing the candidates through relocations
+(binding layers call user functions directly from glue); page protection on the module
+(other threads fault at once).
+
+Three of the binding test modules are over the threshold (pybind11: 6 of 3,072 locations
+are user code; nanobind: 217 of 2,385; PyO3: 749 of 8,980), so both paths run in the
+ordinary suite. Known gaps: if LLDB dies while traps are in an attached process, the
+process keeps them; a child made by a raw `clone` (no libc fork handlers) keeps them too.
+
+## 29. Agent calls when other Python threads want the GIL
+
+An agent call runs Python on one thread while all others are stopped. Two things could
+make it wait for a thread that cannot move.
+
+- A pending GIL drop request: the interpreter honours it inside the agent's code and
+  waits for somebody to take the GIL. The adapter withdraws the request before the call
+  with one memory write (3.12: an int in the interpreter state, checked by the layout
+  unit test; 3.13+: bit 0 of the thread's `eval_breaker`); the thread that made it makes
+  it again when it runs.
+- The agent's code releasing the GIL itself (around a system call) while a stopped thread
+  holds the GIL's mutex or is half-way through waking from its condition variable. That
+  is common right after a resume, when every waiter's timeout has passed. Seam cannot see
+  that state, so the call uses LLDB's own remedy: after one second alone, the other
+  threads run until the call returns. They can do little while the agent's thread has the
+  GIL, but if the agent releases it around a system call they take it for a moment.
+
+Before: stepping out of native code with busy Python threads failed after 30 s
+("Expression execution was interrupted"). After: 60 of 60 looped runs pass on 3.14, 4 of
+them through the one-second path.
+
+## 30. Frames of one function body; steps the user cannot see
+
+LLDB gives a function that has code inlined into it the address where the inlined code
+starts, so an inlined frame and its host share the PC only on the first instruction. They
+always share the stack pointer, and a real caller's is always higher. Seam used to
+compare both, and one instruction into inlined glue it took the user's function for a
+caller; "run until return to it" then ran the program to its end (found stepping out of a
+pydantic-core function with `map_err` inlined at the current line). Frames with one stack
+pointer are now one function body: the step is taken from where the thread is, step out
+leaves the whole body, and a return into a body waits at the PC of its innermost frame.
+Stepping out of an inlined user function therefore leaves the function it was inlined
+into as well.
+
+A native step in or over that ends in glue inlined into the user's function, or back in
+the function after passing through glue, with the user's function, line and stack
+pointer unchanged, is taken again (at most 64 times): one line of optimised Rust can hold
+seven such pieces, and none of them is a step to the user. A native step over on a
+one-line loop with inlined glue in it may therefore run several iterations before it
+stops.
+
+## 31. Frames Cython adds to tracebacks
+
+Cython gives the frame it adds to a traceback the .pyx path as it was at build time,
+relative and nowhere to be found at run time. Such a name is not the user's code
+(otherwise "Raised Python exceptions" never stops for an exception from a Cython library)
+and the frame is shown without a source.
 
 ## 5. Toolchain for development
 

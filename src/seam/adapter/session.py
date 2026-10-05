@@ -34,7 +34,7 @@ class SessionMixin:
             match = EXIT_PACKET.search(line)
             if match:
                 self.exit_packet = (match.group(1), int(match.group(2), 16))
-            elif "fork" in line:
+            elif "fork" in line and not self.child_noticed:
                 self._on_fork_packet(line)
 
         self._on_log = on_log  # LLDB does not keep the callable alive
@@ -50,8 +50,6 @@ class SessionMixin:
         fork, which is a copy of the program, or a new process whose executable is a
         Python interpreter. The latter is looked at when the debug server reports that
         the child has left the parent's memory ("vforkdone"), which is after its exec.
-        Until then the child is kept in `vfork_children`, which also tells the rest of
-        the adapter that such a child is under way (see `_condition_fails`).
         Called on one of LLDB's threads.
         """
         match = FORK_PACKET.search(line)
@@ -63,9 +61,6 @@ class SessionMixin:
             return
         if kind == "vforkdone":
             pid = self.vfork_children.pop(thread, None)
-        if self.child_noticed:
-            return
-        if kind == "vforkdone":
             try:
                 name = os.path.basename(os.readlink("/proc/%d/exe" % pid))
             except (OSError, TypeError):
