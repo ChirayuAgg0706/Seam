@@ -12,7 +12,9 @@
 #define PY_SSIZE_T_CLEAN
 #define Py_LIMITED_API 0x030C0000
 #include <Python.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -387,11 +389,52 @@ static struct PyModuleDef moduledef = {
     NULL, NULL, NULL, NULL,
 };
 
+/*
+ * Entry traps (src/seam/adapter/entrytraps.py). While a step-in from Python is in flight
+ * the adapter may have written trap instructions over the first instruction of native
+ * functions, straight into this process's memory. LLDB does not know about them, so
+ * unlike its own breakpoints nobody takes them out of a child the program forks in that
+ * window, and the child would die at its first call of such a function. The adapter
+ * leaves the list of patched addresses here; a forked child puts the original bytes back
+ * before it runs anything else. seam_fork_count is non-zero only while traps are in.
+ */
+struct seam_patch {
+    uint64_t address;
+    uint64_t original;
+};
+EXPORT struct seam_patch *volatile seam_fork_table = NULL;
+EXPORT volatile long seam_fork_count = 0;
+
+static void
+fork_child(void)
+{
+    long count = seam_fork_count;
+    struct seam_patch *table = seam_fork_table;
+    seam_fork_count = 0;
+    if (count <= 0 || table == NULL) {
+        return;
+    }
+    /* The code is mapped read-only; a process may still write to it through this file. */
+    int fd = open("/proc/self/mem", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return;
+    }
+    for (long i = 0; i < count; i++) {
+        unsigned char byte = (unsigned char)table[i].original;
+        if (pwrite(fd, &byte, 1, (off_t)table[i].address) != 1) {
+            break;
+        }
+    }
+    close(fd);
+}
+
 PyMODINIT_FUNC
 PyInit__seam_trap(void)
 {
     static int registered = 0;
     if (!registered) {
+        /* In a forked child: the entry traps come out, then the helper goes dormant. */
+        pthread_atfork(NULL, NULL, fork_child);
         pthread_atfork(NULL, NULL, forked_child);
         registered = 1;
     }

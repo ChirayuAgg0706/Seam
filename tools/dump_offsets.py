@@ -12,7 +12,8 @@ import json
 FIELDS = {
     "pyruntimestate": ["interpreters"],
     "pyinterpreters": ["head"],
-    "_is": ["next", "threads"],
+    "_is": ["next", "threads", "ceval"],
+    "_ceval_state": ["gil", "gil_drop_request"],
     "pythreads": ["head"],
     "_ts": ["next", "cframe", "current_frame", "native_thread_id"],
     "_PyCFrame": ["current_frame"],

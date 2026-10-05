@@ -10,6 +10,10 @@ import lldb
 
 from .common import DapError, EXCEPTION_FILTERS, UNSAFE_MESSAGE, _Arguments
 
+# SEAM_LOG_TIMES=1 starts every log line with the seconds since the adapter was loaded, to
+# see where a slow request spends its time (the scale measurements use it).
+LOG_EPOCH = time.monotonic() if os.environ.get("SEAM_LOG_TIMES") else None
+
 
 class ProtocolMixin:
     def _note(self, text):
@@ -21,7 +25,8 @@ class ProtocolMixin:
 
     def log(self, *parts):
         if self.logfile:
-            self.logfile.write(" ".join(str(p) for p in parts) + "\n")
+            stamp = "" if LOG_EPOCH is None else "%9.4f " % (time.monotonic() - LOG_EPOCH)
+            self.logfile.write(stamp + " ".join(str(p) for p in parts) + "\n")
             self.logfile.flush()
 
     def _send(self, msg):
@@ -117,18 +122,25 @@ class ProtocolMixin:
                 return addr, ctx.GetModule()
         return None, None
 
-    def _expr_options(self, timeout_s=30, unwind=True):
+    def _expr_options(self, timeout_s=30, unwind=True, alone_s=None):
+        """Options for an expression run on one thread while the others stay stopped.
+
+        `alone_s`: if it has not finished after that long, the other threads are let run
+        until it has. For calls that can need a lock a stopped thread is holding.
+        """
         opts = lldb.SBExpressionOptions()
         opts.SetLanguage(lldb.eLanguageTypeC)
         opts.SetStopOthers(True)
-        opts.SetTryAllThreads(False)
+        opts.SetTryAllThreads(alone_s is not None)
+        if alone_s is not None:
+            opts.SetOneThreadTimeoutInMicroSeconds(int(alone_s * 1000000))
         opts.SetIgnoreBreakpoints(True)
         opts.SetUnwindOnError(unwind)
         opts.SetSuppressPersistentResult(True)
         opts.SetTimeoutInMicroSeconds(int(timeout_s * 1000000))
         return opts
 
-    def _evaluate(self, frame, expr, timeout_s):
+    def _evaluate(self, frame, expr, timeout_s, alone_s=None):
         """Evaluate an LLDB expression that may run the user's code.
 
         Returns the SBValue and, if the evaluation failed, what went wrong.
@@ -141,7 +153,8 @@ class ProtocolMixin:
         with the fork as it does at any other time and the evaluation carries on. So it
         is off here, and an evaluation that really fails is unwound by hand.
         """
-        value = frame.EvaluateExpression(expr, self._expr_options(timeout_s, unwind=False))
+        value = frame.EvaluateExpression(
+            expr, self._expr_options(timeout_s, unwind=False, alone_s=alone_s))
         error = value.GetError()
         if error.Success():
             return value, None
@@ -160,14 +173,23 @@ class ProtocolMixin:
         text = (error.GetCString() or "evaluation failed").split("\nThe process has been left")[0]
         return value, text.strip()
 
-    def _call(self, thread, expr, timeout_s=30, user_code=False):
-        """Call a function in the target. `user_code`: it may run code of the user's."""
+    def _call(self, thread, expr, timeout_s=30, user_code=False, alone_s=None):
+        """Call a function on one thread of the stopped process; the others stay stopped.
+
+        `user_code`: it may run code of the user's (see `_evaluate`).
+        `alone_s`: if the call has not returned after that long, the other threads are let
+        run until it has. For calls that can need a lock a stopped thread is holding.
+        """
         frame = thread.GetFrameAtIndex(0)
+        started = time.monotonic()
         if user_code:
-            value, problem = self._evaluate(frame, expr, timeout_s)
+            value, problem = self._evaluate(frame, expr, timeout_s, alone_s)
         else:
-            value = frame.EvaluateExpression(expr, self._expr_options(timeout_s))
+            value = frame.EvaluateExpression(expr, self._expr_options(timeout_s, alone_s=alone_s))
             problem = None if value.GetError().Success() else value.GetError().GetCString()
+        if alone_s is not None and time.monotonic() - started > alone_s:
+            self.log("the call needed the other threads to run: %.2f s"
+                     % (time.monotonic() - started))
         if problem is not None:
             raise DapError("call into the target failed: %s" % problem)
         return value.GetValueAsSigned()
@@ -189,8 +211,23 @@ class ProtocolMixin:
             raise DapError("request too large for the agent buffer")
         self._write(self.sym["seam_req_buf"], data)
         self._write(self.sym["seam_req_len"], struct.pack("<q", len(data)))
+        # Another Python thread may be waiting for the GIL and have asked this one to give
+        # it up. The interpreter would honour that in the middle of the agent's code and
+        # then wait for somebody to take the GIL, which nobody can: every other thread is
+        # stopped. So the request is withdrawn; the thread that made it makes it again as
+        # soon as it runs.
+        request = self.py.gil_drop_request(self.safe_tid)
+        if request:
+            self.log("withdrawing a request for the GIL before running the agent")
+            self._write(*request)
+        # That leaves the rarer case: the agent's code lets go of the GIL itself (around
+        # a system call, say) while a stopped thread is inside the GIL's own mutex or
+        # condition variable, having been stopped a moment after it woke up. Then nothing
+        # moves until that thread does, so after a second on its own the call is finished
+        # with the other threads running (they can do little: this thread has the GIL).
         rc = self._call(self._thread(self.safe_tid),
-                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"], user_code=True)
+                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"],
+                        user_code=True, alone_s=1.0)
         if rc != 0:
             raise DapError("the Seam agent failed to answer (code %d)" % rc)
         ptr = struct.unpack("<Q", self._read(self.sym["seam_resp_ptr"], 8))[0]
@@ -293,7 +330,9 @@ class ProtocolMixin:
             + len(self.function_bps),
             "totalBreakpoints": self.target.GetNumBreakpoints(),
             "pid": self.process.GetProcessID(),
-            "stepInBreakpointsEnabled": any(bp.IsEnabled() for bp in self.user_bps.values()),
+            "stepInBreakpointsEnabled": (any(bp.IsEnabled() for bp in self.user_bps.values())
+                                         or self.traps.pending or self.traps.armed),
+            "entryTrapModules": sorted(self.traps.regions),
             "nativeStepInProgress": self.native_stepping is not None,
             "pythonStepArmed": self.py_step_armed,
             "leftoverStops": self.leftover_stops,

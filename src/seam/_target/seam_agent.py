@@ -278,7 +278,12 @@ def _is_user(code):
                     if entry.rstrip(os.sep).endswith(("site-packages", "dist-packages")):
                         found.append(os.path.realpath(entry) + os.sep)
                 _library_prefixes = tuple(found)
-            known = not _canon(name).startswith(_library_prefixes)
+            # A relative name that leads nowhere is not a file of the user's either:
+            # Cython gives the frames it adds to a traceback the .pyx path as it was when
+            # the module was built ("msgpack/_unpacker.pyx").
+            path = _canon(name)
+            known = (not path.startswith(_library_prefixes)
+                     and (os.path.isabs(name) or os.path.exists(path)))
         _user_code[name] = known
     return known
 

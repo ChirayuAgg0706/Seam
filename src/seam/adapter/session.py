@@ -171,6 +171,7 @@ class SessionMixin:
             except OSError:
                 pass
         self.temp_files = []
+        self.traps.close()
         self._release_terminal()
 
     def _signal_children(self, number):

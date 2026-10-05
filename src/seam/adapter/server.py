@@ -10,6 +10,7 @@ The adapter is one class, `Adapter`, assembled from a mixin per concern:
     session.py      launch, attach, the terminal, exit, detach
     stops.py        process events: what a stop is, reporting it or carrying on
     stepping.py     stepping across the boundary; what counts as user code
+    entrytraps.py   step-in breakpoints for modules with thousands of functions
     breakpoints.py  source-line, function, data and exception breakpoints
     stack.py        the merged call stack, variables, expressions
     sources.py      source paths: the debug info's, this machine's, the editor's
@@ -29,6 +30,7 @@ import lldb
 from .common import FRAMEWORK_PATHS
 from .breakpoints import BreakpointsMixin
 from .disassembly import DisassemblyMixin
+from .entrytraps import EntryTraps
 from .protocol import ProtocolMixin
 from .session import SessionMixin
 from .sources import SourcesMixin
@@ -87,6 +89,7 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.show_glue_frames = False
         self.user_bps = {}            # module path -> breakpoint on all its user functions
         self.user_bps_on = False
+        self.traps = EntryTraps(self)  # the same for large modules (see entrytraps.py)
         self.unwind_warnings = set()  # functions LLDB failed to unwind (warned once each)
         self.last_native_stop = {}    # tid -> (line key, pc) of the last reported stop
         self.native_bp_specs = {}     # breakpoint id -> {"hit", "log", "hits"} if it has any

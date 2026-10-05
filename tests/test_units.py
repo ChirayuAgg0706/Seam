@@ -83,6 +83,8 @@ def test_bundled_312_layout_matches_debug_info():
         "runtime_interp_head": runtime["interpreters"] + info["pyinterpreters"]["head"],
         "interp_next": interp["next"],
         "interp_threads_head": interp["threads"] + info["pythreads"]["head"],
+        "gil_ptr": interp["ceval"] + info["_ceval_state"]["gil"],
+        "gil_drop_request": interp["ceval"] + info["_ceval_state"]["gil_drop_request"],
         "tstate_next": tstate["next"],
         "tstate_native_tid": tstate["native_thread_id"],
         "tstate_cframe": tstate["cframe"],

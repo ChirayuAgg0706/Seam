@@ -217,6 +217,30 @@ class PyReader:
         except (ValueError, struct.error):
             return False
 
+    def gil_drop_request(self, tid):
+        """Another thread's pending request that `tid` give up the GIL, if there is one.
+
+        Returns (address, bytes) such that writing the bytes there withdraws the request,
+        or None. The thread that asked asks again the next time its wait times out.
+        """
+        L = self.L
+        try:
+            tstate, interp = self.find_thread(tid)
+            if tstate is None:
+                return None
+            if L.gil_drop_request is not None:
+                address = interp + L.gil_drop_request
+                if struct.unpack("<i", self.read(address, 4))[0]:
+                    return address, struct.pack("<i", 0)
+            elif L.tstate_eval_breaker is not None:
+                address = tstate + L.tstate_eval_breaker
+                breaker = self.u64(address)
+                if breaker & 1:  # _PY_GIL_DROP_REQUEST_BIT
+                    return address, struct.pack("<Q", breaker & ~1)
+        except (ValueError, struct.error):
+            pass
+        return None
+
     def current_frame(self, tstate):
         L = self.L
         if L.tstate_cframe is not None:

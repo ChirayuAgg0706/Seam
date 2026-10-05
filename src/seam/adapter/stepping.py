@@ -56,19 +56,36 @@ class SteppingMixin:
     def _landing_class(self, thread):
         """Class of the place a thread is stopped at, looking through inlined glue.
 
-        If the newest frame is glue that was inlined into a user function (same PC and
-        SP), the thread is physically in user code and that is where a step should end.
+        If the newest frame is glue that was inlined into a user function, the thread is
+        physically in user code and that is where a step should end.
         """
         first = thread.GetFrameAtIndex(0)
         kind = self._classify_frame(first)
         if kind in GLUE:
             for i in range(1, thread.GetNumFrames()):
                 frame = thread.GetFrameAtIndex(i)
-                if frame.GetSP() != first.GetSP() or frame.GetPC() != first.GetPC():
+                if not self._same_function_body(frame, first):
                     break
                 if self._classify_frame(frame) == "user":
                     return "user"
         return kind
+
+    def _visible_position(self, thread):
+        """Where the user sees a thread in native code: the newest frame, or the user
+        function it is inlined into, as (function, file, line, stack pointer)."""
+        first = thread.GetFrameAtIndex(0)
+        frame = first
+        if self._classify_frame(first) in GLUE:
+            for i in range(1, thread.GetNumFrames()):
+                candidate = thread.GetFrameAtIndex(i)
+                if not self._same_function_body(candidate, first):
+                    break
+                if self._classify_frame(candidate) == "user":
+                    frame = candidate
+                    break
+        entry = frame.GetLineEntry()
+        return (frame.GetFunctionName(), entry.GetFileSpec().fullpath, entry.GetLine(),
+                frame.GetSP())
 
     def _user_modules(self):
         """Loaded modules that carry debug info and are not the interpreter or system libs."""
@@ -89,6 +106,8 @@ class SteppingMixin:
         candidate. The breakpoints are created once per module and kept disabled.
         """
         for path, module in self._user_modules():
+            if self.traps.covers(path, module):
+                continue  # a large module: entry traps do the same job (entrytraps.py)
             bp = self.user_bps.get(path)
             if bp is None:
                 modules = lldb.SBFileSpecList()
@@ -112,6 +131,7 @@ class SteppingMixin:
                 self.user_bps[path] = bp
             bp.SetThreadID(tid)
             bp.SetEnabled(True)
+        self.traps.begin(tid)
         self.user_bps_on = True
 
     def _step_out_to(self, thread, natives, target_index):
@@ -127,13 +147,21 @@ class SteppingMixin:
         # nothing or ran the program to completion (seen with optimised Cython and Rust).
         # A frame's PC is its return address and its SP is the stack pointer right after
         # the return, so a breakpoint there plus a stack-depth check is exact.
-        target = natives[min(target_index, len(natives) - 1)]
+        target_index = min(target_index, len(natives) - 1)
+        target = natives[target_index]
+        # Unless the call was made by code inlined into the target: then the return
+        # address belongs to the innermost frame of that function's body, and the target's
+        # own PC is merely where the inlined code starts.
+        inner = target_index
+        while inner > 1 and self._same_function_body(natives[inner - 1], target):
+            inner -= 1
+        address = natives[inner].GetPC()
         self._clear_stepout()
         self._discard_plans(thread)
-        bp = self.target.BreakpointCreateByAddress(target.GetPC())
+        bp = self.target.BreakpointCreateByAddress(address)
         bp.SetThreadID(thread.GetThreadID())
         self.stepout = {"bp": bp, "sp": target.GetSP()}
-        self.log("running until return to", target.GetFunctionName(), hex(target.GetPC()))
+        self.log("running until return to", target.GetFunctionName(), hex(address))
         err = self.process.Continue()
         if not err.Success():
             self._clear_stepout()
@@ -144,12 +172,32 @@ class SteppingMixin:
             self.target.BreakpointDelete(self.stepout["bp"].GetID())
             self.stepout = None
 
-    def _step_out_of_glue(self, thread):
-        """Step out to the nearest frame that is user code or the interpreter."""
+    @staticmethod
+    def _same_function_body(frame, other):
+        """True if two frames of a thread are one function's code, one inlined into the other.
+
+        They share the stack pointer; a real caller's is always higher. Their PCs differ
+        in general: LLDB gives the function a frame was inlined into the address where the
+        inlined code starts, and the two only coincide on its first instruction.
+        """
+        return frame.GetSP() == other.GetSP()
+
+    def _step_out_of_glue(self, thread, above=0):
+        """Step out to the nearest frame that is user code or the interpreter.
+
+        `above`: the frame being left, when it is not the newest one (it has glue inlined
+        into it on top).
+        """
         natives = self._native_frames(thread)
-        target_index = 1
+        # A frame with the newest frame's stack pointer is the function that one was
+        # inlined into. The thread is in it right now and its PC is no return address:
+        # running "until return to it" runs until the program comes by again, or to its
+        # end (seen in pydantic-core: stepping out of a function with `map_err` inlined at
+        # the current line ran the program to completion).
+        target_index = above + 1
         while (target_index < len(natives)
-               and self._classify_frame(natives[target_index]) in GLUE):
+               and (self._classify_frame(natives[target_index]) in GLUE
+                    or self._same_function_body(natives[target_index], natives[0]))):
             target_index += 1
         if target_index < len(natives):
             self._step_out_to(thread, natives, target_index)
@@ -161,11 +209,15 @@ class SteppingMixin:
         if not self.py.holds_gil(tid):
             raise DapError("cannot step out: LLDB could not unwind the native stack here")
         self._warn_truncated(natives[-1])
-        self.safe_tid = tid
-        try:
-            self.agent("step", mode="caller", tid=tid, just_my_code=self.just_my_code)
-        finally:
-            self.safe_tid = None
+        if not self.py_step_armed:
+            self.safe_tid = tid
+            try:
+                self.agent("step", mode="caller", tid=tid, just_my_code=self.just_my_code)
+            finally:
+                self.safe_tid = None
+        # else a step in from native code has a Python step armed already: it ends on the
+        # next Python line this thread runs, in a callback or back in the caller. Arming
+        # "stop in the caller" over it would run straight through the callback.
         self._finish_steps(thread, cancel_py=False)
         self.py_step_armed = True
         err = self.process.Continue()
@@ -191,6 +243,7 @@ class SteppingMixin:
         if self.user_bps_on:
             for bp in self.user_bps.values():
                 bp.SetEnabled(False)
+            self.traps.finish()
             self.user_bps_on = False
         if self.native_stepping:
             self._discard_plans(thread)
@@ -292,6 +345,11 @@ class SteppingMixin:
         self.process.SetSelectedThread(thread)
         natives = self._native_frames(thread)
         start = top["index"] if top is not None else 0
+        host = 0
+        if 0 < start < len(natives) and self._same_function_body(natives[start], natives[0]):
+            # The frames above the user's are glue inlined into it: the thread is in the
+            # user's function itself, not in a call it made. Step from where it is.
+            host, start = start, 0
         if mode == "in" and self._control_safe(thread):
             # If the stepped statement calls back into Python, stop on its first line.
             self.safe_tid = tid
@@ -301,6 +359,12 @@ class SteppingMixin:
             except DapError as exc:
                 self.log("cannot arm a Python step from native code:", exc)
         self.native_stepping = {"tid": tid, "hops": 0}
+        if start == 0 and mode != "out":
+            # What the step is repeated with if it only gets through inlined glue, and
+            # where the user is now (see the end of _on_stop).
+            self.native_stepping["again"] = (lldb.SBThread.StepOver if mode == "over"
+                                             else lldb.SBThread.StepInto)
+            self.native_stepping["from"] = self._visible_position(thread)
         self._new_stop()
         if start > 0:
             # Stopped inside a library call made by user code: any step returns to it.
@@ -311,7 +375,7 @@ class SteppingMixin:
             thread.StepInto()
         else:
             # Step out to the next frame worth showing: skip binding glue.
-            self._step_out_of_glue(thread)
+            self._step_out_of_glue(thread, above=host)
         self.running = True
         return None
 
