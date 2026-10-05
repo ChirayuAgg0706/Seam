@@ -330,7 +330,7 @@ class SessionMixin:
         self.safe_tid = thread.GetThreadID()
         self._sync_native_bps()
         if args.get("stopOnEntry"):
-            self.agent("step", mode="any")
+            self.agent("step", mode="any", just_my_code=self.just_my_code)
             self.py_step_armed = True
         return None, lambda: self.event("initialized")
 

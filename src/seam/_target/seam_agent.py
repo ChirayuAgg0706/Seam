@@ -16,6 +16,7 @@ import sys
 import threading
 import traceback
 from _thread import get_ident
+from opcode import opmap
 
 import _seam_trap as _t
 
@@ -55,7 +56,7 @@ _in_dispatch = False
 
 
 class _Step:
-    __slots__ = ("mode", "ident", "frame", "glob", "native_return", "gen")
+    __slots__ = ("mode", "ident", "frame", "glob", "native_return", "gen", "waiting")
 
     def __init__(self, mode, ident, frame, native_return):
         self.mode = mode
@@ -64,6 +65,7 @@ class _Step:
         self.glob = 0
         self.native_return = native_return
         self.gen = _t.step_gen()
+        self.waiting = False  # a step in whose coroutine is suspended (see _on_yield)
 
 
 _DEBUG_LOG = os.environ.get("SEAM_AGENT_LOG")
@@ -442,6 +444,20 @@ _t.set_dormant(_go_dormant)
 
 # ------------------------------------------------------------------- stepping
 
+# What each kind of step listens to: (events of every code object, events of the code of
+# the frame it follows). PY_UNWIND and PY_THROW cannot be asked for per code object.
+_STEP_EVENTS = {
+    "in": (E.LINE | E.PY_UNWIND | E.PY_THROW, E.PY_RETURN | E.PY_YIELD | E.PY_RESUME),
+    "over": (E.PY_UNWIND, E.LINE | E.PY_RETURN),
+    "out": (E.PY_UNWIND, E.PY_RETURN),
+    "caller": (E.PY_UNWIND, E.INSTRUCTION | E.PY_RETURN),
+}
+_CLEANUP_THROW = opmap.get("CLEANUP_THROW")
+_CO_GENERATOR = 0x20
+_CO_ITERABLE_COROUTINE = 0x100  # a generator used as a coroutine (types.coroutine)
+_CO_SUSPENDS = 0x3A0  # generator, coroutine, iterable coroutine or async generator
+
+
 def _finish_step():
     global _step
     _step = None
@@ -459,10 +475,50 @@ def _add_step_local(code, events):
     _apply_local(code)
 
 
+def _generated(frame):
+    """True for code that other code compiled from a string: a dataclass's __init__, a
+    namedtuple's __new__, whatever goes through exec().
+
+    There is no source to show for it, so a step treats it as it treats a library. Code
+    given on the command line (python -c) has nothing below it: that is the program.
+    """
+    if not _just_my_code or frame.f_code.co_filename != "<string>":
+        return False
+    back = frame.f_back
+    while back is not None and (back.f_code.co_filename == "<string>"
+                                or _internal(back.f_code)):
+        back = back.f_back
+    return back is not None
+
+
+def _aim(st, mode, frame):
+    """Make the step follow `frame`: "in", "over", "out", or "caller" (stop as soon as it
+    runs again).
+
+    A step never stops in code that is not the user's (justMyCode). If that is what
+    `frame` is (the event loop that ran a coroutine, a library that called a callback, a
+    breakpoint set in a library), whatever was asked for becomes "the next line of user
+    code this thread runs": a step in, which follows the frame down to its own caller
+    when it returns.
+    """
+    if not _is_user(frame.f_code) or _generated(frame):
+        mode = "in"
+    st.mode = mode
+    st.frame = frame
+    st.waiting = False
+    st.glob, local = _STEP_EVENTS[mode]
+    _add_step_local(frame.f_code, local)
+
+
 def _on_line(code, line):
     if _in_dispatch:
         return None  # code run on behalf of the debugger never stops the debugger
     frame = sys._getframe(1)
+    if code.co_flags & _CO_SUSPENDS and code.co_code[frame.f_lasti] == _CLEANUP_THROW:
+        # From 3.13 on, an exception thrown into a suspended `await` reports the await's
+        # line once more, for the hidden instruction that passes the exception on. The
+        # program is not about to run that line again; the handler's line comes next.
+        return None
     lines = _lines.get(id(code))
     log = 0
     if lines and line in lines:
@@ -478,8 +534,14 @@ def _on_line(code, line):
         if log:
             return (None, code, line, log)
         return mon.DISABLE if not lines or line not in lines else None
-    if st.ident == get_ident() and not _internal(code) and (
-            st.mode == "in" or (st.mode == "over" and frame is st.frame)):
+    if not _is_user(code):
+        # No step ends here, whichever thread it is on: the line need not report again.
+        if log:
+            return (None, code, line, log)
+        return mon.DISABLE if not lines or line not in lines else None
+    if st.ident == get_ident() and (
+            (st.mode == "in" and not st.waiting)
+            or (frame is st.frame and st.mode in ("in", "over"))) and not _generated(frame):
         _finish_step()
         return (None, code, line, R_STEP | log)
     return (None, code, line, log) if log else None
@@ -513,19 +575,11 @@ def _leave_frame(code, unwinding):
     if back is None:
         _finish_step()
         return None
-    st.frame = back
     st.native_return = False
-    if unwinding:
-        # Stop at the next line the caller runs (its except/finally block), or keep
-        # following the exception upwards.
-        st.mode = "over"
-        st.glob = E.PY_UNWIND
-        _add_step_local(back.f_code, E.LINE | E.PY_RETURN | E.PY_YIELD)
-    else:
-        # Stop in the caller as soon as it resumes, still on the calling line.
-        st.mode = "caller"
-        st.glob = E.PY_UNWIND
-        _add_step_local(back.f_code, E.INSTRUCTION | E.PY_RETURN | E.PY_YIELD)
+    # With an exception on its way there: stop at the next line the caller runs (its
+    # except/finally block), or keep following the exception upwards. Otherwise stop in
+    # the caller as soon as it resumes, still on the calling line.
+    _aim(st, "over" if unwinding else "caller", back)
     _update_global()
     return None
 
@@ -536,6 +590,40 @@ def _on_return(code, offset, retval):
 
 def _on_unwind(code, offset, exc):
     return _leave_frame(code, True)
+
+
+def _on_yield(code, offset, value):
+    """A generator or coroutine suspends. That is not a return: the step stays with it.
+
+    Only a step in listens to this. Stepping over or out, nothing but the frame's own
+    events is being listened to, so whatever runs until the frame is resumed goes by.
+    """
+    st = _current()
+    if st is None or _in_dispatch or st.mode != "in" or sys._getframe(1) is not st.frame:
+        return None
+    if (code.co_flags & (_CO_GENERATOR | _CO_ITERABLE_COROUTINE) == _CO_GENERATOR
+            or type(value).__name__ == "async_generator_wrapped_value"):
+        # A `yield`: the value goes to the consumer, which runs next. Stepping in
+        # follows it there.
+        return None
+    # An `await` that suspends hands the thread to the event loop. The tasks that run
+    # meanwhile are not something this line called: stop listening to every line until
+    # the frame is resumed.
+    st.waiting = True
+    st.glob &= ~E.LINE
+    _update_global()
+    return None
+
+
+def _on_resume(code, offset, exc=None):
+    """The suspended coroutine a step in is waiting for runs again (resumed or thrown into)."""
+    st = _current()
+    if st is None or _in_dispatch or not st.waiting or sys._getframe(1) is not st.frame:
+        return None
+    st.waiting = False
+    st.glob |= E.LINE
+    _update_global()
+    return None
 
 
 def _on_instruction(code, offset):
@@ -786,47 +874,32 @@ def _cmd_exception(req):
 
 
 def _cmd_step(req):
-    global _step
+    global _step, _just_my_code
     if _step is not None:
         _finish_step()
+    # The adapter says with every step what counts as the user's code: a session that
+    # never set a breakpoint has not told the agent yet.
+    just_my_code = bool(req.get("just_my_code", _just_my_code))
+    if just_my_code != _just_my_code:
+        _just_my_code = just_my_code
+        _user_code.clear()
     ident = _ident_for(req.get("tid")) or get_ident()
     frames = _frames(ident)
     mode = req["mode"]
     if mode == "any":
-        # Stop on the next line of Python this thread runs, in whatever frame: used for
-        # stop-on-entry and for stepping from native code into a Python callback.
+        # Stop on the next line of the user's Python this thread runs, in whatever frame:
+        # used for stop-on-entry and for stepping from native code into a Python callback.
         _step = st = _Step("in", ident, None, False)
         st.glob = E.LINE
-        _update_slow()
-        _update_global()
-        mon.restart_events()
-        return True
-    if not frames:
-        raise LookupError("no Python frame to step in")
-    frame = frames[req.get("index", 0)]
-    if mode == "caller":
-        # Native code has just returned into the interpreter: stop as soon as the
-        # calling Python frame resumes (or, if the call raised, where it is handled).
-        _step = st = _Step("caller", ident, frame, bool(req.get("native_return")))
-        st.glob = E.PY_UNWIND
-        _add_step_local(frame.f_code, E.INSTRUCTION | E.PY_RETURN | E.PY_YIELD)
-        _update_slow()
-        _update_global()
-        mon.restart_events()
-        return True
-    _step = st = _Step(mode, ident, frame, bool(req.get("native_return")))
-    if mode == "in":
-        st.glob = E.LINE | E.PY_UNWIND
-        _add_step_local(frame.f_code, E.PY_RETURN | E.PY_YIELD)
-    elif mode == "over":
-        st.glob = E.PY_UNWIND
-        _add_step_local(frame.f_code, E.LINE | E.PY_RETURN | E.PY_YIELD)
-    elif mode == "out":
-        st.glob = E.PY_UNWIND
-        _add_step_local(frame.f_code, E.PY_RETURN | E.PY_YIELD)
-    else:
-        _step = None
+    elif mode not in _STEP_EVENTS:
         raise ValueError("unknown step mode %r" % mode)
+    elif not frames:
+        raise LookupError("no Python frame to step in")
+    else:
+        # "caller": native code has just returned into the interpreter: stop as soon as
+        # the calling Python frame resumes (or, if the call raised, where it is handled).
+        _step = st = _Step(mode, ident, None, bool(req.get("native_return")))
+        _aim(st, mode, frames[req.get("index", 0)])
     _update_slow()
     _update_global()
     mon.restart_events()
@@ -1011,7 +1084,9 @@ def _install():
     mon.register_callback(TOOL, E.LINE, _t.line_cb)
     mon.register_callback(TOOL, E.PY_START, _t.wrap(_on_start))
     mon.register_callback(TOOL, E.PY_RETURN, _t.wrap(_on_return))
-    mon.register_callback(TOOL, E.PY_YIELD, _t.wrap(_on_return))
+    mon.register_callback(TOOL, E.PY_YIELD, _t.wrap(_on_yield))
+    mon.register_callback(TOOL, E.PY_RESUME, _t.wrap(_on_resume))
+    mon.register_callback(TOOL, E.PY_THROW, _t.wrap(_on_resume))
     mon.register_callback(TOOL, E.PY_UNWIND, _t.wrap(_on_unwind))
     mon.register_callback(TOOL, E.INSTRUCTION, _t.wrap(_on_instruction))
     mon.register_callback(TOOL, E.RAISE, _t.wrap(_on_raise))

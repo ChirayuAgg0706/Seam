@@ -165,7 +165,7 @@ class SteppingMixin:
         self._warn_truncated(natives[-1])
         self.safe_tid = tid
         try:
-            self.agent("step", mode="caller", tid=tid)
+            self.agent("step", mode="caller", tid=tid, just_my_code=self.just_my_code)
         finally:
             self.safe_tid = None
         self._finish_steps(thread, cancel_py=False)
@@ -218,7 +218,7 @@ class SteppingMixin:
             return False
         self.safe_tid = tid
         try:
-            self.agent("step", mode="caller", tid=tid)
+            self.agent("step", mode="caller", tid=tid, just_my_code=self.just_my_code)
         except DapError as exc:
             self.log("cannot hand the step to Python:", exc)
             self.safe_tid = None
@@ -269,8 +269,9 @@ class SteppingMixin:
                 if record["cls"] == "user":
                     native_return = True
                     break
+            # justMyCode travels with the step: the agent decides where a step may end.
             request = {"mode": mode, "tid": tid, "index": top["index"],
-                       "native_return": native_return}
+                       "native_return": native_return, "just_my_code": self.just_my_code}
             if self.safe_tid is not None:
                 self.agent("step", **request)
             else:
@@ -291,7 +292,7 @@ class SteppingMixin:
             # If the stepped statement calls back into Python, stop on its first line.
             self.safe_tid = tid
             try:
-                self.agent("step", mode="any", tid=tid)
+                self.agent("step", mode="any", tid=tid, just_my_code=self.just_my_code)
                 self.py_step_armed = True
             except DapError as exc:
                 self.log("cannot arm a Python step from native code:", exc)
