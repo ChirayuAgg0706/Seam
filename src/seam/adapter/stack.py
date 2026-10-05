@@ -85,6 +85,10 @@ class StackMixin:
             return None
         if not os.path.isabs(filename):
             filename = os.path.join(self.cwd, filename)
+            if not os.path.exists(filename):
+                # Not a file here: a frame Cython added to a traceback carries the .pyx
+                # path as it was at build time. Better no source than one that is not there.
+                return None
         return os.path.realpath(filename)
 
     def _merged_stack(self, thread):
