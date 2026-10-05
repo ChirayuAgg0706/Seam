@@ -151,9 +151,14 @@ class StopsMixin:
         value = thread.GetFrameAtIndex(0).EvaluateExpression(condition, self._expr_options(5))
         error = value.GetError()
         if not error.Success():
+            # A child is under way if the debug server announced one that has not been
+            # reported done, or if a thread's stop reason at this very stop is the fork.
+            under_way = bool(self.vfork_children) or any(
+                t.GetStopReason() in FORK_STOPS for t in self.process)
             self.log("condition", repr(condition), "could not be checked:", error.GetCString(),
-                     "- children made by vfork under way:", dict(self.vfork_children))
-            return bool(self.vfork_children)
+                     "- child under way:", under_way, dict(self.vfork_children),
+                     ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40)) for t in self.process])
+            return under_way
         if value.GetValueAsUnsigned(0) != 0:
             return False
         self.log("LLDB stopped at breakpoint", bp.GetID(), "although its condition",
