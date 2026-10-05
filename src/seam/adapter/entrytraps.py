@@ -28,6 +28,7 @@ import array
 import os
 import signal
 import struct
+import time
 
 import lldb
 
@@ -122,9 +123,11 @@ class EntryTraps:
         self.resolver.AddModule(module)
         modules = lldb.SBFileSpecList()
         modules.Append(module.GetFileSpec())
+        started = time.monotonic()
         bp = self.resolver.BreakpointCreateByRegex(
             ".", lldb.eLanguageTypeUnknown, modules, lldb.SBFileSpecList())
         count = bp.GetNumLocations()
+        resolved = time.monotonic()
         sites = set()
         for i in range(count):
             address = bp.GetLocationAtIndex(i).GetAddress()
@@ -133,7 +136,8 @@ class EntryTraps:
                 if load != lldb.LLDB_INVALID_ADDRESS:
                     sites.add(load)
         self.resolver.BreakpointDelete(bp.GetID())
-        a.log("entry traps for", path, len(sites), "of", count)
+        a.log("entry traps for", path, len(sites), "of", count, "(resolved in %.2f s, "
+              "classified in %.2f s)" % (resolved - started, time.monotonic() - resolved))
         if not sites:
             return None
         sites = sorted(sites)

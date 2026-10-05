@@ -167,11 +167,12 @@ class StackMixin:
             last_python = len(out)
         if last_python is not None:
             del out[last_python:]  # thread bootstrap frames below the oldest Python frame
-        # Glue inlined into a user function shares that function's PC and SP. The thread
-        # is physically in the user function, so that is the frame to show on top.
+        # Glue inlined into a user function shares that function's stack pointer (and its
+        # PC only on the inlined code's first instruction). The thread is physically in
+        # the user function, so that is the frame to show on top.
         if out and out[0]["kind"] == "native" and out[0]["cls"] in GLUE:
             for position, record in enumerate(out):
-                if record["kind"] != "native" or record["at"] != out[0]["at"]:
+                if record["kind"] != "native" or record["at"][1] != out[0]["at"][1]:
                     break
                 if record["cls"] == "user":
                     del out[:position]
