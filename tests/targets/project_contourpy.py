@@ -1,4 +1,7 @@
-"""Target of the real-project scenarios: contourpy (pybind11). python project_contourpy.py [error]"""
+"""Target of the real-project scenarios: contourpy (pybind11).
+
+python project_contourpy.py [error]
+"""
 import sys
 
 import numpy as np
@@ -11,7 +14,7 @@ def main(mode):
     lines = generator.lines(0.5)  # lines
     print("lines", len(lines), "points", len(lines[0]))  # print
     if mode == "error":
-        contour_generator(z=np.zeros((1, 1)))  # error
+        generator.filled(1.0, 0.0)  # error
 
 
 main(sys.argv[1] if len(sys.argv) > 1 else "")  # module-main
