@@ -76,6 +76,8 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.pending_sync = False
         self.pause_requested = False
         self.output_thread = None
+        self.output_master = None     # the adapter's end of the program's pty, while open
+        self.output_lock = threading.Lock()  # held while output is read and forwarded
         self.framework_paths = FRAMEWORK_PATHS
         self.show_glue_frames = False
         self.user_bps = {}            # module path -> breakpoint on all its user functions
@@ -102,6 +104,9 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.post_mortem = {}         # tid -> frames of the uncaught exception shown there
         self.throw_stop = False       # stopped at a C++ throw or Rust panic
         self.leftover_stops = 0       # stops ignored as leftovers (see _is_leftover)
+        self.program_group = None     # process group of a launched program, if it leads one
+        self.child_noticed = False    # the user has been told that children are not debugged
+        self.vfork_children = {}      # parent thread -> pid of a vfork child not yet on its own
         self._watch_exit_packets()
 
 

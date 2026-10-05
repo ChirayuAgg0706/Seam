@@ -1,6 +1,7 @@
 """Starting and ending a session: launch, attach, the terminal, exit, detach."""
 import json
 import os
+import select
 import shutil
 import signal
 import socket
@@ -14,8 +15,9 @@ import lldb
 
 from . import pyread
 from .common import (
-    CONSOLES, DapError, EVAL_PLEASE_STOP_BIT, EXIT_PACKET, FAULT_SIGNALS, FRAMEWORK_PATHS,
-    HELPER_SYMBOLS, LLDB_SIGNALS, PRIVATE_ENV, TARGET_DIR, TERMINAL_HOLDER, TERMINAL_SIGNALS,
+    CONSOLES, DapError, EVAL_PLEASE_STOP_BIT, EXIT_PACKET, FAULT_SIGNALS, FORK_PACKET,
+    FRAMEWORK_PATHS, HELPER_SYMBOLS, LLDB_SIGNALS, PRIVATE_ENV, TARGET_DIR, TERMINAL_HOLDER,
+    TERMINAL_SIGNALS,
 )
 
 
@@ -26,16 +28,52 @@ class SessionMixin:
         LLDB's API reports both as an exit status (SIGKILL and `sys.exit(9)` both read 9,
         with no description). The difference survives in one place only: the last packet
         of the debug-server protocol. So that channel is logged to a callback which keeps
-        nothing but that packet.
+        nothing but that packet, and the ones that report a child process.
         """
         def on_log(line):
             match = EXIT_PACKET.search(line)
             if match:
                 self.exit_packet = (match.group(1), int(match.group(2), 16))
+            elif "fork" in line and not self.child_noticed:
+                self._on_fork_packet(line)
 
         self._on_log = on_log  # LLDB does not keep the callable alive
         self.dbg.SetLoggingCallback(on_log)
         self.dbg.HandleCommand("log enable gdb-remote packets")
+
+    def _on_fork_packet(self, line):
+        """Say once that the program has started a child process Seam does not debug.
+
+        LLDB deals with a fork by itself (it takes its breakpoints out of the child and
+        lets the child go) and reports it to nobody; the debug server's stop reply is the
+        one place where it shows. Only a child that runs Python is worth a message: a
+        fork, which is a copy of the program, or a new process whose executable is a
+        Python interpreter. The latter is looked at when the debug server reports that
+        the child has left the parent's memory ("vforkdone"), which is after its exec.
+        Called on one of LLDB's threads.
+        """
+        match = FORK_PACKET.search(line)
+        if not match:
+            return
+        thread, kind, child = match.groups()
+        if kind == "vfork":
+            self.vfork_children[thread] = int(child, 16)
+            return
+        if kind == "vforkdone":
+            pid = self.vfork_children.pop(thread, None)
+            try:
+                name = os.path.basename(os.readlink("/proc/%d/exe" % pid))
+            except (OSError, TypeError):
+                return  # gone already, or a vfork that was never reported
+            if not name.startswith("python"):
+                return
+        else:
+            pid = int(child, 16)
+        self.child_noticed = True
+        self.event("output", {"category": "console", "output":
+                   "Seam: the program started a child process (pid %d). Seam debugs only the "
+                   "program itself: child processes run freely, and breakpoints in them do "
+                   "not stop.\n" % pid})
 
     def _drain_output(self):
         for getter, category in ((self.process.GetSTDOUT, "stdout"),
@@ -50,23 +88,42 @@ class SessionMixin:
         """Forward everything the target writes to its pty as DAP output events."""
         try:
             while True:
-                data = os.read(master, 65536)
-                if not data:
-                    break
-                self.event("output", {"category": "stdout",
-                                      "output": data.decode("utf-8", "replace")})
+                select.select([master], [], [])
+                # Reading and forwarding are one step for _flush_output.
+                with self.output_lock:
+                    data = os.read(master, 65536)
+                    if not data:
+                        break
+                    self.event("output", {"category": "stdout",
+                                          "output": data.decode("utf-8", "replace")})
         except OSError:
             pass  # EIO: every writer has closed the pty
         finally:
-            os.close(master)
+            with self.output_lock:
+                self.output_master = None
+                os.close(master)
+
+    def _flush_output(self, timeout=2):
+        """Wait until what the program wrote before it ended has been forwarded.
+
+        The wait is for the pty to be empty, not for its end: a child process that
+        outlives the program keeps the pty open for as long as it likes (and what it
+        writes later is still forwarded, for as long as the session lasts).
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.output_lock:
+                master = self.output_master
+                if master is None or not select.select([master], [], [], 0)[0]:
+                    return
+            time.sleep(0.005)
 
     def _on_exit(self):
         if self.exited:
             return
         self.exited = True
         self.running = False
-        if self.output_thread is not None:
-            self.output_thread.join(2)
+        self._flush_output()
         self._drain_output()
         self._release_terminal()
         code = self.process.GetExitStatus()
@@ -92,6 +149,7 @@ class SessionMixin:
                 self._detach()
             else:
                 self.process.Kill()
+                self._signal_children(signal.SIGKILL)
                 self.exited = True
         for path in self.temp_files:
             try:
@@ -100,6 +158,21 @@ class SessionMixin:
                 pass
         self.temp_files = []
         self._release_terminal()
+
+    def _signal_children(self, number):
+        """Send a signal to the child processes of a program Seam launched.
+
+        LLDB starts the program as the leader of a process group of its own, so that
+        group is the program plus those of its descendants that have not left it. Stopping
+        the session ends them with the program, as Ctrl-C or closing the terminal would
+        when it runs by hand. A child that moved to a session or group of its own (a
+        daemon) is not touched; nor is anything when the program ends by itself.
+        """
+        if self.program_group is not None:
+            try:
+                os.killpg(self.program_group, number)
+            except OSError:
+                pass  # nobody is left in the group
 
     def _release_terminal(self):
         """Hang up on the terminal holder: the program is gone, the terminal is free."""
@@ -229,7 +302,13 @@ class SessionMixin:
             raise DapError("launch failed: %s" % err.GetCString())
         pid = self.process.GetProcessID()
         self._note("launched %d" % pid)
+        try:
+            if os.getpgid(pid) == pid:
+                self.program_group = pid
+        except OSError:
+            pass
         if master is not None:
+            self.output_master = master
             self.output_thread = threading.Thread(target=self._pump_output, args=(master,),
                                                   daemon=True)
             self.output_thread.start()
@@ -315,7 +394,12 @@ class SessionMixin:
                     if (kind == "signal" and value.isdigit() and not self.exited
                             and int(value) in TERMINAL_SIGNALS):
                         self.log("terminal: signal", value)
-                        os.kill(pid, int(value))
+                        if self.program_group is not None:
+                            # As the terminal itself would: to the program and to the
+                            # children it may be waiting for.
+                            os.killpg(self.program_group, int(value))
+                        else:
+                            os.kill(pid, int(value))
         except OSError:
             pass
 

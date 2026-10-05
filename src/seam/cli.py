@@ -157,7 +157,12 @@ def _relay(proc, ours, notes_read, log_path, lldb_output):
     # connection close with no explanation.
     for pid in launched:
         try:
-            os.kill(pid, signal.SIGKILL)
+            if os.getpgid(pid) == pid:
+                # LLDB started it as the leader of its own process group: the children
+                # still in that group go with it, as when the session is stopped.
+                os.killpg(pid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
     reason = "signal %d" % -status if status < 0 else "status %d" % status

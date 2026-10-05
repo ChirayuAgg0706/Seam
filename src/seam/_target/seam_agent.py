@@ -33,7 +33,7 @@ LOG_FLAG = 0x100  # added to a reason (or alone): logpoint messages are waiting
 
 _log_pending = []  # logpoint messages not yet collected by the adapter
 
-_exc_filters = frozenset()  # of "raised", "uncaught"
+_exc_filters = frozenset()  # of "raised", "uncaught", "user_unhandled"
 _just_my_code = True
 _exc_pending = None  # (exception, break mode) of the stop in progress, until fetched
 _post_mortem = None  # frames of an uncaught exception, newest first: [(frame, line)]
@@ -137,7 +137,8 @@ def _compute(code):
 
 def _update_global():
     want = ((E.PY_START if _bps or _func_bps else 0) | (_step.glob if _step else 0)
-            | (E.RAISE if "raised" in _exc_filters else 0))
+            | (E.RAISE if "raised" in _exc_filters else 0)
+            | (E.PY_UNWIND if "user_unhandled" in _exc_filters else 0))
     if mon.get_events(TOOL) != want:
         mon.set_events(TOOL, want)
 
@@ -327,12 +328,67 @@ def _on_thread_exception(args):
     return _on_uncaught(args.exc_value)
 
 
+def _user_unhandled(code, offset, exc):
+    """A frame is unwinding: is an exception leaving the user's code for a library?
+
+    That is the moment a frame of user code hands an exception to library code that
+    called it: a failing assert going back to the test runner, an error in a callback.
+    Whether user code further out catches it later is not asked. Exceptions that are not
+    errors are left alone: the ones outside `Exception` (exits, cancellations, a test
+    runner's "skip") and the ones that end an iteration.
+    """
+    if (_in_dispatch or not isinstance(exc, Exception)
+            or isinstance(exc, (StopIteration, StopAsyncIteration)) or not _is_user(code)):
+        return None
+    frame = sys._getframe(1)
+    back = frame.f_back
+    while back is not None and _internal(back.f_code):
+        back = back.f_back  # the import system and runpy are nobody's caller
+    if back is None or _is_user(back.f_code):
+        # Still in user code; or nobody is left to catch it, which is "uncaught".
+        return None
+    # The unwinding frame is still on the stack, at the line the exception passed. The
+    # frames it came through have gone; the traceback has them, as for an uncaught one.
+    frames = []
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame is not frame and not _internal(tb.tb_frame.f_code):
+            frames.append((tb.tb_frame, tb.tb_lineno))
+        tb = tb.tb_next
+    frames.reverse()
+    _stop_for_exception(exc, "userUnhandled", frames)
+    return (None, code, frame.f_lineno or 0, R_EXCEPTION)
+
+
+_unwind_hooks = None     # (stepping's PY_UNWIND callback, the same with the filter in front)
+_unwind_checked = False  # the second of them is the one registered
+
+
+def _watch_unwinding(wanted):
+    """Put "user_unhandled" in front of stepping's PY_UNWIND callback, or take it out."""
+    global _unwind_hooks, _unwind_checked
+    if wanted == _unwind_checked:
+        return
+    if _unwind_hooks is None:
+        # The event otherwise belongs to stepping alone. Whatever stepping registered is
+        # chained to in C, because its handler finds its frame by counting from itself.
+        # Both callables are kept for good: the interpreter holds no reference to a
+        # callback while it runs, and a stop may be inside the one being replaced.
+        stepping = mon.register_callback(TOOL, E.PY_UNWIND, None)
+        checked = (_t.chain(_user_unhandled, stepping) if stepping is not None
+                   else _t.wrap(_user_unhandled))
+        _unwind_hooks = (stepping, checked)
+    _unwind_checked = wanted
+    mon.register_callback(TOOL, E.PY_UNWIND, _unwind_hooks[wanted])
+
+
 def _set_exception_filters(filters, just_my_code):
     global _exc_filters, _just_my_code, _thread_hook
     if just_my_code != _just_my_code:
         _just_my_code = just_my_code
         _user_code.clear()
     _exc_filters = frozenset(filters)
+    _watch_unwinding("user_unhandled" in _exc_filters)
     if "uncaught" in _exc_filters:
         _t.set_uncaught(_on_uncaught)
         if _thread_hook is None:
@@ -346,6 +402,42 @@ def _set_exception_filters(filters, just_my_code):
                 threading.excepthook = _thread_hook[1]
             _thread_hook = None
     _update_global()
+
+
+# ------------------------------------------------------------ child processes
+
+_dormant = False  # True in a forked child, where the helper has switched itself off
+
+
+def _go_dormant():
+    """Switch the helper off for good. Runs in a child process, right after the fork.
+
+    Seam does not follow children: LLDB lets a forked child go, and nobody would ever
+    answer a trap there. But the child starts as a copy of the parent, with the parent's
+    breakpoints, exception filters and perhaps a step armed in its copy of the helper.
+    Leave no trace of them: no monitoring events, no hooks, and the debugger's slot in
+    sys.monitoring free for whoever wants it in the child.
+    """
+    global _dormant, _in_dispatch
+    if _dormant:
+        return
+    _dormant = True
+    _in_dispatch = False  # the fork may have come from an expression Seam was evaluating
+    _cmd_shutdown(None)
+    del _log_pending[:]
+    _refs.clear()
+    for event in vars(E).values():
+        try:
+            mon.register_callback(TOOL, event, None)
+        except ValueError:
+            pass  # NO_EVENTS, or a name that stands for several events
+    mon.free_tool_id(TOOL)
+
+
+# os.fork() runs the first; a fork made by native code only sets a flag in the C helper,
+# which then calls the function the first time the child reaches any of Seam's callbacks.
+os.register_at_fork(after_in_child=_go_dormant)
+_t.set_dormant(_go_dormant)
 
 
 # ------------------------------------------------------------------- stepping

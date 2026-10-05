@@ -12,8 +12,10 @@
 #define PY_SSIZE_T_CLEAN
 #define Py_LIMITED_API 0x030C0000
 #include <Python.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SEAM_REQ_CAP (1 << 20)
 #define EXPORT __attribute__((visibility("default"), used))
@@ -47,11 +49,60 @@ seam_trap(PyObject *code, long line, long reason)
 /* Call through a volatile pointer so the arguments are always materialised. */
 static void (*volatile trap_ptr)(PyObject *, long, long) = seam_trap;
 
+/*
+ * Child processes. Nobody debugs a child the program forks: LLDB lets it go at the fork.
+ * It starts as a copy of the parent, though, helper and all, with the parent's
+ * breakpoints, and it must never trap or pay for them. The agent switches itself off in
+ * a child through os.register_at_fork. A fork made by native code skips those hooks, so
+ * the flag below (set by fork() itself) makes every entry point a no-op in a child and
+ * has the agent switch itself off the first time one is reached.
+ */
+static volatile int g_forked = 0;
+static PyObject *g_go_dormant = NULL; /* agent function that switches everything off */
+
+static void
+forked_child(void)
+{
+    g_forked = 1;
+}
+
+/* True in a forked child. The first call there also runs the agent's switch-off. */
+static int
+dormant(void)
+{
+    if (!g_forked) {
+        return 0;
+    }
+    if (g_go_dormant != NULL) {
+        PyObject *fn = g_go_dormant;
+        g_go_dormant = NULL;
+        PyObject *saved = PyErr_GetRaisedException();
+        PyObject *res = PyObject_CallNoArgs(fn);
+        if (res == NULL) {
+            PyErr_WriteUnraisable(fn);
+        }
+        Py_XDECREF(res);
+        Py_DECREF(fn);
+        PyErr_SetRaisedException(saved);
+    }
+    return 1;
+}
+
+static PyObject *
+trap_set_dormant(PyObject *mod, PyObject *fn)
+{
+    (void)mod;
+    Py_INCREF(fn);
+    Py_XDECREF(g_go_dormant);
+    g_go_dormant = fn;
+    Py_RETURN_NONE;
+}
+
 static int
 dispatch_buffer(const char *buf, long len)
 {
-    if (g_dispatch == NULL) {
-        return -1;
+    if (g_dispatch == NULL || g_forked) {
+        return -1; /* in a child: a request queued before the fork is not for it */
     }
     int rc = -2;
     PyObject *saved = PyErr_GetRaisedException();
@@ -75,6 +126,12 @@ dispatch_buffer(const char *buf, long len)
     }
     if (rc != 0) {
         PyErr_Clear();
+    }
+    if (g_forked) {
+        /* The request (an expression typed into the debug console) forked, and this is
+         * the child coming back from it. The caller is the debugger, which is not here:
+         * there is nothing to return to. */
+        _exit(0);
     }
     PyErr_SetRaisedException(saved);
     return rc;
@@ -111,6 +168,9 @@ seam_pending(void *arg)
 static PyObject *
 run_handler(PyObject *handler, PyObject *args)
 {
+    if (dormant()) {
+        Py_RETURN_NONE;
+    }
     PyObject *r = PyObject_CallObject(handler, args);
     if (r == NULL) {
         PyErr_WriteUnraisable(handler);
@@ -246,6 +306,10 @@ line_cb(PyObject *mod, PyObject *const *args, Py_ssize_t nargs)
     if (nargs != 2) {
         Py_RETURN_NONE;
     }
+    if (dormant()) {
+        Py_INCREF(g_disable);
+        return g_disable;
+    }
     if (!g_slow) {
         PyObject *key = PyLong_FromVoidPtr(args[0]);
         if (key != NULL) {
@@ -313,6 +377,7 @@ static PyMethodDef methods[] = {
     {"wrap", trap_wrap, METH_O, "Wrap a Python handler so the trap fires from C."},
     {"chain", trap_chain, METH_VARARGS, "chain(handler, next): handler (may trap), then next."},
     {"set_uncaught", trap_set_uncaught, METH_O, "Handler for uncaught exceptions, or None."},
+    {"set_dormant", trap_set_dormant, METH_O, "Function that switches the agent off in a child."},
     {"line_cb", (PyCFunction)(void (*)(void))line_cb, METH_FASTCALL, "LINE callback."},
     {NULL, NULL, 0, NULL},
 };
@@ -325,5 +390,10 @@ static struct PyModuleDef moduledef = {
 PyMODINIT_FUNC
 PyInit__seam_trap(void)
 {
+    static int registered = 0;
+    if (!registered) {
+        pthread_atfork(NULL, NULL, forked_child);
+        registered = 1;
+    }
     return PyModule_Create(&moduledef);
 }

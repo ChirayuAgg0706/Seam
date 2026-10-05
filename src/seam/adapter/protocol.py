@@ -117,22 +117,59 @@ class ProtocolMixin:
                 return addr, ctx.GetModule()
         return None, None
 
-    def _expr_options(self, timeout_s=30):
+    def _expr_options(self, timeout_s=30, unwind=True):
         opts = lldb.SBExpressionOptions()
         opts.SetLanguage(lldb.eLanguageTypeC)
         opts.SetStopOthers(True)
         opts.SetTryAllThreads(False)
         opts.SetIgnoreBreakpoints(True)
-        opts.SetUnwindOnError(True)
+        opts.SetUnwindOnError(unwind)
         opts.SetSuppressPersistentResult(True)
         opts.SetTimeoutInMicroSeconds(int(timeout_s * 1000000))
         return opts
 
-    def _call(self, thread, expr, timeout_s=30):
-        value = thread.GetFrameAtIndex(0).EvaluateExpression(expr, self._expr_options(timeout_s))
-        err = value.GetError()
-        if not err.Success():
-            raise DapError("call into the target failed: %s" % err.GetCString())
+    def _evaluate(self, frame, expr, timeout_s):
+        """Evaluate an LLDB expression that may run the user's code.
+
+        Returns the SBValue and, if the evaluation failed, what went wrong.
+
+        The code may start a child process (`subprocess.run(...)` typed into the debug
+        console). To a running expression a fork is a stop it has no explanation for,
+        and with LLDB's "unwind on error" that ends the evaluation on the spot: LLDB puts
+        the registers back, never lets go of the child (which stays stopped under the
+        debug server for good), and the session is lost. With the option off LLDB deals
+        with the fork as it does at any other time and the evaluation carries on. So it
+        is off here, and an evaluation that really fails is unwound by hand.
+        """
+        value = frame.EvaluateExpression(expr, self._expr_options(timeout_s, unwind=False))
+        error = value.GetError()
+        if error.Success():
+            return value, None
+        thread = frame.GetThread()
+        self.log("evaluation failed:", error.GetCString(), "- stop reason",
+                 thread.GetStopReason(), thread.GetStopDescription(80))
+        thread.UnwindInnermostExpression()
+        # Left to itself, the stop that ended the evaluation is also reported to the
+        # listener, where it would be taken for news once the process runs again.
+        stale = lldb.SBEvent()
+        while self.listener.GetNextEventForBroadcasterWithType(
+                self.process.GetBroadcaster(), lldb.SBProcess.eBroadcastBitStateChanged, stale):
+            self.log("dropped the failed evaluation's stop event: state",
+                     lldb.SBProcess.GetStateFromEvent(stale))
+        # LLDB's advice on how to unwind does not apply: that has just been done.
+        text = (error.GetCString() or "evaluation failed").split("\nThe process has been left")[0]
+        return value, text.strip()
+
+    def _call(self, thread, expr, timeout_s=30, user_code=False):
+        """Call a function in the target. `user_code`: it may run code of the user's."""
+        frame = thread.GetFrameAtIndex(0)
+        if user_code:
+            value, problem = self._evaluate(frame, expr, timeout_s)
+        else:
+            value = frame.EvaluateExpression(expr, self._expr_options(timeout_s))
+            problem = None if value.GetError().Success() else value.GetError().GetCString()
+        if problem is not None:
+            raise DapError("call into the target failed: %s" % problem)
         return value.GetValueAsSigned()
 
     def _thread(self, tid):
@@ -153,7 +190,7 @@ class ProtocolMixin:
         self._write(self.sym["seam_req_buf"], data)
         self._write(self.sym["seam_req_len"], struct.pack("<q", len(data)))
         rc = self._call(self._thread(self.safe_tid),
-                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"])
+                        "((int(*)(void))%d)()" % self.sym["seam_dispatch"], user_code=True)
         if rc != 0:
             raise DapError("the Seam agent failed to answer (code %d)" % rc)
         ptr = struct.unpack("<Q", self._read(self.sym["seam_resp_ptr"], 8))[0]

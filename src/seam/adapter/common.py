@@ -30,12 +30,16 @@ EXCEPTION_FILTERS = [
     {"filter": "raised", "label": "Raised Python exceptions", "default": False,
      "description": "Stop when an exception is raised in your code, or first reaches it "
                     "from a library, even if it is handled afterwards."},
+    {"filter": "user_unhandled", "label": "User-unhandled Python exceptions", "default": False,
+     "description": "Stop when an exception leaves your code for the library code that "
+                    "called it: a failing assert on its way back to the test runner, an "
+                    "error in a callback or a request handler."},
     {"filter": "cpp_throw", "label": "C++ throw", "default": False,
      "description": "Stop when native code throws a C++ exception."},
     {"filter": "rust_panic", "label": "Rust panic", "default": False,
      "description": "Stop when Rust code panics."},
 ]
-PYTHON_EXCEPTION_FILTERS = ("uncaught", "raised")
+PYTHON_EXCEPTION_FILTERS = ("uncaught", "raised", "user_unhandled")
 
 HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",
@@ -68,6 +72,12 @@ FAULT_SIGNALS = ("SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT")
 LLDB_SIGNALS = ("SIGTRAP", "SIGSTOP")
 # The final stop reply of the debug-server protocol: W<code> exited, X<signal> killed.
 EXIT_PACKET = re.compile(r"read packet: \$([WX])([0-9a-fA-F]{2})")
+# A stop reply that reports a child process: the thread that made it, then "fork" or
+# "vfork" with the child's pid, or "vforkdone" once a vfork child has left the parent's
+# memory (it has called exec, or exited).
+FORK_PACKET = re.compile(
+    r"read packet: \$T[0-9a-fA-F]{2}thread:(?:p[0-9a-f]+\.)?([0-9a-f]+);.*?"
+    r"reason:(fork|vforkdone|vfork);(?:.*?fork:p([0-9a-f]+)\.)?")
 
 UNSAFE_MESSAGE = (
     "Seam cannot run Python here: the process is stopped in native code, where the "

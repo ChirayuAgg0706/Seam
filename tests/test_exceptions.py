@@ -17,7 +17,7 @@ def names(stack):
 def test_filters_are_advertised(dap, capi):
     dap.launch(EXC, dap.python, args=["none"], env=capi.env)
     filters = {f["filter"]: f for f in dap.capabilities["exceptionBreakpointFilters"]}
-    assert set(filters) == {"uncaught", "raised", "cpp_throw", "rust_panic"}
+    assert set(filters) == {"uncaught", "raised", "user_unhandled", "cpp_throw", "rust_panic"}
     assert filters["uncaught"]["default"] is True and filters["raised"]["default"] is False
     assert dap.wait_exit() == 0
 

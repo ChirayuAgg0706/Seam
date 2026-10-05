@@ -142,9 +142,9 @@ class BreakpointsMixin:
         frame = thread.GetFrameAtIndex(0)
 
         def value_of(expression):
-            value = frame.EvaluateExpression(expression, self._expr_options(5))
-            if not value.GetError().Success():
-                return "{%s}" % (value.GetError().GetCString() or "error").strip()
+            value, problem = self._evaluate(frame, expression, 5)
+            if problem is not None:
+                return "{%s}" % problem
             return value.GetSummary() or value.GetValue() or ""
 
         self.event("output", {"category": "console",
