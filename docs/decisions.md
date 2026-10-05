@@ -1017,7 +1017,10 @@ same CFA if no watched access happens between them. Globals have no frame lifeti
 
 At `__cxa_throw`, the object is fully constructed and its RTTI and object arguments are
 still in `rsi` and `rdi`. The adapter walks only Itanium single-inheritance RTTI, stopping
-at other RTTI kinds, to prove that the object derives from `std::exception`. Only then
+at other RTTI kinds, to prove that the object derives from `std::exception`. It identifies
+the RTTI class through the vtable's own type-info pointer, not a symbol lookup at the
+vtable address point: that lookup failed under LLDB 18 in the first extended CI run,
+while LLDB 19 and 20 passed. Only then
 does it evaluate `what()` with a two-second timeout. When LLDB cannot find the C++ type
 declaration (stripped libstdc++), it calls the third entry in the Itanium virtual table:
 the two destructor entries precede `what()`. This runs a native virtual method:

@@ -492,8 +492,12 @@ class StopsMixin:
                             return message
                     self.log("could not read C++ exception message:", problem)
                     return None
-                symbol = self.target.ResolveLoadAddress(vtable).GetSymbol().GetName() or ""
-                if "__si_class_type_info" not in symbol:
+                # Read the RTTI class itself. LLDB 18 does not reliably resolve a
+                # symbol at the vtable's address point (16 bytes past its start).
+                kind_info = struct.unpack("<Q", self._read(vtable - 8, 8))[0]
+                kind_name = struct.unpack("<Q", self._read(kind_info + 8, 8))[0]
+                kind = self.process.ReadCStringFromMemory(kind_name, 256, lldb.SBError()) or ""
+                if kind.lstrip("*") != "N10__cxxabiv120__si_class_type_infoE":
                     break
                 info = struct.unpack("<Q", self._read(info + 16, 8))[0]
         except (ValueError, struct.error):
