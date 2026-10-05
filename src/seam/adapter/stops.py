@@ -1,4 +1,5 @@
 """Process events: deciding what a stop is, and reporting it or carrying on."""
+import re
 import struct
 import time
 
@@ -11,6 +12,8 @@ from .common import (
 
 # What a thread that has just started a child process reports. Never a stop to show.
 FORK_STOPS = (lldb.eStopReasonFork, lldb.eStopReasonVFork, lldb.eStopReasonVForkDone)
+_VERSION = re.search(r"version (\d+)", lldb.SBDebugger.GetVersionString())
+LLDB_MAJOR = int(_VERSION.group(1)) if _VERSION else 0
 
 
 class StopsMixin:
@@ -274,6 +277,20 @@ class StopsMixin:
 
     def _on_stop(self):
         self._new_stop()
+        if (LLDB_MAJOR < 19 and not self.pause_requested
+                and any(t.GetStopReason() in FORK_STOPS for t in self.process)
+                and any(self._interesting(t) for t in self.process)):
+            # Another thread stopped at the very moment this one started a child process
+            # with vfork. LLDB 18 cannot evaluate anything in the program until the child
+            # has started its own program, and after an attempt it loses the program
+            # altogether (both seen on CI; LLDB 19 and 20 are not affected). So nothing is
+            # looked at and the stop is passed over: the other thread's breakpoint or step
+            # is missed, as any breakpoint reached in that moment is (decisions §21).
+            self.log("LLDB 18: a stop while a child process is being started; passed over:",
+                     ["%d:%s" % (t.GetThreadID(), t.GetStopDescription(40))
+                      for t in self.process])
+            self._continue()
+            return
         # First make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
         if not self.pause_requested and not any(self._interesting(t) for t in self.process):
