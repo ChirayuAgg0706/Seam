@@ -399,7 +399,7 @@ def test_stopping_the_session_ends_the_children_in_the_programs_group(dap, capi,
         kill_all([program, forked, spawned, detached])
 
 
-def test_children_in_the_terminal(dap, capi):
+def test_children_in_the_terminal(dap, capi, iteration):
     dap.terminal = Terminal()
     dap.launch(CHILDREN, dap.python, args=["terminal"], env=capi.env,
                console="integratedTerminal",

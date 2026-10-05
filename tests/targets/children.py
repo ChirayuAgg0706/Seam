@@ -8,6 +8,7 @@ import ctypes
 import errno
 import multiprocessing
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -143,7 +144,11 @@ def terminal():
     reap("terminal", pid)
     # While system() runs, the program itself ignores SIGINT (the C library sees to that):
     # only a Ctrl-C that reaches the child ends this before the minute is up.
-    status = os.system("echo asleep; sleep 60")
+    # Announce readiness from the process receiving SIGINT, after setting its
+    # disposition. `echo asleep; sleep 60` races Ctrl-C against the shell's fork.
+    sleeper = ("import signal,time; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+               "print('asleep', flush=True); time.sleep(60)")
+    status = os.system("exec %s -c %s" % (shlex.quote(sys.executable), shlex.quote(sleeper)))
     print("system:", describe(status), flush=True)
 
 

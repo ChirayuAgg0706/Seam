@@ -64,6 +64,8 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - The native-call throughput benchmark reports initial library loading separately from
   steady work; its 10% bound is unchanged. The exception fixture uses CPython's standard
   hook, with a separate replacement-hook scenario, to exclude Ubuntu's crash reporter.
+- The terminal child Ctrl-C fixture announces readiness after setting its signal
+  disposition, removing a shell-fork race that also occurred without the debugger.
 
 - In the debug console (`internalConsole`) the program's standard input is empty instead
   of a terminal nobody can type into.

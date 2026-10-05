@@ -351,6 +351,14 @@ is `/dev/null` rather than a terminal that never answers: a stray `input()` fail
 with `EOFError` instead of hanging the session. A client that asks for a terminal without
 supporting `runInTerminal` gets this mode and a message saying so.
 
+The child Ctrl-C scenario announces readiness from the actual receiving process,
+after installing its SIGINT disposition. Its old `echo asleep; sleep 60` command
+printed before the shell forked `sleep`: an immediate Ctrl-C could be consumed before
+the intended child existed. This also failed without Seam (85 of 100 plain-process
+probes), while the corrected readiness passed all 100. The scenario still uses
+`os.system`, whose parent ignores SIGINT, and asserts that the child dies from SIGINT.
+It takes the repeat fixture so this signal path can be looped under LLDB.
+
 ## 16. Hit counts and logpoints
 
 One syntax for both sides: a bare number means "that hit only", as Python users know it
