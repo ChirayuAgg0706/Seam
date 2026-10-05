@@ -100,7 +100,15 @@ A missing toolchain fails CI rather than skipping (`SEAM_TEST_STRICT=1`).
 
 Recent CI runs:
 
-- The whole extended set passed on the final code (commit `370d31f`, started by hand on
+- The developer-trial fixes passed the whole extended set on `736cc95` on 2026-10-05
+  ([run 37338252923](https://github.com/ChirayuAgg0706/Seam/actions/runs/37338252923)):
+  276 passed and 16 expected skips in the full LLDB 18 suite; all five LLDB 18 smoke
+  cells on 3.12–3.15 and at -O2; the LLDB 19 and 20 smoke cells; VS Code and Neovim;
+  the clean-machine install; lint, versions and extension packaging. Earlier runs
+  exposed LLDB 18's RTTI symbol lookup and the terminal fixture's readiness race;
+  both are corrected (decisions §32 and §15). The terminal scenario also passes
+  20 local repeats each under LLDB 18 and 20.
+- The whole extended set passed on the pre-trial code (commit `370d31f`, started by hand on
   2026-10-05): the full suite and the five smoke cells under LLDB 18, the smoke scenarios
   under LLDB 19 and 20, the editors, the clean machine, lint and the extension package.
 - The run before it, the first on the merged code, had failed one new scenario on the
@@ -111,7 +119,8 @@ Recent CI runs:
   scenario runs and 2,448 continues each, no failures, no leftover stops, no stale frame
   lists.
 
-As of 2026-10-05 this repository had used about 470 of the month's 2,000 minutes.
+Earlier on 2026-10-05, before the developer-trial round, this repository had used about
+470 of the month's 2,000 minutes.
 
 ## Test matrix
 

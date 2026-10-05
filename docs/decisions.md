@@ -358,6 +358,7 @@ the intended child existed. This also failed without Seam (85 of 100 plain-proce
 probes), while the corrected readiness passed all 100. The scenario still uses
 `os.system`, whose parent ignores SIGINT, and asserts that the child dies from SIGINT.
 It takes the repeat fixture so this signal path can be looped under LLDB.
+The corrected DAP scenario passes 20 local repeats each under LLDB 18 and 20.
 
 ## 16. Hit counts and logpoints
 
