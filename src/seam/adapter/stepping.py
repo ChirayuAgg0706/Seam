@@ -211,11 +211,15 @@ class SteppingMixin:
         if not self.py.holds_gil(tid):
             raise DapError("cannot step out: LLDB could not unwind the native stack here")
         self._warn_truncated(natives[-1])
-        self.safe_tid = tid
-        try:
-            self.agent("step", mode="caller", tid=tid)
-        finally:
-            self.safe_tid = None
+        if not self.py_step_armed:
+            self.safe_tid = tid
+            try:
+                self.agent("step", mode="caller", tid=tid)
+            finally:
+                self.safe_tid = None
+        # else a step in from native code has a Python step armed already: it ends on the
+        # next Python line this thread runs, in a callback or back in the caller. Arming
+        # "stop in the caller" over it would run straight through the callback.
         self._finish_steps(thread, cancel_py=False)
         self.py_step_armed = True
         err = self.process.Continue()
