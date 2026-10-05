@@ -37,6 +37,7 @@ uvx ruff check src tests tools                            # lint
 | `src/seam/adapter/pyread.py`, `layouts.py`, `linetable.py` | Reading the interpreter's state from raw memory. |
 | `src/seam/_target/seam_agent.py`, `_seam_trap.c` | The helper that runs inside the debugged program. |
 | `src/seam/terminal.py` | The holder that runs in the editor's terminal (`console` option). |
+| `vscode/` | The VS Code extension: `extension.js` (wiring), `lib/` (which interpreter, which processes, starting the bundled adapter; no VS Code needed, checked by `test/unit.js`), `bundled/` (the adapter as packaged; filled by `scripts/build-vsix.sh`), `test/` (the editor check run by CI). |
 | `tests/` | Scenario tests: real programs under Seam, driven by a scripted DAP client (`dapclient.py`). |
 | `docs/decisions.md` | Why things are the way they are. Read the relevant section before changing something that looks odd. |
 
@@ -79,3 +80,7 @@ gh workflow run ci.yml -f soak=test_breakpoints -f soak_rounds=12 \
 
 The soak job prints how many leftover stops and stale frame lists the adapter worked
 around (`docs/decisions.md` §17, §18). Both should be zero.
+
+The `editors` job is the only place the extension runs in a real VS Code; it keeps
+pictures of the window as the artifact `editor-check-screenshots`. Look at them when
+changing what the adapter sends for frames, variables or exceptions.

@@ -493,6 +493,66 @@ bytes; a native frame's "Globals" scope lists the statics of its source file so 
 can be chosen. Python variables are refused with an explanation: a Python name has no
 fixed place in memory to watch.
 
+## 20. The VS Code extension carries the adapter
+
+A user had to `pip install` Seam and put `seam` on PATH before the extension could do
+anything, and the extension debugged with `python3` whatever the project used. The first
+F5 in a project with a virtual environment failed or ran the wrong interpreter.
+
+**The package is inside the extension.** `scripts/build-vsix.sh` lays the `seam` package
+out in `vscode/bundled/seam`, with the compiled helper, and the extension is packaged for
+`linux-x64` only. The release workflow hands the script the manylinux wheel, so the
+released extension carries the same adapter and helper as the wheel. (A helper built on
+Ubuntu 24.04 needs glibc 2.4, so in practice either loads anywhere.)
+
+**It is started as `python -I <extension>/bundled dap`.** Running a directory makes
+Python put that directory on `sys.path`, so the package is importable with nothing in the
+environment. `PYTHONPATH` was rejected: LLDB's embedded Python and the debugged program
+inherit the adapter's environment. `-I` keeps the user's own `PYTHONPATH` and
+`PYTHONSTARTUP`, which are meant for their program and are passed on untouched, from
+interfering with the adapter.
+
+**Which Python runs it.** The package declares `requires-python >= 3.12`, and the
+launcher is part of it. The interpreter being debugged comes first (for attach, the
+target's `/proc/<pid>/exe`): if Seam can debug it at all it is a CPython 3.12+, whatever
+the distribution's `python3` is. Then `python3`, `python`, `/usr/bin/python3`. Each is
+probed; if none is 3.12 or newer the session is refused with the list of what was tried.
+
+**The extension owns the adapter process.** VS Code can run a debug adapter command
+itself, but then it discards the adapter's stderr: a missing LLDB showed up as "Debug
+adapter process has terminated unexpectedly (read error)". The extension now spawns the
+process and passes messages through (a `DebugAdapterInlineImplementation`). When the
+adapter dies while VS Code waits for `initialize`, `launch` or `attach`, that request is
+answered with what the adapter wrote to stderr, which VS Code shows as the reason the
+session did not start. When it dies later, the extension shows the text as an error and
+ends the session. The session's end is signalled by closing the adapter's input, the
+path the test suite's client uses, not by SIGTERM as VS Code would; SIGTERM follows after
+15 seconds if the process is still there.
+
+**The interpreter to debug, when the configuration names none:** the Python extension's
+active environment for the workspace folder if that extension is installed (it is not a
+dependency; a 15-second limit keeps F5 from hanging on its activation), else the
+`python.defaultInterpreterPath` setting (the value `python`, its shipped default, counts
+as unset), else `.venv` or `venv` in the folder, else `python3`. It is decided before
+VS Code substitutes variables, so `${workspaceFolder}` in the setting works.
+
+**With the program in a terminal, the Debug Console is not opened over it.** VS Code
+opens the Debug Console when the first session starts, which showed an empty panel while
+the program's output sat in the Terminal tab behind it. The extension sets
+`internalConsoleOptions` to `neverOpen` unless the configuration says otherwise. Seam's
+own messages and logpoint output are still in the Debug Console for whoever opens it.
+
+**The attach picker reads `/proc`.** The extension only runs on Linux. A process counts
+as Python by the name of its executable or of `argv[0]`. Seam's own launcher and terminal
+holder are left out. The picker returns text, because VS Code substitutes
+`${command:...}` as text; the extension turns it into a number, and the adapter accepts
+either.
+
+**`seam doctor` runs out of the extension too** ("Seam: Check This Machine"). Its live
+check starts an adapter; started as `python -m seam` that only works where Seam is
+installed, so when the doctor itself was run as a directory it starts the adapter the
+same way.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

@@ -25,6 +25,15 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - Completion in the debug console: names in the frame and attributes of the name before
   the cursor.
 - `seam doctor`: checks the installation and runs a real debug session.
+- VS Code: the extension contains the debug adapter and its compiled helper (package
+  target `linux-x64`); installing Seam separately is no longer needed.
+  `seam.adapterCommand` is empty by default and still selects an installation of your own.
+- VS Code: without `"python"` in the configuration, the project's interpreter is used
+  (the Python extension's selection, `python.defaultInterpreterPath`, `.venv`/`venv`,
+  `python3`).
+- VS Code: `"pid": "${command:seam.pickProcess}"` picks the process to attach to.
+- VS Code: the command "Seam: Check This Machine" runs `seam doctor` out of the
+  extension.
 - Python 3.15 (tested with 3.15.0rc3).
 - LLDB 19 and 20, besides 18.
 
@@ -32,7 +41,11 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 - In the debug console (`internalConsole`) the program's standard input is empty instead
   of a terminal nobody can type into.
-- The VS Code extension runs the program in the integrated terminal by default.
+- The VS Code extension runs the program in the integrated terminal by default, and
+  keeps that terminal in view when a session starts.
+- VS Code: a missing LLDB or Python is reported in the adapter's own words instead of
+  "terminated unexpectedly".
+- Attach: a `pid` given as text is accepted; one that is not a number is refused clearly.
 
 ### Fixed
 
