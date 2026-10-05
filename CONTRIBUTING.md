@@ -33,6 +33,8 @@ uvx ruff check src tests tools                            # lint
 | &nbsp;&nbsp;`stepping.py` | stepping across the boundary; what counts as user code |
 | &nbsp;&nbsp;`breakpoints.py` | source-line, function, data and exception breakpoints |
 | &nbsp;&nbsp;`stack.py` | the merged call stack, variables, expressions |
+| &nbsp;&nbsp;`sources.py` | source paths: the debug info's, this machine's (`sourceMap`), the editor's |
+| &nbsp;&nbsp;`disassembly.py` | the listing for frames without source, stepping by instruction |
 | &nbsp;&nbsp;`common.py` | constants and small helpers |
 | `src/seam/adapter/pyread.py`, `layouts.py`, `linetable.py` | Reading the interpreter's state from raw memory. |
 | `src/seam/_target/seam_agent.py`, `_seam_trap.c` | The helper that runs inside the debugged program. |

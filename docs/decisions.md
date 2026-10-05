@@ -553,6 +553,315 @@ check starts an adapter; started as `python -m seam` that only works where Seam 
 installed, so when the doctor itself was run as a directory it starts the adapter the
 same way.
 
+## 21. Child processes
+
+Seam debugs the program it launched or attached to and nothing else; following children
+is out of scope for v1. What matters is that children run as if no debugger were there and
+that the parent's session stays healthy.
+
+**What LLDB does by itself.** The debug server traces forks. At a fork LLDB removes its
+breakpoint instructions from the child's copy of memory and detaches from it; at a vfork
+(`subprocess`, `os.system`, `os.posix_spawn`) it removes them from the memory parent and
+child share and puts them back when the child has called `exec` or exited. Seam sees a
+fork only as a stop event flagged "restarted", which it already ignored. Hardware
+watchpoints are not inherited by a child. All of this was checked with scenarios under
+LLDB 20 before anything in Seam was changed; LLDB 18 and 19 run them on CI only.
+
+**The helper switches itself off in a forked child.** The child starts as a copy of the
+parent: breakpoint tables, monitoring events, exception hooks, perhaps a step in progress.
+Nobody would answer a trap there, logpoint messages would pile up, and the events would
+cost time for nothing. `os.register_at_fork` runs the switch-off right after the fork: all
+events off, callbacks unregistered, `threading.excepthook` restored, the debugger's slot in
+`sys.monitoring` freed. A fork made by native code skips Python's at-fork hooks, so the C
+helper also registers `pthread_atfork`: it sets a flag in the child that turns every entry
+point into a no-op (never a trap) and runs the same switch-off the first time one is
+reached. A request queued for the next safe point before the fork is not executed in the
+child.
+
+**The user is told once.** A breakpoint in a multiprocessing worker that never stops is
+the first thing a user of other Python debuggers trips over. The debug server's stop reply
+is the one place a fork shows (`fork:p<pid>`, `vfork:p<pid>`, later `vforkdone`), and Seam
+already receives every packet of that protocol through the log callback it uses for the
+exit packet (§13), so noticing costs a substring test per packet and no stop. Only children
+that run Python are worth the message: a fork (a copy of the program), or a vfork child
+whose executable is a Python interpreter when `vforkdone` arrives, which is after its
+`exec`. `git`, `ls` and the like are not mentioned. One message per session. A Python child
+that exits before `vforkdone` is processed is missed; that was accepted.
+
+**Stopping the session ends the children with the program.** LLDB starts the program as
+the leader of its own process group. When Seam kills the program (terminate, disconnect,
+the client vanishing, LLDB dying) it kills that group, so the children that stayed in it go
+too, as they would on Ctrl-C or a closed terminal when the program runs by hand. A child
+that moved to a session or group of its own (a daemon, `start_new_session=True`) is left
+alone. When the program ends by itself nothing is killed: its children are its own
+business, as without a debugger. Rejected: killing only the program, which is what LLDB's
+own front ends do; it leaves orphaned workers and servers holding ports after every stopped
+session, and Python users know the other behaviour from debugpy. For the same reason the
+signals the terminal holder passes on (Ctrl-C, Ctrl-\, hang-up) go to the group: before,
+Ctrl-C did nothing while the program sat in `os.system()`, because the C library makes the
+caller ignore SIGINT for the duration.
+
+**The exit report does not wait for the pty to close.** The adapter used to wait up to two
+seconds for the end of the program's pty before reporting the exit. A child that outlives
+the program keeps the pty open, so every such exit took two seconds. The wait is now for
+the pty to be empty: everything the program wrote has been forwarded. What a surviving
+child writes later is still forwarded while the session lasts; after that its writes fail
+with EIO, as on a closed terminal.
+
+**Expressions that start a child process.** `subprocess.run(...)` typed into the debug
+console ended the session. LLDB evaluates Seam's call into the helper as an expression; to
+an expression a fork is a stop it has no explanation for, and with "unwind on error" it
+gives up on the spot: registers put back (in the middle of the interpreter), the fork's own
+handling skipped, the child left stopped under the debug server for ever, and the next
+memory access fails. With "unwind on error" off the stop goes the normal way: LLDB lets the
+child go, restarts, and the expression runs to its end. So calls that can run user code
+(every request to the helper, native expressions typed by the user, native logpoint
+expressions) are made with it off, and a call that really fails (a crash, a timeout) is
+unwound by Seam with `SBThread.UnwindInnermostExpression`, which is what the option did;
+the stop event LLDB then also sends to the listener is dropped. A forked child that returns
+from such a call has nothing to return to (its caller was the debugger): the helper ends it
+with `_exit(0)`.
+
+Known limits. While a vfork child has not yet called `exec`, LLDB has every breakpoint out
+of the program, so a breakpoint another thread reaches in that moment (normally well under
+a millisecond) is missed. LLDB before 19 cannot handle vforks made by several threads at
+once (llvm-project #81564); CPython's `subprocess` holds the GIL across its vfork,
+`os.system` does not.
+
+## 22. Debugging a pytest run
+
+`"module": "pytest"` needed no change. Checked: breakpoints in tests, fixtures and a test
+in a class; line numbers under assertion rewriting; the merged stack through pytest and
+pluggy (compared with `traceback.extract_stack()`); stepping into an extension and back;
+logpoints and the exit code with output capture on; the terminal; `-n 2`.
+
+Two things worth knowing. pytest enables `faulthandler`; a segfault still stops in the
+debugger first, with the merged stack. Continuing lets faulthandler write its report and
+raise the signal again, which is a second stop (in the C library, same stack below);
+continuing again ends the run. Seam does not hide the second stop: it is a real signal.
+With pytest-xdist the tests run in worker processes, which are not debugged; the one-time
+message of §21 says so.
+
+## 23. The "user_unhandled" exception filter
+
+Under a test runner or a framework the interesting exception is caught by the library, so
+"uncaught" never fires, and "raised" fires for everything. This filter stops when a frame
+of user code hands an exception to the library code that called it.
+
+The helper decides at `sys.monitoring`'s PY_UNWIND event: the unwinding frame is user code
+(§14's definition) and its caller, skipping frames of the import system and `runpy`, is
+not. No caller at all means the exception is about to be uncaught, which is the other
+filter's business, so the two never stop for the same exception of the main thread. Whether
+user code further out would catch it later is not asked; that is what the filter means in
+other Python debuggers too. Only errors count: exceptions outside `Exception` (exits,
+cancellations, pytest's skip) and `StopIteration`/`StopAsyncIteration` never stop.
+
+The unwinding frame is still on the stack, at the failing line and with its variables, so
+it is shown live; frames the exception came through below it have unwound and are shown
+from the traceback, as at an uncaught exception. A step from such a stop carries on.
+
+PY_UNWIND is the event stepping uses to follow an exception upwards, and a tool has one
+callback per event. While the filter is on, its check is chained in front of whatever
+stepping registered, in C, because stepping's handler finds its frame by counting from
+itself. Both callables are kept alive for good: the interpreter holds no reference to a
+callback while it runs, and replacing the callback at a stop that was inside it freed it
+under its own feet (a scenario caught this as an exit code of 1). The event is global, so
+with the filter on every frame that exits by exception costs one call into the helper.
+
+## 24. Stepping in coroutines and generators
+
+Found by the first scenario written for it: stepping over `await asyncio.sleep(0.01)` ended
+in `asyncio/events.py`. The agent treated `PY_YIELD` like `PY_RETURN`, so a suspending
+coroutine "returned" to whatever had resumed it, and for a task that is the event loop.
+
+**A suspension is not a return.** A step stays with the frame it follows until that frame
+runs its next line, however often it is suspended and whatever runs in between.
+
+- Step over and step out enable events only on the code object of the followed frame
+  (`LINE`, `PY_RETURN`) plus `PY_UNWIND`, and accept them only from that frame object. The
+  frame object of a generator or coroutine keeps its identity across suspensions (checked
+  on 3.12 to 3.15), so nothing has to be known about tasks: another task running the same
+  coroutine function is another frame. Nothing else is instrumented, so what runs while
+  the frame is suspended runs at full speed and cannot end the step. `PY_YIELD` is simply
+  not listened to.
+- Step out therefore means "until it really returns or raises", not "until it yields".
+- Step in listens to every line of the thread. When the followed coroutine suspends at an
+  `await`, the agent stops listening to lines until that frame is resumed (`PY_RESUME`) or
+  thrown into (`PY_THROW`): the tasks that run meanwhile are not something the stepped
+  line called. So step in at an `await` that reaches no user code is step over.
+- A `yield` is not an `await`: the value goes to a consumer that is on the stack and runs
+  next. Step in at a `yield` follows it there. Plain generators are told apart by their
+  code flags; in an async generator a yielded value reaches `PY_YIELD` wrapped in
+  `async_generator_wrapped_value`, an awaited one does not (a CPython detail, checked on
+  3.12 to 3.15). Step over a `yield` stays in the generator and ends on its next line when
+  the consumer asks for the next value. That is what pdb does
+  (`test_pdb_next_command_for_generator`), and it was chosen for that reason; "follow the
+  value to the consumer" would also have been defensible for step over.
+- A breakpoint anywhere still ends the step.
+
+**When the frame finishes**, the step goes, as before, to the frame that resumed it, on
+the calling line (§4c): the coroutine that awaited it, or the consumer of a generator. For
+a task that frame is the event loop's; see §25.
+
+**Thrown exceptions.** Cancellation and timeouts arrive as `PY_THROW`. If the frame handles
+the exception the step ends on the handler's line; if not, `PY_UNWIND` moves the step to
+the caller as for any exception. From 3.13 on the interpreter also reports the await's own
+line once more when an exception is thrown into it: the event belongs to `CLEANUP_THROW`,
+the hidden instruction that passes the exception to the awaited object. The agent's line
+handler ignores a `LINE` event whose instruction is `CLEANUP_THROW`, for steps and for the
+breakpoints it decides itself, so every version steps alike. (The C fast path for plain
+breakpoints does not; see STATUS.)
+
+**Two differences between interpreters are left as they are**; the tests assert them per
+version.
+
+- When the generator of a `for` loop is finished, "the consumer's next instruction" is the
+  loop's clean-up on the `for` line from 3.13 on. 3.12 has nothing left to run on that
+  line, so the step ends on the statement after the loop.
+- `gen.close()` (or garbage collection) of a generator suspended outside any `try`: 3.12.3
+  discards it without running it, so a step waiting in it never ends and the program runs
+  on to the next breakpoint, as under pdb. 3.12.15 and later raise `GeneratorExit` in it,
+  and the step follows that to the frame that closed it.
+
+## 25. Steps keep to the user's code (`justMyCode`)
+
+`justMyCode` (default true) existed for the raised-exceptions breakpoint only. Stepping
+now uses the same notion of user code (`_is_user`: not the standard library, not
+`site-packages` or `dist-packages`). The agent decides, because only it sees each event.
+The adapter sends the option with every step request: until now the agent learnt it only
+from a breakpoint sync, which a session without breakpoints never sends.
+
+- **A step never ends on a line of non-user code.** Such a line returns `DISABLE` from the
+  line handler, so a library line costs one callback per step.
+- **A step aimed at a frame that is not the user's becomes "the next place user code
+  runs".** That covers the frame a step moves to when the stepped function returns into a
+  library, a stop at a breakpoint set in a library file, and a pause inside a library.
+  It is a step in that follows that frame: either a line of user code runs on the thread
+  first, or the frame returns and the step moves to its caller by the same rule. The first
+  user frame reached that way is stopped in on its calling line, like any return (§4c).
+  One rule serves three situations:
+  - a coroutine run by the event loop finishes (the next task's line, the waiting
+    coroutine's next line, or the line that called `asyncio.run`);
+  - a callback returns to a library that calls it in a loop (the next call of it);
+  - a test function returns to its runner (the next fixture or test).
+- Rejected: running until the nearest user frame on the stack resumes, ignoring user code
+  called meanwhile. Under a test runner there is no such frame, and under an event loop it
+  is the caller of `asyncio.run`, so stepping off the end of a test or a task would have
+  run the rest of the program.
+- A callback called by a *builtin* (`sorted(key=...)`) is unchanged: its Python caller is
+  the user's own frame, so stepping out of it ends there when the builtin returns, not at
+  the builtin's next call of it. That differs from the Python-library case; it is §4c's
+  behaviour and what the frames say.
+- **Breakpoints set in library files still stop.** A step from such a stop does not stay
+  in the library (the rule above); to step through library code, set `justMyCode: false`.
+- **Code compiled from a string by other code** (`<string>`: a dataclass's `__init__`, a
+  namedtuple's `__new__`, `exec`) is treated like a library by steps, since there is no
+  source to show. A `<string>` frame with only such frames below it is the program itself
+  (`python -c`) and is stepped normally. This applies to stepping only; the exception
+  filter's `_is_user` is unchanged.
+- **Native code is not affected.** Step in still arms the user-function breakpoints (§7).
+  Because library Python lines are no longer candidates, a native user function called
+  through a library's Python code is now reached directly. When native code returns into a
+  library's Python frame, the hand-over step follows the rule above.
+- With `justMyCode: false` every Python file except Seam's own and the frozen modules is
+  user code, and stepping is as before, apart from §24.
+
+Cost: nothing new is enabled outside a step. The new callbacks are registered, but their
+events are only switched on while a step is in progress.
+
+## 26. Source paths: `sourceMap`, and what the editor is told a file is called
+
+**The mapping is Seam's own, not LLDB's `target.source-map`.** LLDB's setting maps the
+file of a frame's line entry only when the mapped file exists. It never maps the line
+entry of an address (`SBAddress.GetLineEntry()`, which Seam uses to classify every
+function of a module for step-in). It turns a breakpoint's path back into the debug
+info's through the first matching entry only. (Measured on LLDB 20, except the frame
+case, which was read from LLDB's source.) Seam needs one answer in all three places, so
+it keeps the pairs itself (`adapter/sources.py`).
+
+- *Debug info to this machine* (frames, source lines in the disassembly): entries are
+  tried in the order given and the first file that exists wins. Without a matching entry
+  the name itself is used, a relative one from the program's working directory, which is
+  where gdb and lldb look. A file that is not found gets no path at all (§27).
+- *This machine to debug info* (native line breakpoints): nothing says which name a
+  library that loads later was built with, so the breakpoint is set under each candidate.
+  The candidates are the name every matching entry maps here, the path as the editor gave
+  it (a build made in place; it also matches relative debug-info names, which LLDB
+  compares with the end of the full path), and that path with symbolic links resolved.
+  They are one breakpoint to the client, with one id and one hit count
+  (`native_bp_group`; `native_bps[path]` stays a flat list, so `stops.py` needed no
+  change). With a single candidate, the usual case, this is exactly what was there
+  before. Rejected: the first matching entry only, as LLDB and lldb-dap do. A mapping
+  left in the configuration would then silently unbind breakpoints in a library that has
+  since been built in place.
+- *Glue decisions*: the fragments are tried on the debug info's name and on every mapped
+  name, as plain strings with no file checks (a module can have 20,000 functions). A
+  relative name is tested with a leading slash, so `nanobind/src/x.cpp` matches
+  `/nanobind/src/`.
+- *A missing file is explained once per session*, and only for a frame classified as user
+  code. libc with `libc6-dbg` names files nobody has, and that is nobody's mistake.
+- *An unbound breakpoint is explained* from `SBModule.FindCompileUnits(basename)` on the
+  libraries that are loaded. LLDB broadcasts modules-loaded after it has resolved
+  breakpoints in the new library, so "still nothing bound" is meaningful at that point.
+  Only compiled files are looked at, not headers.
+
+**What the editor is told a file is called.** Python frames used to be reported as
+`realpath(co_filename)`. That was wrong in two ways:
+
+- A module that is itself a symbolic link was shown as the file the link points to.
+- A project opened through a linked directory was shown under the resolved directory.
+  `sys.path[0]` is the *resolved* directory of the script, so every imported module has a
+  resolved `co_filename` while `__main__` has the path as typed (asserted on 3.12, 3.13
+  and 3.14). VS Code treats the two spellings as two files: the second opens without its
+  breakpoints.
+
+Now the path is reported as the program has it, tidied of `..` and doubled slashes, with
+one addition. For every path the client names (`program`, `cwd`, breakpoint files) whose
+real path differs, Seam keeps the pair (real directory, the client's name for it),
+climbing while the parent directories still correspond. One breakpoint in a linked
+project is enough for the whole tree. The rule is exact (the client's directory resolves
+to the real one), so it never produces a path that is not the same file. A file that is a
+link out of such a directory is reported by its place in the directory. Native frames go
+through the same function. File-level agreement alone (frame equals breakpoint path)
+would leave every file reached by stepping under the wrong name in a linked project.
+
+## 27. Frames without source, disassembly, stepping by instruction
+
+A native frame whose source cannot be opened here has no `source.path`. That covers no
+debug info at all, and debug info naming a file that is not on this machine (libc with
+`libc6-dbg` used to get the relative path `nptl/pthread_kill.c`). Such a frame is named
+`library!function` (`library+0xoffset` when there is no name) and marked subtle; frames
+with source keep their plain names. If the debug info names a file, the frame keeps its
+line and a `source` with a name only, `presentationHint: deemphasize`, and the
+debug-info path in `origin`. If the client asks for the text, the `source` request fails
+with that explanation. How VS Code displays such a frame is from reading its source, not
+observed.
+
+**At a crash more is shown.**
+
+1. Every frame above the user's own code or the newest Python frame, glue or not.
+2. The interpreter's own frames at the top of the faulting thread, hidden at any other
+   stop: the function that faulted when an extension hands the interpreter a bad pointer,
+   or the one that called `raise`/`abort` (libc's frames above it do not end the run).
+   They stop at the newest Python frame or the first frame of other code. The
+   interpreter's call machinery between an extension and the eval loop stays hidden. If
+   the fault is in the eval loop's own frame, that frame is shown above its Python frames.
+
+**`disassemble`.** Forward from the address with `SBTarget.ReadInstructions`. x86 cannot
+be decoded backwards, so each preceding function is decoded from its start
+(`SBTarget.GetInstructions` on the bytes from the symbol's start), going back function by
+function and skipping up to 32 bytes of alignment padding that belong to no symbol. A
+stripped library still has function starts, because LLDB synthesises symbols from the
+unwind tables. The protocol requires exactly `instructionCount` entries, and VS Code
+finds rows by position and by binary search on the address. So what cannot be read is
+filled with placeholders marked `invalid`, with addresses that keep the listing
+ascending. LLDB's default syntax (AT&T) is used.
+
+**Stepping by instruction.** `SBThread.StepInstruction`. A flag in `native_stepping`
+keeps `_on_stop` from walking on out of glue or handing the step to Python: an
+instruction step ends where it ends. At a Python stop (the thread is in Seam's trap) and
+for `stepOut` the granularity is ignored. No Python is run for it.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

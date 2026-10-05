@@ -24,6 +24,21 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - Data breakpoints on native variables.
 - Completion in the debug console: names in the frame and attributes of the name before
   the cursor.
+- Stepping follows a coroutine or generator across suspensions: step over an `await`
+  ends on the next line of the same coroutine instead of inside asyncio.
+- Stepping honours `justMyCode`: steps never end in the standard library or in installed
+  packages, but do end in your code that they call.
+- Debugging a pytest run (`"module": "pytest"`), and a fifth exception filter,
+  "User-unhandled Python exceptions", which stops where a failing test's exception leaves
+  your code.
+- Child processes (`os.fork`, `subprocess`, `multiprocessing`, pytest-xdist) run
+  undisturbed; the debug console says once that they are not debugged.
+- `sourceMap`: native code built in a container, in CI or with remapped paths can be
+  debugged against the sources on this machine. A breakpoint that cannot bind, or a stop
+  whose source is missing, says which path the library was built from and what to add.
+- Frames without source are named `library!function`; the `disassemble` request and
+  stepping by instruction make VS Code's disassembly view work for them. A crash inside
+  the interpreter shows the interpreter function that faulted.
 - `seam doctor`: checks the installation and runs a real debug session.
 - VS Code: the extension contains the debug adapter and its compiled helper (package
   target `linux-x64`); installing Seam separately is no longer needed.
@@ -46,6 +61,10 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - VS Code: a missing LLDB or Python is reported in the adapter's own words instead of
   "terminated unexpectedly".
 - Attach: a `pid` given as text is accepted; one that is not a number is refused clearly.
+- Stopping a session ends the program's whole process group, not only the program, and
+  Ctrl-C in the program's terminal reaches its children too.
+- Python frames are reported under the path the editor uses for the file (a project
+  opened through a symbolic link), not under the resolved path.
 
 ### Fixed
 
@@ -54,6 +73,11 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - Rare extra or missing stops on a busy machine. Seam shared its debugger object with
   the `lldb` program it runs in, whose own event thread handled the same events; it now
   has a debugger of its own.
+- An expression that starts a process (`subprocess.run(...)` typed into the debug
+  console) ended the session.
+- Ctrl-C in the program's terminal did nothing while the program sat in `os.system()`.
+- The exit of a program whose child process was still running was reported two seconds
+  late.
 - An attach that was refused because the program's main thread was blocked left its
   request in the program, which later printed an error (Python 3.14) or loaded Seam's
   helper with no debugger attached (3.12, 3.13).
