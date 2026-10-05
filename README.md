@@ -21,7 +21,9 @@ See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
 - CPython 3.12, 3.13 or 3.14 as the program being debugged; 3.15 works as of its release
   candidate (3.15.0rc3). Interpreters without debug info (uv-managed Pythons, `-slim`
   container images) and virtual environments are supported.
-- LLDB 18, 19 or 20, with its Python scripting support (the normal distro package).
+- LLDB 18, 19 or 20, with its Python scripting support (the normal distro package). For
+  programs with several threads that also start child processes, use LLDB 19 or newer
+  (see [Limitations](#limitations)).
 - To install Seam with pip: a C compiler and the CPython headers, to build Seam's small
   in-process helper. The VS Code extension brings a built helper and needs neither.
 - Permission to `ptrace` the program (the default when Seam launches it).
@@ -273,6 +275,19 @@ Stopping the session ends the program and the children still in its process grou
 child that moved to a session of its own (`start_new_session=True`, a daemon) is left
 running. If the program ends by itself, its children are left alone; with
 `internalConsole` their output has nowhere to go once the session is over.
+
+## When something does not work
+
+| What you see | What to do |
+|---|---|
+| The session does not start | Run `seam doctor --python <your interpreter>` (in VS Code: **Seam: Check This Machine**). It checks LLDB, its Python support, the helper, ptrace permission and the interpreter, and runs one real session. |
+| A native breakpoint stays grey | The extension was built without debug info (`-g`; for Rust `debug = true`), the line has no code of its own in an optimised build, or the library was built from another path: the debug console then names the path and the `sourceMap` entry to add. |
+| Step Into goes over a native call | The function has no debug info, or the optimiser removed it. A breakpoint by function name still works if the symbol exists. |
+| Step Into does not enter a library's Python code | That is `justMyCode`; set it to `false`. |
+| A breakpoint in a worker process never stops | Child processes are not debugged; the debug console says so the first time one starts. |
+| Attach is refused after a wait | The program's main thread is blocked (in a system call or a long native call) and cannot load Seam's helper. Attach while it is doing something, or make it do something. |
+| Python expressions are refused | The program is stopped in native code. Step or continue to a Python line; Python variables are still shown, read from memory. |
+| Anything else | Set `SEAM_LOG=/some/file` in the environment of `seam dap` (in VS Code: the `seam.logFile` setting), reproduce it, and keep that file and the one next to it ending in `.lldb`. |
 
 ## How it works
 
