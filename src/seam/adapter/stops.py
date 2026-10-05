@@ -136,9 +136,14 @@ class StopsMixin:
         """True if LLDB stopped at a breakpoint whose condition does not hold.
 
         LLDB evaluates a breakpoint's condition itself and does not stop when it is
-        false. LLDB 18 was seen on CI to deliver the stop all the same when another
-        thread started a child process at that moment, so the condition is checked once
-        more here. A condition that cannot be evaluated stops, as it does in LLDB.
+        false; when it cannot evaluate the condition it stops, and so does Seam. One
+        case is different. While a child made by vfork (`subprocess`, `os.system`) has
+        not yet started its own program, LLDB 18 cannot evaluate anything in the parent
+        ("Couldn't allocate space for the stack frame", seen on CI), so every hit of a
+        conditional breakpoint by another thread in that moment became a stop, whatever
+        the condition. Breakpoints are unreliable in that window anyway (LLDB has them
+        out of the program), so such a hit is passed over. The condition is evaluated
+        here once more to tell the cases apart.
         """
         condition = bp.GetCondition()
         if not condition:
@@ -146,8 +151,9 @@ class StopsMixin:
         value = thread.GetFrameAtIndex(0).EvaluateExpression(condition, self._expr_options(5))
         error = value.GetError()
         if not error.Success():
-            self.log("condition", repr(condition), "could not be checked:", error.GetCString())
-            return False
+            self.log("condition", repr(condition), "could not be checked:", error.GetCString(),
+                     "- children made by vfork under way:", dict(self.vfork_children))
+            return bool(self.vfork_children)
         if value.GetValueAsUnsigned(0) != 0:
             return False
         self.log("LLDB stopped at breakpoint", bp.GetID(), "although its condition",
