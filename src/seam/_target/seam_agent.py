@@ -185,13 +185,14 @@ def _on_start(code, offset):
 
 class _Spec:
     """A breakpoint with a condition, a hit-count condition and/or a log message."""
-    __slots__ = ("condition", "hit", "log", "hits")
+    __slots__ = ("condition", "hit", "log", "hits", "complained")
 
     def __init__(self, condition, hit, log):
         self.condition = condition
         self.hit = tuple(hit) if hit else None  # (operator, number)
         self.log = log
         self.hits = 0
+        self.complained = False  # the user has been told that the condition fails
 
     def same_as(self, other):
         return (other is not None and self.condition == other.condition
@@ -242,8 +243,16 @@ def _spec_verdict(spec, frame):
             try:
                 if not eval(spec.condition, frame.f_globals, frame.f_locals):
                     return None
-            except Exception:
-                pass  # a broken condition should be noticed, not silently skipped
+            except Exception as exc:
+                # A broken condition should be noticed, not silently skipped: the
+                # breakpoint stops, and says why (once), or the user takes the stop
+                # for a hit where the condition held.
+                if not spec.complained:
+                    spec.complained = True
+                    _log_pending.append(
+                        "Seam: the condition of this breakpoint could not be evaluated, so "
+                        "it stops at every hit: %s  (%s: %s)"
+                        % (spec.condition, type(exc).__name__, exc))
         spec.hits += 1
         if spec.hit and not _HIT_TESTS[spec.hit[0]](spec.hits, spec.hit[1]):
             return None
@@ -531,7 +540,8 @@ def _on_line(code, line):
         if verdict == "stop":
             if _step is not None:
                 _finish_step()
-            return (None, code, line, R_BREAKPOINT)
+            # With LOG_FLAG if the verdict left something to say (a condition that failed).
+            return (None, code, line, R_BREAKPOINT | (LOG_FLAG if _log_pending else 0))
         if verdict == "log":
             log = LOG_FLAG  # deliver the message; a step in progress carries on
     st = _current()

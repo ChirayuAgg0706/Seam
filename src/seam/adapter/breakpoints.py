@@ -122,7 +122,8 @@ class BreakpointsMixin:
                     self.native_bp_group[bp.GetID()] = group
                 created += group
                 answer = self._native_bp_answer(group[0])
-                self.native_bp_state[group[0].GetID()] = (answer["verified"], answer["line"])
+                self.native_bp_state[group[0].GetID()] = (
+                    answer["verified"], answer["line"], answer.get("message"))
                 answers.append(answer)
             self.native_bps[path] = created
             # Nothing bound although the library is loaded: perhaps it knows the file
@@ -139,6 +140,7 @@ class BreakpointsMixin:
         Returns False if the program should simply carry on (the hit does not count,
         or the breakpoint is a logpoint and its message has been printed).
         """
+        self._check_condition(thread, bp)
         spec = self.native_bp_specs.get(bp.GetID())
         if spec is None:
             return True
@@ -167,6 +169,37 @@ class BreakpointsMixin:
                               "output": fill_log_message(spec["log"], value_of) + "\n"})
         return False
 
+    def _check_condition(self, thread, bp):
+        """Say so if a native breakpoint stopped because its condition cannot be evaluated.
+
+        LLDB stops at a breakpoint whose condition does not compile or fails to run, and
+        gives the reason only on its own console. To the user such a stop looked like a
+        hit where the condition held (`name == "right"` on a std::string does not
+        compile). So the first time a conditional breakpoint stops, its condition is
+        evaluated once more to find out; one that works is not evaluated again.
+        """
+        condition = bp.GetCondition()
+        if not condition or self.conditions_checked.get(bp.GetID()) == condition:
+            return
+        self.conditions_checked[bp.GetID()] = condition
+        frame = thread.GetFrameAtIndex(0)
+        error = frame.EvaluateExpression(condition, self._expr_options(5)).GetError()
+        if error.Success():
+            return
+        reason = " ".join((error.GetCString() or "the expression failed").split())[:500]
+        entry = frame.GetLineEntry()
+        where = "%s:%d" % (os.path.basename(entry.GetFileSpec().fullpath or "")
+                           or frame.GetFunctionName(), entry.GetLine())
+        self.event("output", {"category": "console", "output":
+                   "Seam: the condition of the breakpoint at %s could not be evaluated, so "
+                   "it stops at every hit:  %s\n  %s\n" % (where, condition, reason)})
+        first = self.native_bp_group.get(bp.GetID(), [bp])[0]
+        if first.GetID() in self.native_bp_lines:   # a source-line breakpoint the client knows
+            self.event("breakpoint", {"reason": "changed", "breakpoint": {
+                "id": first.GetID(), "verified": True,
+                "line": self.native_bp_lines[first.GetID()],
+                "message": "the condition could not be evaluated: " + reason}})
+
     def _native_bp_answer(self, bp):
         """DAP description of a native breakpoint: where it really is, if anywhere."""
         line = self.native_bp_lines.get(bp.GetID(), 0)
@@ -179,9 +212,14 @@ class BreakpointsMixin:
                 if best is None or address.GetFileAddress() < best.GetFileAddress():
                     best = address
         answer = {"id": group[0].GetID(), "verified": best is not None, "line": line}
-        if best is None:
-            answer["message"] = ("no code for this line yet: its module is not loaded, or "
-                                 "the compiler left the line with no code of its own")
+        if best is None and self.no_debug_info:
+            answer["message"] = (
+                "no code found for this line. %s is loaded but has no debug info: if this "
+                "file is part of it, build it with -g" % ", ".join(self.no_debug_info[-3:]))
+        elif best is None:
+            answer["message"] = ("no code for this line yet: its library is not loaded, was "
+                                 "built without debug info (-g), or the compiler left the "
+                                 "line with no code of its own")
         elif best.GetLineEntry().IsValid() and best.GetLineEntry().GetLine():
             answer["line"] = best.GetLineEntry().GetLine()
         return answer
@@ -193,7 +231,7 @@ class BreakpointsMixin:
                 if self.native_bp_group.get(bp.GetID(), [bp])[0].GetID() != bp.GetID():
                     continue  # another spelling of a breakpoint already looked at
                 answer = self._native_bp_answer(bp)
-                state = (answer["verified"], answer["line"])
+                state = (answer["verified"], answer["line"], answer.get("message"))
                 if self.native_bp_state.get(bp.GetID()) != state:
                     self.native_bp_state[bp.GetID()] = state
                     self.event("breakpoint", {"reason": "changed", "breakpoint": answer})

@@ -483,6 +483,11 @@ class SessionMixin:
         code = ("import sys; sys.path.insert(0, %r)\n"
                 "try:\n    import seam_agent\n"
                 "finally:\n    sys.path.remove(%r)\n" % (TARGET_DIR, TARGET_DIR))
+        # PyRun_SimpleString runs in `__main__`. Run there directly, the two imports
+        # became globals of the user's script: a program that forgot `import sys` worked
+        # under the debugger and failed without it. So the code gets a namespace of its
+        # own.
+        code = "exec(%r, {'__name__': 'seam_bootstrap'})" % code
         rc = self._call(thread, "((int(*)(const char*, void*))%d)(%s, (void*)0)"
                         % (self.sym["PyRun_SimpleStringFlags"], json.dumps(code)))
         self._drain_output()
@@ -585,6 +590,8 @@ class SessionMixin:
             "except BaseException:\n"
             "    import traceback\n"
             "    traceback.print_exc()\n" % (TARGET_DIR, TARGET_DIR))
+        # In a namespace of its own, not in `__main__` (see _inject).
+        code = "exec(%r, {'__name__': 'seam_bootstrap'})\n" % code
         remote = self.py.L.remote
         if remote is not None:
             # PEP 768 (3.14+): three memory writes, no code run by the debugger.

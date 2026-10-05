@@ -115,6 +115,8 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.program_group = None     # process group of a launched program, if it leads one
         self.child_noticed = False    # the user has been told that children are not debugged
         self.vfork_children = {}      # parent thread -> pid of a vfork child not yet on its own
+        self.conditions_checked = {}  # native breakpoint id -> condition already looked at
+        self.no_debug_info = []       # user-built libraries loaded without debug info
         self.source_map = []          # [(prefix in the debug info, prefix on this machine)]
         self.aliases = {}             # real path -> the client's spelling (symbolic links)
         self.editor_paths = {}        # path -> the spelling given to the editor (a cache)
