@@ -27,7 +27,10 @@ fixed delay. Those six pass after test-harness fixes. The seventh was Ubuntu's a
 exception hook loading native libraries before process exit: a diagnostic pause caught
 that stack, and restoring CPython's hook reduced measured exit from 25.82 to 0.01 seconds.
 The attach fixture now uses the standard hook, as the launch fixture already did (§32).
-See the readiness checklist for local evidence and the final-commit CI requirement.
+Final extended CI passed on `d5e3185`: 279 passed / 16 documented skips in the full
+suite, all version/optimisation and LLDB cells green, both editors and clean-machine
+installation green. Release artifacts and the main-branch push check also passed.
+Only the owner's Windows/WSL interactive acceptance remains; see the readiness checklist.
 
 ## The v1 checklist
 
