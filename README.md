@@ -13,7 +13,8 @@ internals instead of Python lines. Seam is one debugger that understands both si
 - the Debug Adapter Protocol, so it works in VS Code and Neovim.
 
 See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
-[Limitations](#limitations) before relying on it.
+[Limitations](#limitations) before relying on it. The remaining first-release checks
+are in [docs/v1-readiness.md](docs/v1-readiness.md).
 
 ## Requirements
 
@@ -339,6 +340,10 @@ Known limits of what is in scope:
   frames below are still shown, decoded from memory: `int`, `float`, `str`, `bytes`,
   `bool`, `None` and shallow `list`/`tuple` show their values; other objects show their
   type and address. Step or continue to a Python line for full inspection.
+- **Expressions that crash or time out.** Code evaluated by the debugger runs inside
+  the program. A native crash or an interrupted evaluation can leave the interpreter
+  damaged even after LLDB unwinds the call; restart the debug session before evaluating
+  again. Ordinary Python exceptions in expressions are reported without this problem.
 - **Optimised native code (`-O2`, Rust release builds).** Stepping in from Python needs
   the user function to exist as a function or as an inlined instance in the debug info;
   if the compiler removed it entirely the step behaves like step-over. A statement that
@@ -374,9 +379,6 @@ Known limits of what is in scope:
   for the generator's next line. If its consumer drops it instead, some interpreters
   (3.12.3) discard it without running it: the step never ends and the program runs on to
   the next breakpoint, as under pdb.
-- **A breakpoint on an `await` line can stop twice on Python 3.13 and later**: once when
-  the line starts, and again if an exception (a cancellation, a timeout) is thrown into
-  the await.
 - **Generated code** (a dataclass's `__init__`, anything run through `exec`) has no source
   and is stepped over; `justMyCode: false` steps into it without showing a source.
 - **Source paths.** `sourceMap` maps directories on the same machine; remote path mapping

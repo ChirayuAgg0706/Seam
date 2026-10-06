@@ -12,6 +12,7 @@ def tick(n):
 
 def main():
     n = 0
+    print("ready to pause", flush=True)
     deadline = time.time() + 30
     while not STOP and time.time() < deadline:
         n = tick(n)

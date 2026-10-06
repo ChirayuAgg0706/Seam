@@ -5,6 +5,9 @@ owner. An item is **done** only when a scenario test for it has been seen passin
 [STATUS.md](STATUS.md) has the evidence, [docs/decisions.md](docs/decisions.md) the
 reasons.
 
+For the first public release, use [the v1 readiness checklist](docs/v1-readiness.md).
+The open items below are a backlog, not a requirement to add more features before v1.
+
 ## From v1 to something people can rely on (done)
 
 | # | Item | Where |
@@ -46,8 +49,10 @@ reasons.
 
 ## Open
 
-Found on the way and not done. None of them blocks ordinary use; the first is the one a
-user is most likely to meet.
+Known limitations and follow-up work. These entries have documented workarounds or are
+outside the frozen first-release scope. The review's attached-process exit timeout was
+traced to Ubuntu's crash reporter and its test fixture corrected; see
+[the readiness checklist](docs/v1-readiness.md) for final validation.
 
 - **LLDB 18, threads and child processes.** LLDB 18 breaks when a thread is at a
   breakpoint at the moment another thread starts a child process. Seam could not cure it
@@ -58,8 +63,6 @@ user is most likely to meet.
   because the helper cannot load. "Why is my program hung?" is a common reason to attach,
   and the merged call stack and native debugging need no helper. Staying attached without
   it, and loading it when the interpreter next runs Python, would cover that.
-- A breakpoint on an `await` line stops twice on 3.13+ when an exception is thrown into
-  the await (§24).
 - Python objects read as `<Order object at 0x…>` at native stops; reading their
   attributes from memory would make native and Python stops agree.
 - Extension-type objects (pybind11 instances, numpy arrays) have no expandable fields
@@ -77,7 +80,9 @@ user is most likely to meet.
 - Thread-heavy programs run about twice as slowly under Seam.
 - nanobind at `-O2` under LLDB 20: LLDB cannot unwind through its library code.
 - Re-run the suite on Python 3.15.0 when it is released (only rc3 exists so far).
-- Run the release workflow again now that the extension carries the adapter.
+- Re-run CI and the release workflow on the final release commit. The bundled-adapter
+  release workflow passed on `24d5b78` during the v1 audit; that artifact predates the
+  audit's await-breakpoint fix.
 
 ## Needs the project owner
 

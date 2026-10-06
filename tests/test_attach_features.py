@@ -48,7 +48,7 @@ def names(stack):
     return [f["name"] for f in stack]
 
 
-def test_exception_breakpoints_on_an_attached_process(dap, server):
+def test_exception_breakpoints_on_an_attached_process(dap, server, iteration):
     attach(dap, server, exceptions=["raised"])
     tell(server, "caught 3")
     stop = dap.wait_stopped()

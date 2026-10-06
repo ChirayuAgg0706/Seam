@@ -263,6 +263,24 @@ def test_step_out_of_an_async_generator_runs_it_to_its_end(dap, iteration):
     finish(dap)
 
 
+@pytest.mark.parametrize("await_marker,handler_marker", [
+    ("slow-sleep", "slow-cancelled"),
+    ("thrown-long", "thrown-timed-out"),
+])
+def test_continue_from_an_await_does_not_repeat_its_breakpoint(
+        dap, iteration, await_marker, handler_marker):
+    tid = launch(dap, "thrown", await_marker, handler_marker)
+    assert dap.stack(tid)[0]["line"] == at(await_marker)
+    # Keep plain breakpoints set and continue, with no step armed. Cancellation and
+    # timeout cleanup must not look like another execution of the await statement.
+    dap.cont()
+    stop = dap.wait_stopped()
+    assert stop["reason"] == "breakpoint"
+    assert dap.stack(stop["threadId"])[0]["line"] == at(handler_marker)
+    finish(dap)
+    assert "thrown timed out" in dap.output
+
+
 def test_cancellation_ends_a_step_at_the_handler(dap, iteration):
     tid = launch(dap, "thrown", "slow-sleep")
     # The task is cancelled while the step waits for its sleep. The breakpoint on the

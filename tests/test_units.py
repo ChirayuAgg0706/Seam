@@ -58,6 +58,36 @@ def test_line_at_agrees_with_co_lines_for_every_offset():
 SYSTEM_PYTHON = "/usr/bin/python3.12"
 
 
+@pytest.mark.smoke
+@pytest.mark.skipif(not os.path.exists(SYSTEM_PYTHON), reason="needs CPython 3.12")
+def test_helper_built_with_target_headers_can_dispatch_on_python312(python, tmp_path):
+    """A helper compiled on newer Python must still honour its cp312-abi3 tag."""
+    include = subprocess.check_output(
+        [python, "-c", "import sysconfig; print(sysconfig.get_paths()['include'])"],
+        text=True).strip()
+    helper = tmp_path / "_seam_trap.abi3.so"
+    subprocess.run([
+        "gcc", "-shared", "-fPIC", "-O2", "-Wall", "-Werror", "-I", include,
+        os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.c"), "-o", str(helper),
+    ], check=True)
+    # Exercise the real native request/reply buffers, preserving embedded NUL bytes.
+    probe = """
+import ctypes
+import _seam_trap
+_seam_trap.configure({}, None, None, lambda request: request)
+helper = ctypes.PyDLL(_seam_trap.__file__)
+payload = b'seam\\x00request'
+buffer = (ctypes.c_char * (1 << 20)).in_dll(helper, 'seam_req_buf')
+ctypes.memmove(buffer, payload, len(payload))
+ctypes.c_long.in_dll(helper, 'seam_req_len').value = len(payload)
+assert helper.seam_dispatch() == 0, 'helper failed to dispatch on Python 3.12'
+address = ctypes.c_void_p.in_dll(helper, 'seam_resp_ptr').value
+length = ctypes.c_long.in_dll(helper, 'seam_resp_len').value
+assert ctypes.string_at(address, length) == payload
+"""
+    subprocess.run([SYSTEM_PYTHON, "-c", probe], cwd=tmp_path, check=True)
+
+
 LLDB = os.environ.get("SEAM_LLDB") or next(
     (p for p in map(shutil.which, ("lldb", "lldb-21", "lldb-20", "lldb-19", "lldb-18")) if p),
     None)

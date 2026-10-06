@@ -84,6 +84,7 @@ def test_step_in_on_a_call_into_a_wheel_without_debug_info(dap, wheels_python):
 
 def test_pause_inside_numpy(dap, wheels_python):
     dap.launch(WHEELS, wheels_python, args=["busy", "4"])
+    dap.wait_output("ready to pause")
     time.sleep(1.5)
     dap.request("pause", {"threadId": 0})
     stop = dap.wait_stopped()

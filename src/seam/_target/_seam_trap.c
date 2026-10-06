@@ -22,8 +22,6 @@
 #define SEAM_REQ_CAP (1 << 20)
 #define EXPORT __attribute__((visibility("default"), used))
 
-#define REASON_BREAKPOINT 1
-
 EXPORT char seam_req_buf[SEAM_REQ_CAP];
 EXPORT volatile long seam_req_len = 0;
 EXPORT char *volatile seam_resp_ptr = NULL;
@@ -108,7 +106,13 @@ dispatch_buffer(const char *buf, long len)
     }
     int rc = -2;
     PyObject *saved = PyErr_GetRaisedException();
-    PyObject *res = PyObject_CallFunction(g_dispatch, "y#", buf, (Py_ssize_t)len);
+    /* Newer headers no longer redirect '#' format calls to the SizeT entry point.
+     * A helper built with them must still run on 3.12, whose legacy entry point rejects
+     * '#'. Build the bytes explicitly instead of depending on that header redirect. */
+    PyObject *request = PyBytes_FromStringAndSize(buf, (Py_ssize_t)len);
+    PyObject *res = request != NULL ? PyObject_CallFunctionObjArgs(g_dispatch, request, NULL)
+                                  : NULL;
+    Py_XDECREF(request);
     if (res != NULL) {
         char *p;
         Py_ssize_t n;
@@ -313,21 +317,26 @@ line_cb(PyObject *mod, PyObject *const *args, Py_ssize_t nargs)
         return g_disable;
     }
     if (!g_slow) {
+        int hit = 0;
         PyObject *key = PyLong_FromVoidPtr(args[0]);
         if (key != NULL) {
             PyObject *lines = PyDict_GetItemWithError(g_bps, key);
             Py_DECREF(key);
             if (lines != NULL && PySet_Contains(lines, args[1]) == 1) {
-                trap_ptr(args[0], PyLong_AsLong(args[1]), REASON_BREAKPOINT);
-                Py_RETURN_NONE;
+                hit = 1;
             }
         }
         if (PyErr_Occurred()) {
             PyErr_Clear();
         }
-        Py_INCREF(g_disable);
-        return g_disable;
+        if (!hit) {
+            Py_INCREF(g_disable);
+            return g_disable;
+        }
     }
+    /* Even a plain breakpoint needs the agent's LINE filter: CLEANUP_THROW reports
+     * an await's line again without executing it. Non-hit lines still stay in C and
+     * disable themselves; only a candidate stop pays for the Python handler. */
     PyObject *tup = PyTuple_Pack(2, args[0], args[1]);
     if (tup == NULL) {
         PyErr_Clear();

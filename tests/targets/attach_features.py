@@ -9,6 +9,11 @@ import threading
 
 import seamtest
 
+# Test CPython's exception exit, not Ubuntu's crash-reporting service. Apport imports
+# native libraries after the exception stop and can exceed the scenario's exit timeout
+# under LLDB. Replacement exception hooks are covered by exceptions.py's hooked mode.
+sys.excepthook = sys.__excepthook__
+
 # Let a non-ancestor debugger attach even where Yama restricts ptrace (e.g. CI runners).
 PR_SET_PTRACER = 0x59616D61
 ctypes.CDLL(None).prctl(PR_SET_PTRACER, ctypes.c_ulong(-1), 0, 0, 0)

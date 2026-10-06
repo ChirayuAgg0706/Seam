@@ -33,6 +33,7 @@ def use_orjson():
 
 def busy(seconds):
     data = np.random.default_rng(0).random(2_000_000)
+    print("ready to pause", flush=True)
     end = time.monotonic() + seconds
     rounds = 0
     while time.monotonic() < end:

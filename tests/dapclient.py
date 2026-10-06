@@ -192,6 +192,12 @@ class DapClient:
                     return ev["event"], ev["body"]
             self._next(deadline)
 
+    def wait_output(self, text, timeout=30):
+        """Wait for a target's readiness message before testing a running process."""
+        deadline = time.monotonic() + timeout
+        while text not in self.output:
+            self._next(deadline)
+
     def drain(self, seconds, name):
         """Read messages for `seconds`; return the queued events called `name`."""
         deadline = time.monotonic() + seconds

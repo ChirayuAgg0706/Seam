@@ -5,9 +5,10 @@ is listed; **blocked** = needs something from the project owner.
 
 Every "done" below refers to scenario tests that launch real programs under Seam through a
 scripted DAP client (`tests/`), or through a real editor where it says so. Nothing is
-marked done on the strength of reading code. What remains is in [ROADMAP.md](ROADMAP.md).
+marked done on the strength of reading code. The first-release sign-off is in
+[docs/v1-readiness.md](docs/v1-readiness.md); the longer backlog is in [ROADMAP.md](ROADMAP.md).
 
-The suite has 292 scenarios; 13 are opt-in (timings with a 15,000-function module,
+The suite has 295 scenarios; 13 are opt-in (timings with a 15,000-function module,
 and sessions against four real projects built from source), and one specifically tests
 optimised-away locals at -O2. The CI section records validation under each LLDB version.
 
@@ -17,6 +18,16 @@ inspection check skipped. The -O2 smoke selection passes on both: 229 pass and t
 expected skips (two callback lines with no code and one local with no address to change).
 CPU/native throughput ratios are 0.942/0.988 on 3.12 and 1.006/1.000 on 3.14; thread-heavy
 ratios are 1.98 and 2.23. The throughput timer excludes initial library loading (§32).
+
+The 2026-10-05–06 v1 review fixed plain-await duplicate stops and helpers compiled with
+newer Python headers failing to dispatch on 3.12 (§33). The full local review run was
+**not green**: 273 passed, 14 skipped, seven failed. Four failures were stale Rust DWARF
+paths in the copied checkout; two pause scenarios assumed imports finished within a
+fixed delay. Those six pass after test-harness fixes. The seventh was Ubuntu's apport
+exception hook loading native libraries before process exit: a diagnostic pause caught
+that stack, and restoring CPython's hook reduced measured exit from 25.82 to 0.01 seconds.
+The attach fixture now uses the standard hook, as the launch fixture already did (§32).
+See the readiness checklist for local evidence and the final-commit CI requirement.
 
 ## The v1 checklist
 
@@ -71,7 +82,7 @@ ratios are 1.98 and 2.23. The throughput timer excludes initial library loading 
 | Unsupported interpreters refused by name (3.11, free-threaded) | **done** | `test_unsupported.py`. The refusal of non-x86-64 programs is written but **not tested** (no such machine here). |
 | Real third-party wheels in a virtual environment | **done** | `test_wheels.py`: numpy and orjson from PyPI |
 | LLDB 19 and 20 | **done** | CI `lldb` job (smoke scenarios); LLDB 20 is also what local runs use |
-| Release artifacts (manylinux wheel, sdist, `.vsix`) | **partial** | `.github/workflows/release.yml` builds them and checks the wheel with `seam doctor`; the `.vsix` step now takes the adapter from the wheel. Run by hand once before that change; not run since, and never from a tag. Nothing is published. |
+| Release artifacts (manylinux wheel, sdist, `.vsix`) | **done on pre-review `24d5b78`; final artifacts pending** | Release run 37340340453 passes, including the bundled adapter and installed-wheel doctor. The patched local wheel and bundled extension also pass their checks. Final-commit/tag verification remains; nothing is published. |
 
 ## CI
 
@@ -88,7 +99,7 @@ The extended set (about 30 more minutes), run once a week, when started by hand,
 a push whose commit message contains `[ci full]`:
 
 - `smoke` × 5: 3.12 -O2, 3.13 -O0, 3.14 -O0 and -O2, 3.15 -O0, on uv's standalone
-  interpreters, with LLDB 18. The smoke selection is 232 of the scenarios.
+  interpreters, with LLDB 18. The smoke selection is 235 of the scenarios.
 - `lldb` × 2: the smoke scenarios under LLDB 19 and LLDB 20.
 - `editors`: VS Code and Neovim, see item 11.
 - `clean machine`: see item 14.
@@ -156,11 +167,6 @@ case was not re-measured.
   how to use LLDB 19, which is not affected. Under LLDB 18 one scenario of
   `test_children.py` skips after asserting that message and one runs without the
   breakpoint that provokes the problem. LLDB 18 is what Ubuntu 24.04 installs by default.
-- **A breakpoint on an `await` line stops a second time on Python 3.13 and later** when
-  an exception (cancellation, timeout) is thrown into the await, if no step is in
-  progress and the breakpoint has no condition: the helper's fast path for plain
-  breakpoints does not see that the event belongs to a hidden instruction (decisions
-  §24). During a step it is handled.
 - **Coroutine stacks on Ubuntu's own Python show `_asyncio`'s C frames** (`task_step`)
   between the coroutine and the event loop: modules under `lib-dynload` are not classed
   as the interpreter's. uv's builds link `_asyncio` in and hide them.
@@ -202,9 +208,10 @@ case was not re-measured.
   only. What the ordinary suite covers of the same mechanisms runs under 18 and 19 on CI.
 - **Attach, then Step Into a large module**: no scenario.
 - **Non-x86-64 machines**: the refusal message is untested.
-- **The release workflow** has not been run since the extension started carrying the
-  adapter, and never from a version tag. The glibc version the manylinux-built helper
-  needs is printed by that build and has not been read.
+- **The final release artifacts** still need to be built from the chosen release commit
+  and tag. The workflow passed on `24d5b78` during the v1 audit (run 37340340453), including
+  the bundled adapter; it reports glibc 2.14 for the helper. This run predates the
+  await-breakpoint fix, and was not from a tag.
 - **Python 3.15.0 final**: only the release candidate (rc3) exists so far.
 - **The weekly schedule** did not start a run on its first Monday (2026-10-05, due at
   03:17 UTC, nothing by 06:20 UTC). GitHub delays and sometimes drops scheduled runs;

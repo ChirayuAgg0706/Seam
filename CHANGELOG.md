@@ -81,6 +81,11 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Helpers built with newer Python headers can dispatch debugger requests on Python
+  3.12, as promised by the stable-ABI wheel tag.
+- Plain breakpoints on `await` no longer stop again on hidden cancellation or timeout
+  cleanup instructions on Python 3.13+, when continuing without a step armed.
+
 - Launch and attach no longer add `sys` or `seam_agent` to the program's globals.
 - Unevaluable breakpoint conditions report their error once instead of silently stopping.
 - User libraries built without debug info explain their unbound breakpoints and skipped

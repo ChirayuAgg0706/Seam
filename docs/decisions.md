@@ -744,8 +744,13 @@ the caller as for any exception. From 3.13 on the interpreter also reports the a
 line once more when an exception is thrown into it: the event belongs to `CLEANUP_THROW`,
 the hidden instruction that passes the exception to the awaited object. The agent's line
 handler ignores a `LINE` event whose instruction is `CLEANUP_THROW`, for steps and for the
-breakpoints it decides itself, so every version steps alike. (The C fast path for plain
-breakpoints does not; see STATUS.)
+breakpoints it decides itself, so every version steps alike. The v1 readiness review
+found that plain breakpoints bypassed this filter in the C callback. Candidate hits now
+go through the same Python handler even without a step or a condition; non-hit lines
+still disable themselves entirely in C. This avoids version-specific bytecode logic in
+the stable-ABI helper and keeps the no-breakpoint path unchanged. Two regression
+scenarios continue from a plain await breakpoint through cancellation and timeout,
+requiring the next stop to be in the handler rather than on the await again.
 
 **Two differences between interpreters are left as they are**; the tests assert them per
 version.
@@ -1061,6 +1066,34 @@ and 1.131 under the new one. Including that one-time pause produced an 84% repor
 slowdown on a fast machine, despite unchanged steady throughput. The 10% assertion still
 covers all CPU work and native calls; interpreter startup and initial library loading
 are setup costs, with the latter now visible rather than folded into the work timer.
+
+## 33. V1 readiness: helper ABI and deterministic validation
+
+A helper built from the sdist with Python 3.14 headers loaded on 3.12 but every dispatch
+returned -2, so the installed wheel's `seam doctor` failed at `setBreakpoints`. The
+`PyObject_CallFunction(..., "y#", ...)` call depended on older headers redirecting it to
+the SizeT entry point. New headers no longer do that; the 3.12 legacy entry point rejects
+the format. The helper now creates a bytes object explicitly and calls the dispatcher
+with `PyObject_CallFunctionObjArgs`, avoiding the header-dependent format handling.
+
+The regression test builds the real helper with the target interpreter's headers, loads
+it in CPython 3.12, and sends bytes (including a NUL) through its real C request/reply
+buffers. It failed with 3.14 headers before the fix and passes with headers from 3.12,
+3.13, 3.14 and 3.15rc3 after it. It is in the smoke matrix so newer header builds keep
+being checked against the oldest supported runtime. A rebuilt 3.14-header wheel also
+passes the installed `seam doctor` on 3.12 and the bundled extension's 18 checks.
+
+The review's copied checkout exposed test setup problems: a shared Cargo target cache
+reused a library with absolute DWARF paths into the original checkout, and two pause
+tests issued Pause while their programs were still importing libraries. The default
+Rust cache is now keyed by checkout (an explicit `CARGO_TARGET_DIR` still wins). Pause
+tests wait for the target's flushed readiness message before starting their running-code
+delay. These correct the setup assumptions; the stack and pause assertions are unchanged.
+The attached-process exception fixture had the same apport exit delay as the launch
+fixture in §32. A diagnostic pause during exit caught `apport_excepthook` importing
+native libraries, and the exit event did eventually arrive (25.82 seconds). Restoring
+`sys.__excepthook__` reduced measured exit to 0.01 seconds. The attach fixture now does
+this too; the launch fixture's `hooked` mode retains replacement-hook coverage.
 
 ## 5. Toolchain for development
 

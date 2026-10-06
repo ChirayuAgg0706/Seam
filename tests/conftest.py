@@ -150,8 +150,11 @@ def _build_layer(layer, opt, pyinfo):
     if layer == "pyo3":
         if not shutil.which("cargo"):
             _unavailable("cargo is not installed")
+        # Cargo may reuse a copied crate's output across checkouts, including the old
+        # absolute DWARF source paths. Keep the default cache local to this checkout.
+        checkout = hashlib.sha1(ROOT.encode()).hexdigest()[:12]
         target_dir = os.environ.get(
-            "CARGO_TARGET_DIR", os.path.expanduser("~/.cache/seam/cargo-target"))
+            "CARGO_TARGET_DIR", os.path.expanduser("~/.cache/seam/cargo-target/" + checkout))
         profile = "debug" if opt == "O0" else "release"
         cmd = ["cargo", "build", "--quiet"] + (["--release"] if opt != "O0" else [])
         _run(cmd, cwd=os.path.dirname(os.path.dirname(source)),

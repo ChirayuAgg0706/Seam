@@ -183,6 +183,7 @@ def test_pause_then_step_python(dap, capi, iteration):
     import time
 
     dap.launch(RUNNING, dap.python, env=capi.env)
+    dap.wait_output("ready to pause")
     time.sleep(0.5)
     dap.request("pause", {"threadId": 0})
     stop = dap.wait_stopped()
