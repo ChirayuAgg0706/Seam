@@ -32,8 +32,11 @@ suite, all version/optimisation and LLDB cells green, both editors and clean-mac
 installation green. Release artifacts and the main-branch push check also passed.
 The owner's Windows/WSL checks passed through attach/detach. The subsequent helper
 injection failure was reproduced with a delayed symbol server and corrected by disabling
-network downloads (§34). The dimmed native stop is corrected too. Final CI/package
-validation and the owner's disassembly retest remain pending; see the readiness checklist.
+network downloads (§34). The dimmed native stop and VS Code's initial frame selection
+are corrected too. Final extended CI passed on `610f460` (run 37477454757): 280 passed,
+16 documented skips; every compatibility, editor and clean-machine job passed. Release
+run 37477455386 passed on the same commit. That extension is installed in WSL and its
+doctor passes; only the owner's startup/disassembly retest remains.
 
 ## The v1 checklist
 
@@ -76,7 +79,7 @@ validation and the owner's disassembly retest remain pending; see the readiness 
 | Debugging a pytest run, including pytest-xdist | **done** | `test_pytest.py` |
 | Child processes: fork, subprocess, multiprocessing (all start methods), children outliving the program, session end, expressions that start processes | **done** under LLDB 19 and 20; **partial** under LLDB 18 | `test_children.py` (19 scenarios). LLDB 18: see Known problems. |
 | Source path mapping (`sourceMap`) for native code built elsewhere; projects opened through symbolic links | **done** | `test_sourcemap.py` (33): sources moved after the build, `-fdebug-prefix-map` / `-ffile-prefix-map` (invented and relative prefixes), Cython line directives, a PyO3 crate built with `--remap-path-prefix`; -O0 and -O2; launch and attach |
-| Frames without source: library names, disassembly, stepping by instruction, crashes inside the interpreter | **done** | `test_nosource.py`: a stripped extension, orjson from PyPI, libc, the interpreter. VS Code's disassembly view itself has not been looked at. |
+| Frames without source: library names, disassembly, stepping by instruction, crashes inside the interpreter | **done** | `test_nosource.py`: a stripped extension, orjson from PyPI, libc, the interpreter. The real VS Code test also checks initial native-frame focus, opens Disassembly View and steps an instruction. |
 | Large modules: step-in does not slow down with the number of functions | **done** | `test_entrytraps.py` in the ordinary suite (pybind11, nanobind and PyO3 test modules use the mechanism by default, under LLDB 18, 19 and 20 on CI); opt-in `test_scale.py`: 0.025 s per step at 15,000 functions, was 1.3 s (LLDB 20) |
 | Stepping where binding-layer code is inlined into user code | **done** | `test_inlined_glue.py` |
 | Requests run in the program while other Python threads are busy | **done** | `test_entrytraps.py::test_other_threads_running_into_the_traps`, looped 60 times on 3.14 |
@@ -88,7 +91,7 @@ validation and the owner's disassembly retest remain pending; see the readiness 
 | Unsupported interpreters refused by name (3.11, free-threaded) | **done** | `test_unsupported.py`. The refusal of non-x86-64 programs is written but **not tested** (no such machine here). |
 | Real third-party wheels in a virtual environment | **done** | `test_wheels.py`: numpy and orjson from PyPI |
 | LLDB 19 and 20 | **done** | CI `lldb` job (smoke scenarios); LLDB 20 is also what local runs use |
-| Release artifacts (manylinux wheel, sdist, `.vsix`) | **done on pre-review `24d5b78`; final artifacts pending** | Release run 37340340453 passes, including the bundled adapter and installed-wheel doctor. The patched local wheel and bundled extension also pass their checks. Final-commit/tag verification remains; nothing is published. |
+| Release artifacts (manylinux wheel, sdist, `.vsix`) | **done on `610f460`** | Release run 37477455386 passes, including the bundled adapter and installed-wheel doctor. The final extension is installed in WSL and its doctor passes. Release version/tag selection remains shipping work; nothing is published. |
 
 ## CI
 
@@ -105,7 +108,7 @@ The extended set (about 30 more minutes), run once a week, when started by hand,
 a push whose commit message contains `[ci full]`:
 
 - `smoke` × 5: 3.12 -O2, 3.13 -O0, 3.14 -O0 and -O2, 3.15 -O0, on uv's standalone
-  interpreters, with LLDB 18. The smoke selection is 235 of the scenarios.
+  interpreters, with LLDB 18. The smoke selection is 236 of the scenarios.
 - `lldb` × 2: the smoke scenarios under LLDB 19 and LLDB 20.
 - `editors`: VS Code and Neovim, see item 11.
 - `clean machine`: see item 14.
@@ -202,22 +205,19 @@ case was not re-measured.
 
 ## Not verified
 
-- **A person using it.** The `editors` job drives a real VS Code and the pictures it keeps
-  were looked at (call stack, variables, exception pop-up and terminal read well). Nobody
-  has sat in front of VS Code on Windows connected to WSL, which is the owner's own
-  set-up, and pressed the keys. VSCodium was not run either; the first-run check runs
+- **Final Windows/WSL acceptance.** The owner passed the checks through attach/detach,
+  then found slow startup and disabled disassembly. Both are fixed and automated checks
+  pass, including real VS Code disassembly; the owner still needs to reload the updated
+  extension and repeat startup/disassembly. VSCodium was not run; the first-run check runs
   without the Python extension, which is VSCodium's situation as far as Seam is
   concerned.
-- **VS Code's disassembly view.** The requests it sends are reproduced from its source in
-  `test_nosource.py`; the view itself was not driven.
 - **LLDB 18 and 19 on the real projects and the scale timings.** Both ran under LLDB 20
   only. What the ordinary suite covers of the same mechanisms runs under 18 and 19 on CI.
 - **Attach, then Step Into a large module**: no scenario.
 - **Non-x86-64 machines**: the refusal message is untested.
-- **The final release artifacts** still need to be built from the chosen release commit
-  and tag. The workflow passed on `24d5b78` during the v1 audit (run 37340340453), including
-  the bundled adapter; it reports glibc 2.14 for the helper. This run predates the
-  await-breakpoint fix, and was not from a tag.
+- **The release tag/version.** Artifacts from final code `610f460` pass the release
+  workflow (37477455386). Choosing a public version and validating its tag remain
+  shipping work; nothing is published.
 - **Python 3.15.0 final**: only the release candidate (rc3) exists so far.
 - **The weekly schedule** did not start a run on its first Monday (2026-10-05, due at
   03:17 UTC, nothing by 06:20 UTC). GitHub delays and sometimes drops scheduled runs;
@@ -227,8 +227,7 @@ case was not re-measured.
 
 ## Needs the project owner
 
-- One session by hand in VS Code on Windows + WSL: install the `.vsix` built by
-  `scripts/build-vsix.sh` (or from a CI run's artifacts), open `examples/pyo3-demo`, put
-  a breakpoint on the `result = ...` line of `demo.py`, press F5, step in and out.
+- Reload the already-installed final extension in Windows + WSL, repeat startup to
+  the demo breakpoint, then open disassembly at `nosource_work` and step an instruction.
 - Publishing (PyPI, the VS Code Marketplace, Open VSX, making the repository public), and
   with it a version number and a tagged release. Nothing has been published.

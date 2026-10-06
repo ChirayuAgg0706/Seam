@@ -12,10 +12,10 @@ The package version is still `0.1.0`; choosing the first public version belongs 
 | Gate | Concrete completion condition | Status |
 |---|---|---|
 | Resolve the intermittent attach-exit failure | Explain and fix, or establish a reproducible test-environment cause for, the full-run timeout after continuing an attached process's uncaught exception. A passing retry alone is insufficient. | Resolved: Ubuntu's apport exception hook delayed exit; the fixture now restores CPython's hook. See evidence below. |
-| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `d5e3185`; all extended CI jobs and the main-branch run succeeded. |
-| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. Automated Linux editor tests already pass, but this exact interactive path has not been signed off. | Owner reports steps 1–4 working, with slow symbol-loading startup; visual disassembly/instruction stepping remains pending. A subsequent launch failed during helper injection; see the new gate below. |
-| Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final CI/package and owner retest pending. |
-| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `d5e3185`; wheel, sdist and `.vsix` built and checked. No release was published. Version/tag selection remains shipping work. |
+| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `610f460`; all extended CI jobs succeeded, including actual native-frame focus, disassembly and instruction stepping in VS Code. |
+| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. Automated Linux editor tests already pass, but this exact interactive path has not been signed off. | Owner reports checks through attach/detach working. Startup and disassembly fixes are now installed; reload the window and repeat those two checks. |
+| Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest remains. |
+| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `610f460`; wheel, sdist and `.vsix` built and checked. No release was published. Version/tag selection remains shipping work. |
 
 These are final verification tasks, not a new feature backlog.
 Any further failure in these checks becomes a v1 bug to fix. Once they pass, the remaining
@@ -48,13 +48,20 @@ This matches the already-established launch-fixture diagnosis in decisions §32.
 5. Attach to a running test Python process through the picker, stop at a breakpoint,
    then detach and confirm the process continues.
 6. With an existing no-source scenario from `tests/test_nosource.py`, open VS Code's
-   **Disassembly View** and step an instruction. The protocol is tested; the actual view
-   has not yet been visually checked. Do not expect disassembly breakpoints (out of scope).
+   **Disassembly View** and step an instruction. The automated VS Code check and its
+   screenshot pass; repeat on Windows/WSL. Disassembly breakpoints are out of scope.
 
 Record the commit, artifact, VS Code/WSL/Python/LLDB versions, and any failures here.
 
 ## Fixed in this review
 
+- **Slow startup and helper-injection failure.** Disable automatic network symbol
+  downloads in the adapter's LLDB instance before creating a target. Local separate
+  symbols stay enabled (`debugInfoLookup: true`); no user override is required. Phase
+  timings and failed-call stop details make any further startup failure diagnosable.
+- **Dimmed no-source native stops and disabled disassembly.** Keep the actual top native
+  frame selectable and correct VS Code's initial selection when it skips that frame for
+  the Python source below. Later manual frame selections remain under the user's control.
 - **Newer-header builds failing on Python 3.12.** A wheel built using 3.14 headers loaded
   its helper but failed at `setBreakpoints` with agent error -2. The C dispatcher now
   constructs request bytes explicitly instead of using header-dependent `y#` format
@@ -76,24 +83,29 @@ Record the commit, artifact, VS Code/WSL/Python/LLDB versions, and any failures 
 
 ## Verification evidence
 
-- **Final code:** [extended CI run 37402899197](https://github.com/ChirayuAgg0706/Seam/actions/runs/37402899197)
-  passed on `d5e3185`, now on main: all 11 required jobs succeeded. Full suite:
-  **279 passed, 16 skipped** (13 opt-in, one -O2-only, one missing system Python debug
+- **Final code:** [extended CI run 37477454757](https://github.com/ChirayuAgg0706/Seam/actions/runs/37477454757)
+  passed on `610f460`, now on main: all 11 required jobs succeeded. Full suite:
+  **280 passed, 16 skipped** (13 opt-in, one -O2-only, one missing system Python debug
   information, and the documented LLDB 18 child-process limitation). LLDB 19/20 smoke:
-  **234 passed, one skipped** each. The version/optimisation matrix, real VS Code and
+  **235 passed, one skipped** each. The version/optimisation matrix, real VS Code and
   Neovim checks, lint/package checks and clean-machine installation all passed.
-  [Main push CI 37403098077](https://github.com/ChirayuAgg0706/Seam/actions/runs/37403098077)
-  also passed on that same code.
-- **Final artifacts:** [release run 37402903226](https://github.com/ChirayuAgg0706/Seam/actions/runs/37402903226)
-  passed on `d5e3185`, including installed-wheel doctor, bundled helper comparison and
-  all 18 extension checks. Artifacts were downloaded to `build/v1-release/` locally;
+  The real VS Code test selected `nosource_work`, opened disassembly and advanced an
+  instruction. Its screenshot was inspected; evidence is in `build/v1-final-editor-evidence/`.
+- **Final artifacts:** [release run 37477455386](https://github.com/ChirayuAgg0706/Seam/actions/runs/37477455386)
+  passed on `610f460`, including installed-wheel doctor, bundled helper comparison and
+  all 19 bundled extension checks. Artifacts were downloaded to `build/v1-final-release/` locally;
   that `.vsix` is installed in this laptop's WSL VS Code server. The Rust demo is built.
   The prepared local `build/v1-release/LAPTOP-CHECK.md` and `acceptance.code-workspace`
   provide the remaining manual checks. Windows VS Code is 1.140.0, WSL Ubuntu 24.04,
-  system Python 3.12 and LLDB 20.1.2. Interactive results remain pending the owner.
+  system Python 3.12 and LLDB 20.1.2. The owner passed through attach/detach on the prior
+  build; only startup/disassembly need repeating after reloading this build.
 - The final installed WSL extension's bundled adapter also passed `seam doctor` locally:
   launch, breakpoint, expression evaluation and clean exit all succeeded. The manual
   machine-check command still verifies that the editor itself selects that environment.
+- The final installed adapter reached line 6 with stack/locals in 1.68 and 1.20 seconds
+  with default local debug-symbol lookup enabled, measured through a DAP client and PTY
+  (`build/startup-installed-final-results.txt`). These measurements exclude VS Code's UI
+  startup and are not a universal bound for large projects.
 - Before this review, [extended CI run 37338252923](https://github.com/ChirayuAgg0706/Seam/actions/runs/37338252923)
   passed on `736cc95`, including all version/optimisation cells, LLDB 18/19/20, real
   VS Code and Neovim sessions, and a clean-machine installation. `24d5b78` only records
