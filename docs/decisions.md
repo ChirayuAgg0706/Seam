@@ -1095,6 +1095,36 @@ native libraries, and the exit event did eventually arrive (25.82 seconds). Rest
 `sys.__excepthook__` reduced measured exit to 0.01 seconds. The attach fixture now does
 this too; the launch fixture's `hooked` mode retains replacement-hook coverage.
 
+## 34. Windows/WSL acceptance: native focus and network symbol stalls
+
+The adapter marked all source-less frames `subtle`, including the actual native stop.
+VS Code skipped that frame and selected the Python caller, disabling the disassembly
+action for the selected frame. The first native frame is now normal regardless of
+source availability; lower glue frames and missing-source hints retain their treatment.
+The editor regression checks VS Code's selected stack item, opens disassembly using
+the editor command, and steps one instruction. Protocol coverage also checks pagination.
+
+Ubuntu's profile set `DEBUGINFOD_URLS`. LLDB 20 attempted synchronous HTTPS symbol
+downloads during target creation, launch and injected calls even with `symbols.auto-download`
+off. A captured blocked adapter was connecting to the Ubuntu symbol server while
+`CreateTarget` had not returned. The timeout was therefore not a large-project scan.
+In a controlled reproduction, a local symbol server delayed its first response during
+helper injection by one second; a shortened 0.2-second expression deadline reproduced
+the exact `breakpoint 1 which has been deleted` error. The same probe with the fix
+launched successfully and made no HTTP requests. The stale breakpoint description is
+the last stop LLDB reports when that expression is interrupted, not evidence that a
+user's function breakpoint was deleted.
+
+Seam clears `plugin.symbol-locator.debuginfod.server-urls` before creating any targets.
+The setting is specific to the debugger process; the target's environment is unchanged.
+LLDB builds without that optional plugin need no action. `debugInfoLookup` remains true
+by default: local separate symbols and embedded debug information still work. Symbol
+downloads must be performed outside the debug session. A real local HTTP-server regression
+fails before this change and passes after it, checking launch, evaluation and clean exit.
+Twenty consecutive terminal launch/disassembly sessions and all 17 no-source/robustness
+scenarios passed locally under LLDB 20. Startup phase timings and detailed failed-call
+stop information remain in the adapter log for further diagnosis.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

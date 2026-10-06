@@ -27,7 +27,6 @@ def is_python(frame):
 def assert_no_source(frame, library=None):
     """What a native frame without source must look like to the editor."""
     assert "path" not in frame.get("source", {}), frame
-    assert frame.get("presentationHint") == "subtle", frame
     assert int(frame["instructionPointerReference"], 16) > 0, frame
     if "source" in frame:
         # Debug info naming a file that is not here: its name only, played down.
@@ -117,6 +116,10 @@ def test_function_breakpoint_in_a_stripped_library_and_its_disassembly(dap, stri
     top = stack[0]
     assert top["name"] == LIBRARY + "!nosource_work" and "source" not in top, top
     assert_no_source(top)
+    assert top.get("presentationHint", "normal") == "normal", top
+    # The editor must focus the actual stop, including when it requests just one frame.
+    first = dap.request("stackTrace", {"threadId": tid, "startFrame": 0, "levels": 1})
+    assert first["stackFrames"] == [top]
     # The library's other frames are glue to Seam (no debug info) and stay hidden; the
     # Python frames below are complete, and are not machine code.
     assert names(stack)[1:] == ["run", "main", "<module>"]

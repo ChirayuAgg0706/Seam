@@ -564,6 +564,43 @@ async function interpreterFromThePythonExtension() {
     + api.environments.getActiveEnvironmentPath(folder.uri).path);
 }
 
+async function disassemblyAtTheNativeStop() {
+  vscode.debug.removeBreakpoints(vscode.debug.breakpoints);
+  vscode.debug.addBreakpoints([new vscode.FunctionBreakpoint("nosource_work")]);
+  const session = await start(folder, {
+    type: "seam", request: "launch", name: "editor check (disassembly)",
+    program: path.join(project, "disassembly.py"), console: "internalConsole",
+  });
+  const ended = sessionEnded(session);
+  const stop = (await nextEvent("stopped")).body;
+  const { top } = await stackOf(session, stop.threadId);
+  assert.ok(top.name.endsWith("!nosource_work"), top.name);
+  assert.ok(top.instructionPointerReference);
+  assert.notStrictEqual(top.presentationHint, "subtle");
+  // Check the frame the editor actually focused, not just the protocol response.
+  const deadline = Date.now() + 20000;
+  while (vscode.debug.activeStackItem?.frameId !== top.id && Date.now() < deadline) {
+    await sleep(100);
+  }
+  assert.strictEqual(vscode.debug.activeStackItem?.frameId, top.id,
+    "VS Code must focus the stopped native frame instead of the Python caller");
+  await vscode.commands.executeCommand("debug.action.openDisassemblyView");
+  const listing = await nextMessage("disassembly in the editor", (m) =>
+    m.type === "response" && m.command === "disassemble" && m.success);
+  assert.ok(listing.body.instructions.some((i) => i.instruction && i.instruction !== "??"));
+  await shot("9-native-disassembly");
+  await vscode.commands.executeCommand("workbench.action.debug.stepOver");
+  const stepped = (await nextEvent("stopped")).body;
+  const after = (await stackOf(session, stepped.threadId)).top;
+  assert.ok(after.instructionPointerReference, "F10 in disassembly steps native code");
+  assert.notStrictEqual(after.instructionPointerReference, top.instructionPointerReference);
+  vscode.debug.removeBreakpoints(vscode.debug.breakpoints);
+  await command("workbench.action.debug.continue");
+  assert.strictEqual((await nextEvent("exited")).body.exitCode, 0);
+  await ended;
+  log("the native stop is focused, opens disassembly, and steps an instruction");
+}
+
 exports.run = async function run() {
   const extension = vscode.extensions.getExtension("seam.seam-debugger");
   assert.ok(extension, "the Seam extension is installed");
@@ -593,6 +630,7 @@ exports.run = async function run() {
       await pressF5();
       await stepInTheDebugConsole();
       await attachThroughThePicker();
+      await disassemblyAtTheNativeStop();
       await checkThisMachine();
       await refusals();
     }

@@ -274,11 +274,16 @@ class SessionMixin:
         if console != "internalConsole":
             terminal_tty = self._open_terminal(console)
         err = lldb.SBError()
+        self.log("launch: create target", python)
+        phase = time.monotonic()
         self.target = self.dbg.CreateTarget(python, None, None, False, err)
+        self.log("launch: target created in %.3f s" % (time.monotonic() - phase))
         if not self.target or not self.target.IsValid():
             raise DapError("cannot create a target for %s: %s" % (python, err.GetCString()))
         self._require_x86_64()
         bp_main = self._entry_breakpoint("Py_RunMain")
+        self.log("launch: entry breakpoint", bp_main.GetID(), "locations",
+                 bp_main.GetNumLocations())
 
         info = lldb.SBLaunchInfo(argv)
         info.SetWorkingDirectory(self.cwd)
@@ -306,7 +311,10 @@ class SessionMixin:
             info.AddOpenFileAction(0, os.devnull, True, False)
             info.AddOpenFileAction(1, tty, False, True)
             info.AddOpenFileAction(2, tty, False, True)
+        self.log("launch: starting process")
+        phase = time.monotonic()
         self.process = self.target.Launch(info, err)
+        self.log("launch: process launch returned in %.3f s" % (time.monotonic() - phase))
         if slave is not None:
             os.close(slave)
         if not err.Success() or not self.process or not self.process.IsValid():
@@ -338,6 +346,8 @@ class SessionMixin:
                 or thread.GetStopReasonDataAtIndex(0) != bp_main.GetID()):
             raise DapError("unexpected stop before Py_RunMain: %s" % thread.GetStopDescription(200))
         self.target.BreakpointDelete(bp_main.GetID())
+        self.log("launch: at entry, deleted bootstrap breakpoint; pc",
+                 "%#x" % thread.GetFrameAtIndex(0).GetPC(), "stop-id", self.process.GetStopID())
         self._apply_signal_policy(args)
         self._inject(thread)
         self.safe_tid = thread.GetThreadID()
@@ -479,7 +489,10 @@ class SessionMixin:
 
     def _inject(self, thread):
         """Load the agent. The caller guarantees `thread` is at a safe point."""
+        self.log("bootstrap: locating interpreter symbols")
+        phase = time.monotonic()
         self._find_python()
+        self.log("bootstrap: symbols located in %.3f s" % (time.monotonic() - phase))
         code = ("import sys; sys.path.insert(0, %r)\n"
                 "try:\n    import seam_agent\n"
                 "finally:\n    sys.path.remove(%r)\n" % (TARGET_DIR, TARGET_DIR))
@@ -488,8 +501,11 @@ class SessionMixin:
         # under the debugger and failed without it. So the code gets a namespace of its
         # own.
         code = "exec(%r, {'__name__': 'seam_bootstrap'})" % code
+        self.log("bootstrap: injecting agent")
+        phase = time.monotonic()
         rc = self._call(thread, "((int(*)(const char*, void*))%d)(%s, (void*)0)"
                         % (self.sym["PyRun_SimpleStringFlags"], json.dumps(code)))
+        self.log("bootstrap: injection completed in %.3f s" % (time.monotonic() - phase))
         self._drain_output()
         if rc != 0:
             raise DapError("could not load the Seam agent into the process (see its output)")

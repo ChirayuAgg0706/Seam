@@ -43,6 +43,14 @@ function makeProject(demo) {
   fs.mkdirSync(project);
   fs.copyFileSync(path.join(__dirname, "project", "app.py"), path.join(project, "app.py"));
   fs.copyFileSync(path.join(demo, "seam_demo.so"), path.join(project, "seam_demo.so"));
+  const include = cp.execFileSync("python3", ["-c",
+    "import sysconfig; print(sysconfig.get_paths()['include'])"], { encoding: "utf8" }).trim();
+  const stripped = path.join(project, "seam_nosource.abi3.so");
+  cp.execFileSync("gcc", ["-shared", "-fPIC", "-O2", "-I", include,
+    path.resolve(__dirname, "../../tests/ext/nosource/seam_nosource.c"), "-o", stripped]);
+  cp.execFileSync("strip", [stripped]);
+  fs.writeFileSync(path.join(project, "disassembly.py"),
+    "import seam_nosource\nprint(seam_nosource.work(2))\n");
   // The project's own environment, and a second one to select in the Python extension.
   for (const name of [".venv", "env-b"]) {
     cp.execFileSync("python3", ["-m", "venv", "--without-pip", path.join(project, name)],

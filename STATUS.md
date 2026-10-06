@@ -8,7 +8,7 @@ scripted DAP client (`tests/`), or through a real editor where it says so. Nothi
 marked done on the strength of reading code. The first-release sign-off is in
 [docs/v1-readiness.md](docs/v1-readiness.md); the longer backlog is in [ROADMAP.md](ROADMAP.md).
 
-The suite has 295 scenarios; 13 are opt-in (timings with a 15,000-function module,
+The suite has 296 scenarios; 13 are opt-in (timings with a 15,000-function module,
 and sessions against four real projects built from source), and one specifically tests
 optimised-away locals at -O2. The CI section records validation under each LLDB version.
 
@@ -30,9 +30,10 @@ The attach fixture now uses the standard hook, as the launch fixture already did
 Final extended CI passed on `d5e3185`: 279 passed / 16 documented skips in the full
 suite, all version/optimisation and LLDB cells green, both editors and clean-machine
 installation green. Release artifacts and the main-branch push check also passed.
-The owner's Windows/WSL checks passed through attach/detach, but a subsequent launch
-failed during helper injection with LLDB reporting an already-deleted breakpoint 1.
-That startup failure and visual disassembly acceptance remain open; see the readiness checklist.
+The owner's Windows/WSL checks passed through attach/detach. The subsequent helper
+injection failure was reproduced with a delayed symbol server and corrected by disabling
+network downloads (§34). The dimmed native stop is corrected too. Final CI/package
+validation and the owner's disassembly retest remain pending; see the readiness checklist.
 
 ## The v1 checklist
 
@@ -163,12 +164,6 @@ case was not re-measured.
 
 ## Known problems
 
-- **Intermittent launch failure observed in Windows/WSL acceptance.** A fresh launch
-  failed while injecting the agent, reporting `Expression execution was interrupted:
-  breakpoint 1 which has been deleted`. The prior session exited normally; this was
-  not an error after that session's exit. Original protocol and LLDB logs are preserved
-  locally as `build/disassembly-startup-failure.log` and `.log.lldb`. Root cause and fix
-  remain open; do not count a successful retry as a fix.
 - **LLDB 18 and child processes in programs with several threads.** If a thread reaches a
   breakpoint (also a conditional one whose condition is false) at the moment another
   thread starts a child with `subprocess` or `os.system`, or if several threads start

@@ -122,7 +122,7 @@ call stack. **Step Out** returns to the Python line.
 | `stopOnSignals` | Signals that stop the debugger (default `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGABRT`). Every other signal goes straight to the program. Also valid for attach. |
 | `justMyCode` | Steps and the "Raised Python exceptions" breakpoint keep to your own code: Python files of the standard library and of installed packages are not stepped into (default true). |
 | `sourceMap` | Where the sources of native code are on this machine, when the debug info names another place (built in a container, in CI, in another directory, or with `-fdebug-prefix-map` / `--remap-path-prefix`). Pairs of path prefixes, debug info first: `{"/io": "${workspaceFolder}"}`, or lldb-dap's form `[["/io", "${workspaceFolder}"]]`. Use `"."` for relative paths in the debug info. Also valid for attach. |
-| `debugInfoLookup` | Let LLDB find separate debug-info files (default true). If startup is slow, try false; embedded native debug information still works, but separate symbol files will not be loaded. |
+| `debugInfoLookup` | Let LLDB find locally installed separate debug-info files (default true). Seam disables automatic network symbol downloads, so startup does not wait for a symbol server. Set false to skip local separate files too; embedded native debug information still works. |
 | `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
 | `showGlueFrames` | Show binding-layer trampoline frames in the call stack (default false). |
 

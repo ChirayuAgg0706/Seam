@@ -81,6 +81,13 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Native stops without source remain the selected stack frame in VS Code, making
+  disassembly available without manually selecting a dimmed frame above the Python caller.
+- Inherited debuginfod servers no longer stall launch/attach or interrupt helper
+  injection with a misleading deleted-breakpoint error. Local separate debug symbols
+  remain enabled; automatic network downloads are disabled inside the debugger.
+- Startup logs identify target creation, process launch, symbol lookup and helper
+  injection phases, with elapsed time and stop details when an injected call fails.
 - Helpers built with newer Python headers can dispatch debugger requests on Python
   3.12, as promised by the stable-ABI wheel tag.
 - Plain breakpoints on `await` no longer stop again on hidden cancellation or timeout

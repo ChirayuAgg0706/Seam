@@ -50,6 +50,16 @@ class Adapter(ProtocolMixin, SessionMixin, StopsMixin, SteppingMixin, Breakpoint
         self.rfile = sock.makefile("rb")
         self.wlock = threading.Lock()
         self.logfile = log
+        # Distro profiles can set DEBUGINFOD_URLS without the user configuring Seam.
+        # LLDB then makes synchronous HTTP requests during target creation and even
+        # expression setup. An unreachable server can stall startup or exhaust an
+        # injected call's deadline. Keep local separate debug files, but no downloads.
+        # Builds without the optional debuginfod plugin have nothing to disable.
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand(
+            "settings clear plugin.symbol-locator.debuginfod.server-urls", result)
+        self.log("startup: network symbol lookup",
+                 "disabled" if result.Succeeded() else "plugin unavailable")
         self.listener = lldb.SBListener("seam")
         self.wake = lldb.SBBroadcaster("seam.wake")
         self.listener.StartListeningForEvents(self.wake, 1)

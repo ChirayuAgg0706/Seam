@@ -223,7 +223,7 @@ class StackMixin:
         start = args.get("startFrame") or 0
         levels = args.get("levels") or len(stack)
         frames = []
-        for record in stack[start:start + levels]:
+        for position, record in enumerate(stack[start:start + levels], start):
             frame = {"id": record["id"], "name": record["name"], "line": record["line"],
                      "column": 0}
             if record["path"]:
@@ -239,7 +239,11 @@ class StackMixin:
                               % record["missing"]}
             if record["kind"] == "native":
                 frame["instructionPointerReference"] = "%#x" % record["at"][0]
-            if not record["path"] or record.get("cls") in GLUE:
+            # The actual native stop must stay selectable even without source. VS Code
+            # skips subtle frames when choosing focus, hiding its disassembly action
+            # behind the Python caller. Keep lower glue frames deemphasized.
+            if ((not record["path"] or record.get("cls") in GLUE)
+                    and not (position == 0 and record["kind"] == "native")):
                 frame["presentationHint"] = "subtle"
             if (self.just_my_code and record["kind"] == "py" and record["path"]
                     and self._python_library_path(record["path"])):

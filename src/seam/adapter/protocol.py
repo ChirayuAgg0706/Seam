@@ -191,6 +191,10 @@ class ProtocolMixin:
             self.log("the call needed the other threads to run: %.2f s"
                      % (time.monotonic() - started))
         if problem is not None:
+            self.log("call failed after %.3f s:" % (time.monotonic() - started), problem,
+                     "stop-id", self.process.GetStopID(), "thread", thread.GetThreadID(),
+                     "pc %#x" % thread.GetFrameAtIndex(0).GetPC(),
+                     "stop reason", thread.GetStopReason(), thread.GetStopDescription(200))
             raise DapError("call into the target failed: %s" % problem)
         return value.GetValueAsSigned()
 

@@ -1,7 +1,9 @@
 """The adapter's own failure paths: the client is told why, and nothing is left behind."""
 import os
+import http.server
 import signal
 import subprocess
+import threading
 import time
 
 import pytest
@@ -10,6 +12,42 @@ from conftest import marker_line, pid_alive, target
 
 BASIC = target("basic.py")
 EXITS = target("exits.py")
+
+
+@pytest.mark.smoke
+def test_launch_does_not_wait_for_network_symbol_servers(make_client, monkeypatch):
+    """An inherited distro debuginfod URL must not turn local startup into network I/O."""
+    requests = []
+
+    class Symbols(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_error(404)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Symbols)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    url = "http://127.0.0.1:%d" % server.server_port
+    monkeypatch.setenv("DEBUGINFOD_URLS", url)
+    client = make_client()
+    try:
+        client.launch(BASIC, client.python, stopOnEntry=True, debugInfoLookup=True)
+        stop = client.wait_stopped()
+        frame = client.stack(stop["threadId"])[0]
+        # Keep the program's environment intact: only the debugger's lookup is disabled.
+        assert client.evaluate("__import__('os').environ['DEBUGINFOD_URLS']",
+                               frame["id"])["result"] == repr(url)
+        client.cont()
+        assert client.wait_exit() == 0
+        assert not requests, requests
+    finally:
+        client.close()
+        server.shutdown()
+        server.server_close()
+        worker.join()
 
 
 def descendants(pid):
