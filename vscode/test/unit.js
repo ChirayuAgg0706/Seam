@@ -16,6 +16,7 @@ const path = require("path");
 const adapter = require("../lib/adapter");
 const interpreter = require("../lib/interpreter");
 const processes = require("../lib/processes");
+const { nativeFocus } = require("../lib/native-focus");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const EXTENSION = path.resolve(__dirname, "..");
@@ -43,6 +44,61 @@ function emitter() {
 }
 
 // ---------------------------------------------------------------- the interpreter
+
+test("native focus is repaired once per stop, ignoring stale responses and other sessions", () => {
+  const session = { id: "seam-session" };
+  const calls = [];
+  let changed;
+  let disposed = false;
+  const vscode = {
+    debug: {
+      activeStackItem: undefined,
+      onDidChangeActiveStackItem: (listener) => {
+        changed = listener;
+        return { dispose() { disposed = true; } };
+      },
+    },
+    commands: { executeCommand: async (name) => { calls.push(name); } },
+  };
+  const tracker = nativeFocus(vscode, session, assert.fail);
+  const stopped = () => tracker.onDidSendMessage({ type: "event", event: "stopped",
+    body: { threadId: 7 } });
+  const request = (seq) => tracker.onWillReceiveMessage({ type: "request", command: "stackTrace",
+    seq, arguments: { threadId: 7, startFrame: 0 } });
+  const reply = (seq) => tracker.onDidSendMessage({ type: "response", command: "stackTrace",
+    request_seq: seq, success: true, body: { stackFrames: [
+      { id: 1, instructionPointerReference: "0x1234" },
+      { id: 2, presentationHint: "subtle" },
+      { id: 3, source: { path: "/app.py" } },
+    ] } });
+  const select = (frameId, targetSession = session) => {
+    vscode.debug.activeStackItem = { session: targetSession, threadId: 7, frameId };
+    changed();
+  };
+  stopped();
+  request(1);
+  reply(1);
+  select(3, { id: "other-session" });
+  assert.deepStrictEqual(calls, []);
+  select(3);
+  assert.deepStrictEqual(calls, ["workbench.action.debug.callStackUp"]);
+  select(1);
+  select(3); // the user deliberately inspects the caller: do not move them back
+  assert.strictEqual(calls.length, 1);
+  stopped();
+  request(2);
+  tracker.onWillReceiveMessage({ type: "request", command: "continue" });
+  reply(2);
+  select(3);
+  assert.strictEqual(calls.length, 1);
+  stopped();
+  request(3);
+  stopped(); // a later stop makes the earlier stack response stale
+  reply(3);
+  assert.strictEqual(calls.length, 1);
+  tracker.onWillStopSession();
+  assert.ok(disposed);
+});
 
 test("a virtual environment in the folder is found, .venv before venv", () => {
   const folder = fs.mkdtempSync(path.join(scratch, "project-"));

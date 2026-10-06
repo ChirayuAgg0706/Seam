@@ -285,7 +285,7 @@ def test_a_frame_whose_source_is_not_on_this_machine(dap, built):
     assert top["source"] == {
         "name": "mapped.c", "presentationHint": "deemphasize",
         "origin": "src/mapped.c is not on this machine (see the sourceMap option)"}, top
-    assert top["presentationHint"] == "subtle" and top["line"] > 0
+    assert top.get("presentationHint", "normal") == "normal" and top["line"] > 0
     assert int(top["instructionPointerReference"], 16) > 0
     said = [line for line in dap.output.splitlines() if line.startswith("Seam: the debug info")]
     assert len(said) == 1, dap.output

@@ -1101,6 +1101,10 @@ The adapter marked all source-less frames `subtle`, including the actual native 
 VS Code skipped that frame and selected the Python caller, disabling the disassembly
 action for the selected frame. The first native frame is now normal regardless of
 source availability; lower glue frames and missing-source hints retain their treatment.
+VS Code also prefers a frame with source when initially focusing a stop. The extension
+repairs that initial focus once using Navigate Up Call Stack, which skips lower subtle
+frames and reaches the actual stop. It scopes the correction to the session, thread
+and stop, ignores stale stack replies, and leaves later manual frame selections alone.
 The editor regression checks VS Code's selected stack item, opens disassembly using
 the editor command, and steps one instruction. Protocol coverage also checks pagination.
 

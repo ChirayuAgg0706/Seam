@@ -73,8 +73,9 @@ def test_abort_in_native_code(dap, capi):
     assert stop["reason"] == "exception" and "SIGABRT" in stop["description"]
     stack = dap.stack(stop["threadId"])
     position = names(stack).index("st_do_abort")
-    # abort() itself is libc: shown, but marked as not the user's code.
-    assert all(f.get("presentationHint") == "subtle" for f in stack[:position]), stack[:position]
+    # Keep the actual fault selected; lower libc frames stay deemphasized.
+    assert stack[0].get("presentationHint", "normal") == "normal", stack[0]
+    assert all(f.get("presentationHint") == "subtle" for f in stack[1:position]), stack[:position]
     assert names(stack)[position:] == ["st_do_abort", "inner", "outer", "<module>"]
     assert stack[position + 1]["line"] == marker_line(CRASH, "inner-abort")
     dap.cont()

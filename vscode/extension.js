@@ -268,6 +268,12 @@ function activate(context) {
     vscode.debug.registerDebugAdapterDescriptorFactory("seam",
       new SeamAdapterFactory(context.extensionPath)),
     vscode.debug.registerDebugConfigurationProvider("seam", new SeamConfigurationProvider()),
+    vscode.debug.registerDebugAdapterTrackerFactory("seam", {
+      createDebugAdapterTracker(session) {
+        return require("./lib/native-focus").nativeFocus(vscode, session,
+          (error) => output.appendLine(`Could not focus the native stop: ${error.message}`));
+      },
+    }),
     vscode.commands.registerCommand("seam.pickProcess", () => pickProcess(context.extensionPath)),
     vscode.commands.registerCommand("seam.checkMachine", () => checkMachine(context.extensionPath))
   );
