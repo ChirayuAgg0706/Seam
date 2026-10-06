@@ -13,12 +13,20 @@ The package version is still `0.1.0`; choosing the first public version belongs 
 |---|---|---|
 | Resolve the intermittent attach-exit failure | Explain and fix, or establish a reproducible test-environment cause for, the full-run timeout after continuing an attached process's uncaught exception. A passing retry alone is insufficient. | Resolved: Ubuntu's apport exception hook delayed exit; the fixture now restores CPython's hook. See evidence below. |
 | Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `d5e3185`; all extended CI jobs and the main-branch run succeeded. |
-| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. Automated Linux editor tests already pass, but this exact interactive path has not been signed off. | Pending owner acceptance. |
+| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. Automated Linux editor tests already pass, but this exact interactive path has not been signed off. | Owner reports steps 1–4 working, with slow symbol-loading startup; visual disassembly/instruction stepping remains pending. A subsequent launch failed during helper injection; see the new gate below. |
+| Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Open: the saved log shows the preceding disassembly target exited with code 0, then a fresh launch failed before `initialized`, with `Expression execution was interrupted: breakpoint 1 which has been deleted`. A successful retry alone does not resolve this. |
 | Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `d5e3185`; wheel, sdist and `.vsix` built and checked. No release was published. Version/tag selection remains shipping work. |
 
-These are final verification tasks, not a new feature backlog.
+These are final verification tasks and one newly observed startup failure, not a new feature backlog.
 Any further failure in these checks becomes a v1 bug to fix. Once they pass, the remaining
 work is publishing.
+
+The startup investigation also reproduced a distinct launch timeout in the installed
+release during a repeated WSL launch/disassembly probe (sixth attempt after five passes).
+Its log reached a running event around 45 seconds after the request and exceeded the
+client's 60-second deadline. This is additional startup reliability evidence, not proof
+that the deleted-breakpoint error has the same cause. Probe logs are preserved locally
+as `build/launch-repeat-*.log` and `build/launch-repeat-results.txt`.
 
 The attach scenario now supports `--repeat`. To investigate, run it with
 `SEAM_LLDB=lldb-20 scripts/test.sh -q tests/test_attach_features.py::test_exception_breakpoints_on_an_attached_process --repeat=20`.

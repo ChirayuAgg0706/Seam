@@ -30,7 +30,9 @@ The attach fixture now uses the standard hook, as the launch fixture already did
 Final extended CI passed on `d5e3185`: 279 passed / 16 documented skips in the full
 suite, all version/optimisation and LLDB cells green, both editors and clean-machine
 installation green. Release artifacts and the main-branch push check also passed.
-Only the owner's Windows/WSL interactive acceptance remains; see the readiness checklist.
+The owner's Windows/WSL checks passed through attach/detach, but a subsequent launch
+failed during helper injection with LLDB reporting an already-deleted breakpoint 1.
+That startup failure and visual disassembly acceptance remain open; see the readiness checklist.
 
 ## The v1 checklist
 
@@ -161,6 +163,12 @@ case was not re-measured.
 
 ## Known problems
 
+- **Intermittent launch failure observed in Windows/WSL acceptance.** A fresh launch
+  failed while injecting the agent, reporting `Expression execution was interrupted:
+  breakpoint 1 which has been deleted`. The prior session exited normally; this was
+  not an error after that session's exit. Original protocol and LLDB logs are preserved
+  locally as `build/disassembly-startup-failure.log` and `.log.lldb`. Root cause and fix
+  remain open; do not count a successful retry as a fix.
 - **LLDB 18 and child processes in programs with several threads.** If a thread reaches a
   breakpoint (also a conditional one whose condition is false) at the moment another
   thread starts a child with `subprocess` or `os.system`, or if several threads start
