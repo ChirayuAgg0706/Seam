@@ -129,6 +129,7 @@ that every combination works.
 
 | Issue | User impact / v1 treatment |
 |---|---|
+| Slow launch with separate debug symbols on this WSL machine | Manual acceptance found a 10+ second startup delay. Two scripted runs of the installed release reproduced 12.9–17.0 s to the first breakpoint with stack/locals, versus 0.66–0.68 s with `debugInfoLookup: false`; Rust step-in still worked (0.30–0.34 s). That existing setting is applied to the local demo configuration. It disables separate symbol-file lookup, so do not apply it indiscriminately to projects that need those files. Large-project startup still depends on imported libraries and their debug information; these timings do not establish a universal latency bound. |
 | LLDB 18 with threads starting child processes | Can lose the debug session. Use LLDB 19/20 for these workloads, as documented. Merely installing a newer LLDB is insufficient when `lldb` still resolves to 18: explicitly set `SEAM_LLDB`. Automatically choosing a newer version is optional hardening. |
 | An evaluated expression crashes or times out | The target interpreter can remain damaged after unwinding. Restart the session; do not promise recovery. This is now explicit in README limitations. |
 | Native function breakpoint by bare name hits binding glue | Seen with pybind11/contourpy. Use a source-line breakpoint or a sufficiently specific native name. Better filtering is a follow-up bug fix. |
