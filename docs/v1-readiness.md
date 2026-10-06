@@ -2,24 +2,24 @@
 
 Reviewed 2026-10-05–06, starting at `24d5b78`, with the local fixes below.
 
-**Verdict: feature-complete for the documented Linux x86-64 scope; final release
-sign-off is still outstanding.** No additional features are required for v1. The old
+**Verdict: v1 development and acceptance complete for the documented Linux x86-64
+scope as of 2026-10-06; ready for shipping work.** No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
 The package version is still `0.1.0`; choosing the first public version belongs to shipping.
 
-## Work left before calling v1 complete
+## Completed v1 development gates
 
 | Gate | Concrete completion condition | Status |
 |---|---|---|
 | Resolve the intermittent attach-exit failure | Explain and fix, or establish a reproducible test-environment cause for, the full-run timeout after continuing an attached process's uncaught exception. A passing retry alone is insufficient. | Resolved: Ubuntu's apport exception hook delayed exit; the fixture now restores CPython's hook. See evidence below. |
 | Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `610f460`; all extended CI jobs succeeded, including actual native-frame focus, disassembly and instruction stepping in VS Code. |
-| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. Automated Linux editor tests already pass, but this exact interactive path has not been signed off. | Owner reports checks through attach/detach working. Startup and disassembly fixes are now installed; reload the window and repeat those two checks. |
-| Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest remains. |
+| Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. | Passed: owner confirmed the final startup/disassembly retest on 2026-10-06 after the earlier checks through attach/detach. Screenshot shows disassembly open with an instruction marker. |
+| Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest passed on 2026-10-06. |
 | Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `610f460`; wheel, sdist and `.vsix` built and checked. No release was published. Version/tag selection remains shipping work. |
 
-These are final verification tasks, not a new feature backlog.
-Any further failure in these checks becomes a v1 bug to fix. Once they pass, the remaining
-work is publishing.
+These development gates are complete. The remaining work is version selection,
+release preparation and publishing, listed below. Existing documented limitations
+remain part of the v1 scope.
 
 The startup investigation also reproduced a distinct launch timeout in the installed
 release during a repeated WSL launch/disassembly probe (sixth attempt after five passes).
@@ -52,6 +52,10 @@ This matches the already-established launch-fixture diagnosis in decisions §32.
    screenshot pass; repeat on Windows/WSL. Disassembly breakpoints are out of scope.
 
 Record the commit, artifact, VS Code/WSL/Python/LLDB versions, and any failures here.
+
+Completed by the owner on 2026-10-06 with the `610f460` extension. The remaining grey
+`nosource_work` label is VS Code's styling for a frame without available source; the
+frame can now be selected and disassembled. It is not an outstanding acceptance failure.
 
 ## Fixed in this review
 
@@ -96,9 +100,9 @@ Record the commit, artifact, VS Code/WSL/Python/LLDB versions, and any failures 
   all 19 bundled extension checks. Artifacts were downloaded to `build/v1-final-release/` locally;
   that `.vsix` is installed in this laptop's WSL VS Code server. The Rust demo is built.
   The prepared local `build/v1-release/LAPTOP-CHECK.md` and `acceptance.code-workspace`
-  provide the remaining manual checks. Windows VS Code is 1.140.0, WSL Ubuntu 24.04,
+  record the manual checks. Windows VS Code is 1.140.0, WSL Ubuntu 24.04,
   system Python 3.12 and LLDB 20.1.2. The owner passed through attach/detach on the prior
-  build; only startup/disassembly need repeating after reloading this build.
+  build and confirmed the final startup/disassembly retest on 2026-10-06.
 - The final installed WSL extension's bundled adapter also passed `seam doctor` locally:
   launch, breakpoint, expression evaluation and clean exit all succeeded. The manual
   machine-check command still verifies that the editor itself selects that environment.

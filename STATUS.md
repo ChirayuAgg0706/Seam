@@ -36,7 +36,9 @@ network downloads (§34). The dimmed native stop and VS Code's initial frame sel
 are corrected too. Final extended CI passed on `610f460` (run 37477454757): 280 passed,
 16 documented skips; every compatibility, editor and clean-machine job passed. Release
 run 37477455386 passed on the same commit. That extension is installed in WSL and its
-doctor passes; only the owner's startup/disassembly retest remains.
+doctor passes. On 2026-10-06 the owner confirmed the startup/disassembly retest works,
+with disassembly open in the supplied screenshot. V1 development and acceptance are
+complete for the documented Linux x86-64 scope; shipping work remains.
 
 ## The v1 checklist
 
@@ -205,10 +207,7 @@ case was not re-measured.
 
 ## Not verified
 
-- **Final Windows/WSL acceptance.** The owner passed the checks through attach/detach,
-  then found slow startup and disabled disassembly. Both are fixed and automated checks
-  pass, including real VS Code disassembly; the owner still needs to reload the updated
-  extension and repeat startup/disassembly. VSCodium was not run; the first-run check runs
+- **VSCodium.** VSCodium was not run; the first-run check runs
   without the Python extension, which is VSCodium's situation as far as Seam is
   concerned.
 - **LLDB 18 and 19 on the real projects and the scale timings.** Both ran under LLDB 20
@@ -227,7 +226,5 @@ case was not re-measured.
 
 ## Needs the project owner
 
-- Reload the already-installed final extension in Windows + WSL, repeat startup to
-  the demo breakpoint, then open disassembly at `nosource_work` and step an instruction.
 - Publishing (PyPI, the VS Code Marketplace, Open VSX, making the repository public), and
   with it a version number and a tagged release. Nothing has been published.
