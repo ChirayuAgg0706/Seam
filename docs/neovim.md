@@ -11,9 +11,9 @@ python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/seam doctor --python python3
 ```
 
-The published wheel includes the helper; LLDB remains a system dependency. If PyPI
-publication is still pending, install the wheel from the
-[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) instead.
+The published wheel includes the helper; LLDB remains a system dependency. You can
+also install the wheel from the
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
 Put `~/.venvs/seam/bin` on PATH or use its full executable path below. See the
 [requirements and limitations](../README.md#limitations) before starting.
 

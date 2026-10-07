@@ -62,3 +62,37 @@ After version/package checks pass and the owner has authorised publication:
 
 Keep all descriptions, requirements and limitations aligned with the README. Marketing
 starts after the public installation routes work.
+
+## First-release publication record (2026-10-07)
+
+The owner approved version 0.1.0, public visibility including repository history, and
+GitHub/PyPI publication. The owner completed the PyPI account and pending publisher setup.
+
+- [GitHub release v0.1.0](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0)
+  is public, with all four assets; the tag points to `b8c82a2`.
+- [PyPI 0.1.0](https://pypi.org/project/seam-debugger/0.1.0/) is public. Its wheel
+  and sdist hashes match the GitHub assets exactly.
+- [Release/tag build 37630396762](https://github.com/ChirayuAgg0706/Seam/actions/runs/37630396762)
+  passed real wheel/bundle installation checks, metadata checks and checksum generation.
+- [Release commit CI 37630375050](https://github.com/ChirayuAgg0706/Seam/actions/runs/37630375050)
+  passed: 296 tests, 16 documented skips, lint, version and VSIX checks. Debugger code
+  is unchanged from the full compatibility/editor validation on `c3d84d1`.
+- [PyPI publishing 37631245619](https://github.com/ChirayuAgg0706/Seam/actions/runs/37631245619)
+  verified the published GitHub assets and uploaded them through Trusted Publishing.
+- Unauthenticated GitHub downloads, all asset checksums, packaged sources/screenshots
+  and public screenshot URLs passed. The downloaded wheel's doctor passed a real session.
+- An uncached install from `https://pypi.org/simple` into a separate Python 3.12
+  environment passed its version check and real-session doctor under LLDB 20.1.2.
+
+Published SHA-256:
+
+| Asset | SHA-256 |
+|---|---|
+| Wheel | `788303c0207fc6f53eafb65194a82e508ce29d86646de56e0a75e1907ead190e` |
+| Sdist | `ddbec1fec49591d7ffafbb79536a71752ff518f47c58fa038ee594bfb270f49a` |
+| VSIX | `25a9468f05e557793541618171f8e082ad97c19b5bfe50783b9f7f819684025c` |
+
+Local verification logs are `build/public-release-verification.txt`,
+`build/pypi-release-verification.txt` and `build/public-vsix-verification.txt`.
+Marketplace and Open VSX account/publisher setup and publication remain the next
+release step. Neither registry has been published by this task.

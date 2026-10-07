@@ -61,8 +61,8 @@ python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/seam --version
 ```
 
-This command uses [PyPI](https://pypi.org/project/seam-debugger/). If the package is
-not available there yet, download the `.whl` from the
+This command uses [PyPI](https://pypi.org/project/seam-debugger/0.1.0/). Alternatively,
+download the `.whl` from the
 [GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) and install
 that file with `~/.venvs/seam/bin/pip install /path/to/downloaded.whl`.
 LLDB is a separate system dependency; pip does not install it.

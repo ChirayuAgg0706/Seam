@@ -1,5 +1,10 @@
 # Seam status
 
+**Seam 0.1.0 is publicly released on GitHub and PyPI (2026-10-07).** Public downloads,
+checksums and fresh installed-wheel debug sessions pass. The VSIX is available as a
+GitHub release asset; Marketplace and Open VSX publishing remain. See
+[docs/publishing.md](docs/publishing.md) for the release record and installation checks.
+
 Legend: **done** = run and seen passing; **partial** = part of it runs and passes, the rest
 is listed; **blocked** = needs something from the project owner.
 
