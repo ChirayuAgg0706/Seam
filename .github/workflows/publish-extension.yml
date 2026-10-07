@@ -11,12 +11,12 @@ on:
         required: true
       tag:
         description: "Published GitHub release tag"
-        default: "v0.1.0"
+        default: "extension-v0.1.1"
         required: true
         type: string
       asset:
         description: "Release VSIX asset (with companion .sha256 asset)"
-        default: "seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix"
+        default: "seam-debugger-chirayuagg0706-linux-x64-0.1.1.vsix"
         required: true
         type: string
 
@@ -43,12 +43,13 @@ jobs:
           python-version: "3.12"
       - name: Download and verify the public extension package
         run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^(extension-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$RELEASE_ASSET" =~ ^seam-debugger-[a-zA-Z0-9.-]+\.vsix$ ]]
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
           gh release download "$RELEASE_TAG" --dir release --pattern "$RELEASE_ASSET" --pattern "$RELEASE_ASSET.sha256"
           publisher="$(python -c 'import json; print(json.load(open("vscode/package.json"))["publisher"])')"
-          python scripts/verify-extension-release.py "release/$RELEASE_ASSET" "$publisher" "${RELEASE_TAG#v}"
+          version="${RELEASE_TAG#extension-}"
+          python scripts/verify-extension-release.py "release/$RELEASE_ASSET" "$publisher" "${version#v}"
       - uses: actions/upload-artifact@v4
         with:
           name: verified-extension

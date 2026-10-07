@@ -1168,6 +1168,21 @@ methods or repr execution, and no new permission to evaluate or mutate at native
 Tests use real dictionaries and real native stops, including Unicode names, non-string
 keys, deleted entries and a repr that raises if executed, across Python 3.12–3.15.
 
+## 35. Extension presentation releases can reuse a released debugger
+
+The Marketplace icon is part of the VSIX, so changing it requires a new extension
+version. Extension 0.1.1 adds the approved logo while carrying the released 0.1.0
+wheel's adapter and helper unchanged. Updating the Python distribution solely for
+an editor icon would make unrelated users download a new package unnecessarily.
+
+`vscode/package.json` now declares `seamAdapterVersion`. Package construction and
+release verification check this against the adapter actually bundled; the source
+version check also compares it to the Python source version. The extension has its
+own changelog and `extension-v<version>` release tags. Python releases retain
+`v<version>` tags. Separate version numbers are explicit, not an unchecked mismatch.
+All debugger/helper and JavaScript files are compared byte for byte with the prior
+public VSIX for this presentation-only update, then the installed bundle runs doctor.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

@@ -2,7 +2,8 @@
 
 The release targets **Linux x86-64 with glibc, including WSL**. Native Windows,
 macOS and ARM are outside this release. The debugger version is 0.1.0 in both Python
-and VS Code. Canonical description:
+and the original VS Code release. Extension 0.1.1 is a logo update that bundles the
+unchanged debugger 0.1.0. Canonical description:
 
 > Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.
 
@@ -182,3 +183,30 @@ breakpoint, expression evaluation and successful exit. Local log:
 `build/marketplace-install-verification.txt`.
 
 Marketplace publication is complete. Open VSX remains unpublished pending account setup.
+
+## Extension logo update 0.1.1 (2026-10-07)
+
+The owner selected Joined S (concept 01) and authorised uploading it. The standalone
+PNG is `vscode/images/icon.png`, included through the manifest's `icon` field. Its
+appearance was inspected at 32, 64, 128 and 256 pixels on light and dark backgrounds.
+See [brand.md](brand.md) for the design and image-generation provenance.
+
+This is extension 0.1.1, declaring `seamAdapterVersion: 0.1.0`; PyPI and the debugger
+remain 0.1.0. Extension-only releases use `extension-v0.1.1` and their own changelog,
+without modifying the existing v0.1.0 tag or distributions.
+
+Marketplace update instructions: open the existing Seam extension in
+<https://marketplace.visualstudio.com/manage>, choose **Update**, and select
+`seam-debugger-chirayuagg0706-linux-x64-0.1.1.vsix`. Wait for validation. Publishing
+still requires the owner's browser upload because no Marketplace credential is
+configured for this task. Open VSX publication is deferred at the owner's request.
+
+Local validation passed all 19 extension/bundled-adapter checks and lint. All 36
+pre-existing extension files apart from the changed manifest match the public 0.1.0
+VSIX byte for byte, including every runtime file. A fresh isolated VS Code CLI
+installation includes the icon and passes doctor's real breakpoint/evaluation/exit
+session. The publication guard also rejects a false bundled-adapter version declaration.
+Local log: `build/logo-release-verification.txt`.
+
+Extension 0.1.1 VSIX SHA-256:
+`521948764a193d2b0ba08074a1daa5a0f2bd1cb1a49c1970fb6c119d48d86618`.

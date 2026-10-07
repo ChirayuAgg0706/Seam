@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import struct
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -37,6 +38,19 @@ def verify(package, publisher, version):
         }
         if identity is None or any(identity.get(key) != value for key, value in expected.items()):
             raise ValueError("VSIX identity or platform mismatch")
+        bundled = archive.read("extension/bundled/seam/__init__.py").decode()
+        adapter_version = re.search(r'^__version__ = "([^"]+)"', bundled, re.MULTILINE)
+        if not adapter_version or adapter_version.group(1) != manifest.get(
+            "seamAdapterVersion", version
+        ):
+            raise ValueError("Bundled debugger version does not match the declared adapter version")
+        if manifest.get("icon"):
+            icon = archive.read("extension/" + manifest["icon"])
+            if icon[:8] != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("Extension icon must be a PNG")
+            width, height = struct.unpack(">II", icon[16:24])
+            if width != height or width < 128:
+                raise ValueError("Extension icon must be square and at least 128 pixels")
         for name in (
             "extension/bundled/__main__.py",
             "extension/bundled/seam/cli.py",

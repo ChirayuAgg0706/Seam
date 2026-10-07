@@ -53,17 +53,19 @@ else
 fi
 [ "$dest" -ef "$ROOT/vscode/bundled" ] || cp "$ROOT/vscode/bundled/__main__.py" "$dest/__main__.py"
 
-# The extension's manifest and the adapter inside it must be the same version.
+# Listing-only extension updates can carry an unchanged released adapter.
+# Its explicit version must still match the package we put inside the VSIX.
 python3 - "$dest" "$ROOT/vscode/package.json" <<'EOF'
 import json, re, sys
 dest, manifest = sys.argv[1:]
 with open(dest + "/seam/__init__.py") as fh:
     bundled = re.search(r'^__version__ = "([^"]+)"', fh.read(), re.MULTILINE).group(1)
 with open(manifest) as fh:
-    extension = json.load(fh)["version"]
-if bundled != extension:
-    sys.exit("build-vsix: the adapter is version %s, vscode/package.json says %s"
-             % (bundled, extension))
+    metadata = json.load(fh)
+expected = metadata.get("seamAdapterVersion", metadata["version"])
+if bundled != expected:
+    sys.exit("build-vsix: the adapter is version %s, the extension expects adapter %s"
+             % (bundled, expected))
 EOF
 
 # What the helper asks of the machine it will run on.
