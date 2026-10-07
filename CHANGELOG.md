@@ -57,6 +57,9 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 ### Changed
 
+- Prefer installed `lldb-20` and `lldb-19` over the distribution's plain `lldb`, which
+  may still be 18 and suffer from the threaded-child-process session failure. Explicit
+  `SEAM_LLDB` overrides remain authoritative; installation guidance now recommends 19.
 - Python library frames are deemphasized with `justMyCode`; native stops retain cached
   Python thread names, and Python variable types have the same short name at either stop.
 - Native Globals show declarations from the current file, including file-level constants.

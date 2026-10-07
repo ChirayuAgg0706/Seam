@@ -3,8 +3,47 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from conftest import ROOT
 from test_unsupported import uv_python
+
+
+@pytest.mark.parametrize("available, override, expected", [
+    (("lldb", "lldb-19", "lldb-20"), None, "lldb-20"),
+    (("lldb", "lldb-19"), None, "lldb-19"),
+    (("lldb",), None, "lldb"),
+    (("lldb-18",), None, "lldb-18"),
+    (("lldb-21",), None, "lldb-21"),
+    ((), None, None),
+    (("lldb", "lldb-20"), "lldb", "lldb"),
+    (("/custom/lldb", "lldb-20"), "/custom/lldb", "/custom/lldb"),
+    (("lldb-20",), "/missing/lldb", None),
+])
+def test_lldb_selection(monkeypatch, available, override, expected):
+    monkeypatch.syspath_prepend(os.path.join(ROOT, "src"))
+    from seam import cli
+
+    monkeypatch.delenv("SEAM_LLDB", raising=False)
+    if override is not None:
+        monkeypatch.setenv("SEAM_LLDB", override)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: name if name in available else None)
+    assert cli.find_lldb() == expected
+
+
+def test_doctor_warns_when_lldb_18_is_selected(monkeypatch, capsys):
+    monkeypatch.syspath_prepend(os.path.join(ROOT, "src"))
+    from seam import doctor
+
+    monkeypatch.setattr(doctor.cli, "find_lldb", lambda: "/usr/bin/lldb-18")
+    monkeypatch.setattr(doctor, "_run", lambda cmd: (
+        0, "lldb version 18.0.0" if "--version" in cmd else "seam-python 3 12"))
+    assert doctor._check_lldb(doctor._Report())
+    output = capsys.readouterr().out
+    assert "/usr/bin/lldb-18, version 18.0.0" in output
+    assert "lose track of the program" in output
+    assert "apt install lldb-19" in output
+    assert "SEAM_LLDB is set, it takes priority" in output
 
 
 def seam(*args, **env):

@@ -19,9 +19,11 @@ import threading
 
 from seam import __version__
 
-LLDB_CANDIDATES = ("lldb", "lldb-21", "lldb-20", "lldb-19", "lldb-18")
+# Prefer validated versions without LLDB 18's threaded-child-process bug, even
+# when the distro's unversioned `lldb` still points to 18. Explicit overrides win.
+LLDB_CANDIDATES = ("lldb-20", "lldb-19", "lldb", "lldb-21", "lldb-18")
 NO_LLDB = ("LLDB 18 or newer is required but no `lldb` was found on PATH. Install it "
-           "(Debian/Ubuntu: apt install lldb) or set SEAM_LLDB to its location.")
+           "(Debian/Ubuntu: apt install lldb-19) or set SEAM_LLDB to its location.")
 ADAPTER_ENTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adapter",
                              "lldb_entry.py")
 

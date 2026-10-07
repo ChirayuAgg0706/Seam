@@ -23,8 +23,9 @@ are in [docs/v1-readiness.md](docs/v1-readiness.md).
   candidate (3.15.0rc3). Interpreters without debug info (uv-managed Pythons, `-slim`
   container images) and virtual environments are supported.
 - LLDB 18, 19 or 20, with its Python scripting support (the normal distro package). For
-  programs with several threads that also start child processes, use LLDB 19 or newer
-  (see [Limitations](#limitations)).
+  new installations, prefer LLDB 19 or 20: LLDB 18 can lose sessions when threaded
+  programs start child processes (see [Limitations](#limitations)). Seam looks for
+  `lldb-20`, then `lldb-19`, before plain `lldb`. An explicit `SEAM_LLDB` always wins.
 - To install Seam with pip: a C compiler and the CPython headers, to build Seam's small
   in-process helper. The VS Code extension brings a built helper and needs neither.
 - Permission to `ptrace` the program (the default when Seam launches it).
@@ -37,7 +38,7 @@ are in [docs/v1-readiness.md](docs/v1-readiness.md).
 **For Neovim, other DAP clients and the command line**, on Ubuntu 24.04:
 
 ```bash
-sudo apt-get install -y lldb gcc python3-dev python3-venv git
+sudo apt-get install -y lldb-19 gcc python3-dev python3-venv git
 git clone https://github.com/ChirayuAgg0706/Seam.git
 python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/pip install ./Seam
@@ -76,7 +77,7 @@ Build the extension with debug info (`-g`; for Rust, a debug build or
 `[profile.release] debug = true`).
 
 **VS Code.** The extension contains Seam itself; nothing else has to be installed except
-LLDB (`sudo apt-get install -y lldb`). Build and install it, open your project, open a
+LLDB (`sudo apt-get install -y lldb-19`). Build and install it, open your project, open a
 Python file and press F5:
 
 ```bash
@@ -368,9 +369,11 @@ Known limits of what is in scope:
   starting children at once. It then cannot evaluate expressions any more or loses the
   program; Seam says so when the program is lost, and the session has to be restarted.
   A breakpoint in a loop that another thread runs constantly makes this likely;
-  otherwise it takes a coincidence. LLDB 19 and newer are not affected: install one
-  (`apt install lldb-19`) and set `SEAM_LLDB=lldb-19` in the environment of `seam dap`
-  (for VS Code: of the editor).
+  otherwise it takes a coincidence. LLDB 19 and 20 avoid this bug: install one
+  (`apt install lldb-19`). Seam prefers installed `lldb-20`/`lldb-19` over plain `lldb`.
+  If `SEAM_LLDB` is set, remove it or point it to the newer version in the environment
+  of `seam dap` (for VS Code: of the editor). `seam doctor` reports the selected path
+  and version, and warns if it is 18.
 - **Under pytest, a segfault stops twice**: at the fault, and again when `faulthandler`
   (which pytest enables) re-raises the signal after writing its report. `pytest.fail()`
   does not trigger the user-unhandled stop (it is not an `Exception`); a failing `assert`

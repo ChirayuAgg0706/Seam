@@ -2,8 +2,8 @@
 
 Reviewed 2026-10-05–06, starting at `24d5b78`, with the local fixes below.
 
-**Verdict: v1 development and acceptance complete for the documented Linux x86-64
-scope as of 2026-10-06; ready for shipping work.** No additional features are required for v1. The old
+**Verdict: v1 scope and owner acceptance complete; publishing held for the 2026-10-07
+LLDB selection and installed-package startup follow-up below.** No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
 The package version is still `0.1.0`; choosing the first public version belongs to shipping.
 
@@ -21,12 +21,31 @@ These development gates are complete. The remaining work is version selection,
 release preparation and publishing, listed below. Existing documented limitations
 remain part of the v1 scope.
 
-The startup investigation also reproduced a distinct launch timeout in the installed
-release during a repeated WSL launch/disassembly probe (sixth attempt after five passes).
-Its log reached a running event around 45 seconds after the request and exceeded the
-client's 60-second deadline. This is additional startup reliability evidence, not proof
-that the deleted-breakpoint error has the same cause. Probe logs are preserved locally
-as `build/launch-repeat-*.log` and `build/launch-repeat-results.txt`.
+Before the network-symbol fix, the startup investigation reproduced a launch timeout
+in the installed extension during a repeated WSL launch/disassembly probe (sixth attempt
+after five passes). Its log reached a running event at 45.44 seconds; the client expired
+after 60 seconds, and the adapter reported "timed out waiting for the process to stop"
+at 76.05 seconds. The log lacks phase timings sufficient to prove this particular
+failure's cause. It must not be described as a failure observed in the final package,
+or as conclusively explained by the separate deleted-breakpoint reproduction.
+Probe logs are preserved locally as `build/launch-repeat-*.log` and
+`build/launch-repeat-results.txt`. The post-fix 20-run probe used the source checkout;
+the follow-up repeats the scenario against the installed, byte-verified VSIX instead.
+
+### 2026-10-07 release follow-up
+
+- Prefer installed LLDB 20/19 over the unversioned executable, while retaining explicit
+  `SEAM_LLDB` overrides and the LLDB 18 machine-check warning. Selection and warning
+  regressions added; all 16 doctor/selection tests, lint, version checks and 17 Linux
+  extension checks pass locally. Build and CI validation pending.
+- The already-installed `610f460` release passed 30 consecutive sessions (entry
+  0.77–1.21 seconds; full session through exit 1.00–1.76 seconds). Every shipped file
+  matched `build/v1-final-release/seam-debugger-linux-x64-0.1.0.vsix`, excluding only
+  VS Code's added manifest installation metadata. Results and logs are in
+  `build/installed-startup-baseline-results.txt` and `build/installed-startup-baseline/`.
+- Repeat terminal launch, native function breakpoint, disassembly and clean exit against
+  the installed extension, with normal local symbol lookup and automatic LLDB selection.
+  Retain phase logs and verify installed files against the release VSIX. Results pending.
 
 The attach scenario now supports `--repeat`. To investigate, run it with
 `SEAM_LLDB=lldb-20 scripts/test.sh -q tests/test_attach_features.py::test_exception_breakpoints_on_an_attached_process --repeat=20`.
@@ -154,7 +173,7 @@ that every combination works.
 | Issue | User impact / v1 treatment |
 |---|---|
 | Large-project symbol loading | Local symbol parsing still depends on the imported libraries and their debug information. The earlier 10+ second WSL delay was traced to automatic network downloads and corrected (§34); disabling all separate debug-info lookup is no longer the workaround. This does not establish a universal latency bound for large projects. |
-| LLDB 18 with threads starting child processes | Can lose the debug session. Use LLDB 19/20 for these workloads, as documented. Merely installing a newer LLDB is insufficient when `lldb` still resolves to 18: explicitly set `SEAM_LLDB`. Automatically choosing a newer version is optional hardening. |
+| LLDB 18 with threads starting child processes | Can lose the debug session. Seam now prefers installed `lldb-20`/`lldb-19` over plain `lldb`; install either for these workloads. An explicit `SEAM_LLDB` still wins, so remove an old override or update it. The machine check reports the selected version and warns on 18. |
 | An evaluated expression crashes or times out | The target interpreter can remain damaged after unwinding. Restart the session; do not promise recovery. This is now explicit in README limitations. |
 | Native function breakpoint by bare name hits binding glue | Seen with pybind11/contourpy. Use a source-line breakpoint or a sufficiently specific native name. Better filtering is a follow-up bug fix. |
 | Both uncaught and user-unhandled filters enabled for a thread exception | Two stops describe two exception events. Disable one filter when duplicate stops are distracting. |

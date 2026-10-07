@@ -8,7 +8,7 @@ scripted DAP client (`tests/`), or through a real editor where it says so. Nothi
 marked done on the strength of reading code. The first-release sign-off is in
 [docs/v1-readiness.md](docs/v1-readiness.md); the longer backlog is in [ROADMAP.md](ROADMAP.md).
 
-The suite has 296 scenarios; 13 are opt-in (timings with a 15,000-function module,
+The suite has 306 scenarios; 13 are opt-in (timings with a 15,000-function module,
 and sessions against four real projects built from source), and one specifically tests
 optimised-away locals at -O2. The CI section records validation under each LLDB version.
 
@@ -39,6 +39,12 @@ run 37477455386 passed on the same commit. That extension is installed in WSL an
 doctor passes. On 2026-10-06 the owner confirmed the startup/disassembly retest works,
 with disassembly open in the supplied screenshot. V1 development and acceptance are
 complete for the documented Linux x86-64 scope; shipping work remains.
+
+On 2026-10-07, publishing was held for a focused release follow-up: automatic selection
+now prefers installed LLDB 20/19 over plain `lldb`, preserving explicit overrides.
+The original pre-fix timeout's exact cause remains unproven. The installed `610f460`
+extension passed 30 further terminal/disassembly launches with no timeout; validation
+of the updated package is pending in `docs/v1-readiness.md`.
 
 ## The v1 checklist
 

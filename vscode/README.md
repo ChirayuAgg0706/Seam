@@ -8,7 +8,10 @@ stepping across the boundary.
 
 - Linux x86-64. On Windows, open the project in WSL: the extension then runs on the
   Linux side.
-- LLDB 18 or newer with its Python scripting support (Debian/Ubuntu: `apt install lldb`).
+- LLDB with its Python scripting support; prefer 19 or 20 (Debian/Ubuntu:
+  `apt install lldb-19`). Seam tries `lldb-20`, then `lldb-19`, before plain `lldb`.
+  An explicit `SEAM_LLDB` overrides this choice. LLDB 18 remains supported but can
+  lose sessions when threaded programs start child processes; the machine check warns.
 - A CPython 3.12 or newer for your program.
 
 Nothing else has to be installed. The extension carries Seam's debug adapter and the
