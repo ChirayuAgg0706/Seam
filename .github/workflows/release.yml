@@ -1,11 +1,14 @@
 name: release artifacts
 
-# Builds what a release consists of and checks that it works. Nothing is published:
-# the files are kept as workflow artifacts for the project owner to publish (or not).
+# Builds and validates release assets. Publication is separate: GitHub assets are
+# attached after validation; publish-pypi.yml publishes those same assets to PyPI.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -53,6 +56,15 @@ jobs:
           python3 -m zipfile -e dist/*.whl "$RUNNER_TEMP/wheel"
           cmp "$RUNNER_TEMP/vsix/extension/bundled/seam/_target/_seam_trap.abi3.so"               "$RUNNER_TEMP/wheel/seam/_target/_seam_trap.abi3.so"
           node vscode/test/unit.js --adapter
+      - name: Package metadata is ready for PyPI
+        run: |
+          python3 -m venv "$RUNNER_TEMP/metadata-check"
+          "$RUNNER_TEMP/metadata-check/bin/pip" install --quiet twine
+          "$RUNNER_TEMP/metadata-check/bin/python" -m twine check --strict dist/*.whl dist/*.tar.gz
+      - name: Release checksums
+        run: |
+          cd dist
+          sha256sum *.whl *.tar.gz *.vsix > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: seam-release-artifacts

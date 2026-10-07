@@ -1,10 +1,19 @@
 {
   "name": "seam-debugger",
   "displayName": "Seam: Python + native debugger",
-  "description": "Mixed-mode debugging for Python programs with C, C++ and Rust extensions on Linux: one call stack, breakpoints and stepping across the boundary.",
+  "description": "Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.",
   "version": "0.1.0",
   "publisher": "seam",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChirayuAgg0706/Seam.git"
+  },
+  "homepage": "https://github.com/ChirayuAgg0706/Seam#readme",
+  "bugs": {
+    "url": "https://github.com/ChirayuAgg0706/Seam/issues"
+  },
+  "keywords": ["python", "rust", "native", "lldb", "dap", "wsl"],
   "private": true,
   "engines": {
     "vscode": "^1.85.0"

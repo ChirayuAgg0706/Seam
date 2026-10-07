@@ -1,7 +1,6 @@
 # Seam
 
-A mixed-mode debugger for Python programs with native extensions (C, C++, Rust), on
-Linux x86-64.
+Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.
 
 Python debuggers cannot see into native code, and native debuggers show CPython's
 internals instead of Python lines. Seam is one debugger that understands both sides:
@@ -12,13 +11,18 @@ internals instead of Python lines. Seam is one debugger that understands both si
 - Python and native variables, each in their own frames;
 - the Debug Adapter Protocol, so it works in VS Code and Neovim.
 
-See [STATUS.md](STATUS.md) for exactly what is tested and what is not, and
-[Limitations](#limitations) before relying on it. The remaining first-release checks
-are in [docs/v1-readiness.md](docs/v1-readiness.md).
+Seam 0.1.0 supports VS Code and Neovim. Read [Limitations](#limitations) before
+relying on it; [STATUS.md](https://github.com/ChirayuAgg0706/Seam/blob/main/STATUS.md)
+records the tested scope.
+
+![A Rust breakpoint with Python callers in the same VS Code call stack](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/images/python-rust-stack.png)
+
+At a Rust breakpoint, inspect Rust locals and select the Python callers below it.
+This is an actual VS Code session from the packaged-extension acceptance tests.
 
 ## Requirements
 
-- Linux x86-64.
+- Linux x86-64 with glibc; Windows users run Seam inside WSL on Linux x86-64.
 - CPython 3.12, 3.13 or 3.14 as the program being debugged; 3.15 works as of its release
   candidate (3.15.0rc3). Interpreters without debug info (uv-managed Pythons, `-slim`
   container images) and virtual environments are supported.
@@ -26,24 +30,42 @@ are in [docs/v1-readiness.md](docs/v1-readiness.md).
   new installations, prefer LLDB 19 or 20: LLDB 18 can lose sessions when threaded
   programs start child processes (see [Limitations](#limitations)). Seam looks for
   `lldb-20`, then `lldb-19`, before plain `lldb`. An explicit `SEAM_LLDB` always wins.
-- To install Seam with pip: a C compiler and the CPython headers, to build Seam's small
-  in-process helper. The VS Code extension brings a built helper and needs neither.
+- The published Linux x86-64 wheel and VS Code extension include the compiled helper;
+  neither needs a compiler to install. Building from source needs a C compiler and
+  the CPython headers. Building your own native extension still needs its toolchain.
 - Permission to `ptrace` the program (the default when Seam launches it).
 
 ## Install
 
-**VS Code users** need only LLDB and the extension, which contains Seam itself; see
-[Quick start](#quick-start). On Windows, do this in a WSL window.
+**VS Code users** need LLDB and the extension, which contains Seam itself. In a Linux
+or WSL terminal on Ubuntu 24.04:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y lldb-19
+```
+
+Download `seam-debugger-linux-x64-0.1.0.vsix` from the
+[0.1.0 release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
+In VS Code, run **Extensions: Install from VSIX…** and select that file. On Windows,
+first open your project in a WSL window and install the extension into WSL.
+Then follow [Quick start](#quick-start).
 
 **For Neovim, other DAP clients and the command line**, on Ubuntu 24.04:
 
 ```bash
-sudo apt-get install -y lldb-19 gcc python3-dev python3-venv git
-git clone https://github.com/ChirayuAgg0706/Seam.git
+sudo apt-get update
+sudo apt-get install -y lldb-19 python3-venv
 python3 -m venv ~/.venvs/seam
-~/.venvs/seam/bin/pip install ./Seam
+~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.0
 ~/.venvs/seam/bin/seam --version
 ```
+
+This command uses [PyPI](https://pypi.org/project/seam-debugger/). If the package is
+not available there yet, download the `.whl` from the
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) and install
+that file with `~/.venvs/seam/bin/pip install /path/to/downloaded.whl`.
+LLDB is a separate system dependency; pip does not install it.
 
 Seam itself can live in any Python 3.12+ environment; it does not have to be the
 environment of the program you debug. Put `~/.venvs/seam/bin` on `PATH`, or use the full
@@ -77,13 +99,10 @@ Build the extension with debug info (`-g`; for Rust, a debug build or
 `[profile.release] debug = true`).
 
 **VS Code.** The extension contains Seam itself; nothing else has to be installed except
-LLDB (`sudo apt-get install -y lldb-19`). Build and install it, open your project, open a
-Python file and press F5:
-
-```bash
-scripts/build-vsix.sh           # produces vscode/seam-debugger-linux-x64-0.1.0.vsix
-code --install-extension vscode/seam-debugger-linux-x64-0.1.0.vsix
-```
+LLDB (`sudo apt-get install -y lldb-19`). After [installing the extension](#install),
+run **Seam: Check This Machine** from the Command Palette. Open your project and a
+Python file, set a breakpoint on a native call and press F5. Step Into enters the
+native function; Step Out returns to Python. No `launch.json` is required.
 
 Seam debugs with the project's interpreter: the one selected in the Python extension if
 that is installed, else the `python.defaultInterpreterPath` setting, else `.venv` or
@@ -105,7 +124,7 @@ Set a breakpoint on the `total = ...` line, start the session, and use **Step In
 debugger stops inside your native `add`, with `main` and `<module>` below it in the same
 call stack. **Step Out** returns to the Python line.
 
-**Neovim.** See [docs/neovim.md](docs/neovim.md).
+**Neovim.** See the [nvim-dap configuration](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/neovim.md).
 
 **Any DAP client.** The adapter is `seam dap`, speaking DAP on stdin/stdout.
 
@@ -312,7 +331,7 @@ control the process. Seam has a single controller.
 3. **Python is only executed in the target at safe points.** Evaluating expressions and
    reading variables with `repr()` happens at Python stops. At a native stop Seam reads
    memory and nothing else, with two narrow exceptions for its own bookkeeping, described
-   in [docs/decisions.md](docs/decisions.md).
+   in [docs/decisions.md](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md).
 4. **The merged stack is built from raw memory**, without Python's debug info. Seam walks
    `_PyRuntime` → interpreter → thread state → frames, decodes code objects and line
    tables, and splices each run of Python frames into the native stack at the C frame
@@ -329,10 +348,13 @@ either: it hangs off the hook the interpreter calls when it reports one.
 
 ## Limitations
 
-Out of scope for this version: macOS, Windows, architectures other than x86-64,
+Out of scope for this version: macOS, native Windows, architectures other than x86-64,
 free-threaded (no-GIL) builds, the experimental JIT, PyPy, sub-interpreters, and remote or
 container debugging (Seam must run on the same machine and in the same container as the
 program).
+
+Windows through WSL is supported because the adapter and program both run on Linux.
+The release wheel targets glibc Linux; Alpine/musl is not part of the validated scope.
 
 Known limits of what is in scope:
 
@@ -431,10 +453,25 @@ Known limits of what is in scope:
 - **Embedded interpreters.** Launch expects a normal `python` executable (it injects the
   helper at `Py_RunMain`). Programs that embed Python are not supported.
 - **LLDB quirks.** Seam works around LLDB showing stale or cut-short frame lists (see
-  [docs/decisions.md](docs/decisions.md) §4d and §12); the workaround calls `getpid()` in
+  [docs/decisions.md](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md) §4d and §12); the workaround calls `getpid()` in
   the target. Where LLDB genuinely cannot unwind a function (LLDB 20 through nanobind's
   optimised library code), native frames below it are missing; Seam says so in the debug
   console and still shows every Python frame.
+
+## Building from source
+
+For contributors or machines building the helper locally (Ubuntu 24.04):
+
+```bash
+sudo apt-get install -y lldb-19 gcc python3-dev python3-venv git
+git clone https://github.com/ChirayuAgg0706/Seam.git
+python3 -m venv ~/.venvs/seam
+~/.venvs/seam/bin/pip install ./Seam
+```
+
+To build a VSIX, run `scripts/build-vsix.sh` from the checkout; Node.js and the Python
+headers are required. See [CONTRIBUTING.md](https://github.com/ChirayuAgg0706/Seam/blob/main/CONTRIBUTING.md)
+for the development toolchain.
 
 ## Development
 
@@ -450,4 +487,4 @@ gcc/g++, [uv](https://docs.astral.sh/uv/) and, for the PyO3 scenarios, a Rust to
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](https://github.com/ChirayuAgg0706/Seam/blob/main/LICENSE).

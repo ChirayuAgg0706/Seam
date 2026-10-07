@@ -1,5 +1,22 @@
 # Using Seam from Neovim (nvim-dap)
 
+Seam runs on **Linux x86-64, including WSL**, with CPython 3.12–3.14 and LLDB 19 or 20
+recommended. Install it into a separate environment (Ubuntu 24.04):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y lldb-19 python3-venv
+python3 -m venv ~/.venvs/seam
+~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.0
+~/.venvs/seam/bin/seam doctor --python python3
+```
+
+The published wheel includes the helper; LLDB remains a system dependency. If PyPI
+publication is still pending, install the wheel from the
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) instead.
+Put `~/.venvs/seam/bin` on PATH or use its full executable path below. See the
+[requirements and limitations](../README.md#limitations) before starting.
+
 Seam is an ordinary DAP adapter started with `seam dap`, so
 [nvim-dap](https://github.com/mfussenegger/nvim-dap) needs only an adapter entry and one
 or more configurations. Put this in your Neovim configuration:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clean-machine check: on a fresh Ubuntu 24.04, follow the README's install steps and
+# Clean-machine check: on a fresh Ubuntu 24.04, follow the README's source-install steps and
 # debug a PyO3 project. Run inside a new container or as a new user:
 #
 #   docker run --rm --cap-add=SYS_PTRACE -v "$PWD":/seam -w /seam ubuntu:24.04 \
@@ -12,11 +12,11 @@ SUDO=""
 [ "$(id -u)" = "0" ] || SUDO="sudo"
 export DEBIAN_FRONTEND=noninteractive
 
-echo "### README: install prerequisites"
+echo "### README source install: install prerequisites"
 $SUDO apt-get update
 $SUDO apt-get install -y lldb-19 gcc python3-dev python3-venv git
 
-echo "### README: install Seam into its own environment"
+echo "### README source install: install Seam into its own environment"
 python3 -m venv "$HOME/.venvs/seam"
 "$HOME/.venvs/seam/bin/pip" install .
 export PATH="$HOME/.venvs/seam/bin:$PATH"

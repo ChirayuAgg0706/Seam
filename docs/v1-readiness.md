@@ -7,7 +7,7 @@ scope. Both packaged-user audit findings are fixed in `c3d84d1`; final extended 
 release builds and original-fixture package replays pass. Shipping can proceed.**
 No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
-The package version is still `0.1.0`; choosing the first public version belongs to shipping.
+The owner chose `0.1.0` as the first public release version on 2026-10-07.
 
 ## Completed v1 development gates
 
@@ -295,8 +295,8 @@ if claiming support for a later final build, run that build first.
 
 ## Shipping work after sign-off
 
-- Choose the public version and keep Python, extension, documentation examples and tag
-  consistent (`tools/check_versions.py`).
+- Public version chosen: `0.1.0`. Keep Python, extension, documentation examples and
+  tag consistent (`tools/check_versions.py`).
 - Set the real PyPI / Marketplace / Open VSX identities and repository visibility;
   replace source-access assumptions in installation instructions as appropriate.
 - Build and publish the approved artifacts, add release notes, and verify installation

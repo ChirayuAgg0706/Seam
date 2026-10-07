@@ -1,0 +1,105 @@
+name: publish to PyPI
+
+# Publish the already-validated GitHub release files, without rebuilding them.
+# Configure PyPI's pending Trusted Publisher with this filename and environment pypi.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published GitHub release tag to upload to PyPI"
+        required: true
+        default: "v0.1.0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: verify published release distributions
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download the public release files
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+          gh release download "$RELEASE_TAG" --dir release --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+      - name: Verify hashes, identity and version
+        run: |
+          python - <<'PY'
+          from email.parser import BytesParser
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import tarfile
+          import zipfile
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit("Expected a release tag such as v0.1.0")
+          version = tag[1:]
+          root = Path("release")
+          wheels, sources = list(root.glob("*.whl")), list(root.glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sources) != 1:
+              raise SystemExit("Expected exactly one wheel and one source distribution")
+          sums = {}
+          for line in (root / "SHA256SUMS").read_text().splitlines():
+              digest, name = line.split(maxsplit=1)
+              sums[name.lstrip("*")] = digest
+          for path in wheels + sources:
+              if hashlib.sha256(path.read_bytes()).hexdigest() != sums.get(path.name):
+                  raise SystemExit("Checksum mismatch: " + path.name)
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+              if len(names) != 1:
+                  raise SystemExit("Expected one wheel metadata file")
+              wheel_metadata = BytesParser().parsebytes(archive.read(names[0]))
+          with tarfile.open(sources[0]) as archive:
+              info = archive.getmember(f"seam_debugger-{version}/PKG-INFO")
+              source_metadata = BytesParser().parsebytes(archive.extractfile(info).read())
+          for metadata in (wheel_metadata, source_metadata):
+              if metadata["Name"] != "seam-debugger" or metadata["Version"] != version:
+                  raise SystemExit("Distribution identity does not match release tag")
+          Path("dist").mkdir()
+          for path in wheels + sources:
+              shutil.copy2(path, "dist")
+          print("Verified seam-debugger", version, "against GitHub release checksums")
+          PY
+      - name: Check PyPI metadata rendering
+        run: |
+          python -m pip install --quiet twine
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish verified distributions
+    needs: prepare
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/seam-debugger/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist
+      - name: Publish through PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1

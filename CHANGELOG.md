@@ -1,11 +1,15 @@
 # Changelog
 
-Seam has not been released yet. Version numbers follow semantic versioning once it is;
-until 1.0 any release may change behaviour.
+Seam follows semantic versioning; until 1.0 any release may change behaviour.
 
 ## Unreleased
 
-Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
+No changes yet.
+
+## 0.1.0 — 2026-10-07
+
+First public release for Linux x86-64, including WSL: mixed Python/native debugging
+in VS Code and Neovim. The complete changes included in this release follow.
 
 ### Added
 
@@ -131,10 +135,3 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 - An attach that was refused because the program's main thread was blocked left its
   request in the program, which later printed an error (Python 3.14) or loaded Seam's
   helper with no debugger attached (3.12, 3.13).
-
-## 0.1.0
-
-The first complete version: breakpoints, one merged call stack, variables, evaluation
-and stepping across the Python/native boundary for C API, pybind11, nanobind, Cython and
-PyO3 extensions; launch and attach; CPython 3.12 to 3.14; a VS Code extension and an
-nvim-dap configuration. See [STATUS.md](STATUS.md).

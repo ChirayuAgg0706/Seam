@@ -1,14 +1,31 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "seam-debugger"
 dynamic = ["version"]
-description = "A mixed-mode Python + native debugger for Linux"
+description = "Debug Python and C, C++ or Rust together on Linux x86-64, including WSL."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["debugger", "python", "native", "rust", "lldb", "dap", "wsl"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Debuggers",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChirayuAgg0706/Seam"
+Documentation = "https://github.com/ChirayuAgg0706/Seam#readme"
+Issues = "https://github.com/ChirayuAgg0706/Seam/issues"
+Releases = "https://github.com/ChirayuAgg0706/Seam/releases"
 
 [tool.setuptools.dynamic]
 version = { attr = "seam.__version__" }
