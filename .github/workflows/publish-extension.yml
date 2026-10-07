@@ -1,0 +1,106 @@
+name: publish extension registries
+
+# Upload the reviewed public release VSIX; never rebuild it while publishing.
+on:
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: "Registry to publish"
+        type: choice
+        options: [both, marketplace, open-vsx]
+        required: true
+      tag:
+        description: "Published GitHub release tag"
+        default: "v0.1.0"
+        required: true
+        type: string
+      asset:
+        description: "Release VSIX asset (with companion .sha256 asset)"
+        default: "seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-publication
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_ASSET: ${{ inputs.asset }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download and verify the public extension package
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_ASSET" =~ ^seam-debugger-[a-zA-Z0-9.-]+\.vsix$ ]]
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+          gh release download "$RELEASE_TAG" --dir release --pattern "$RELEASE_ASSET" --pattern "$RELEASE_ASSET.sha256"
+          publisher="$(python -c 'import json; print(json.load(open("vscode/package.json"))["publisher"])')"
+          python scripts/verify-extension-release.py "release/$RELEASE_ASSET" "$publisher" "${RELEASE_TAG#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-extension
+          path: release/*.vsix
+          if-no-files-found: error
+
+  marketplace:
+    if: ${{ inputs.registry == 'both' || inputs.registry == 'marketplace' }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: marketplace
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-extension
+          path: release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Publish to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          test -n "$VSCE_PAT" || { echo 'Add the VSCE_PAT repository secret first.'; exit 1; }
+          npx --yes @vscode/vsce@4.0.0 publish --packagePath release/*.vsix
+
+  open-vsx:
+    if: ${{ inputs.registry == 'both' || inputs.registry == 'open-vsx' }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: open-vsx
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-extension
+          path: release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Create namespace if absent and publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          test -n "$OVSX_PAT" || { echo 'Add the OVSX_PAT repository secret first.'; exit 1; }
+          publisher="$(node -p 'require("./vscode/package.json").publisher')"
+          status="$(curl --silent --show-error --output namespace.json --write-out '%{http_code}' "https://open-vsx.org/api/$publisher")"
+          case "$status" in
+            200) ;;
+            404) npx --yes ovsx@1.2.0 create-namespace "$publisher" ;;
+            *) echo "Open VSX namespace lookup failed: HTTP $status"; exit 1 ;;
+          esac
+          npx --yes ovsx@1.2.0 publish release/*.vsix

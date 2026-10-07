@@ -8,6 +8,8 @@ const cp = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
+const manifest = require("../package.json");
+const extensionId = `${manifest.publisher}.${manifest.name}`;
 
 const TIMEOUT_MS = 90000;
 const SHOTS = process.env.SEAM_SHOTS;
@@ -472,7 +474,7 @@ async function checkThisMachine() {
   const doctor = await vscode.commands.executeCommand("seam.checkMachine");
   assert.ok(Array.isArray(doctor), "the command reports what it ran");
   assert.deepStrictEqual(doctor.slice(1),
-    ["-I", path.join(vscode.extensions.getExtension("seam.seam-debugger").extensionPath, "bundled"),
+    ["-I", path.join(vscode.extensions.getExtension(extensionId).extensionPath, "bundled"),
       "doctor", "--python", venvPython]);
   // The terminal's text cannot be read from here, so the same command is run again.
   const result = cp.spawnSync(doctor[0], doctor.slice(1), { encoding: "utf8", timeout: 120000 });
@@ -602,7 +604,7 @@ async function disassemblyAtTheNativeStop() {
 }
 
 exports.run = async function run() {
-  const extension = vscode.extensions.getExtension("seam.seam-debugger");
+  const extension = vscode.extensions.getExtension(extensionId);
   assert.ok(extension, "the Seam extension is installed");
   seam = await extension.activate();
   log(`extension ${extension.id} ${extension.packageJSON.version} in ${extension.extensionPath}`);

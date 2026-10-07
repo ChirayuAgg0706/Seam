@@ -10,9 +10,8 @@ and VS Code. Canonical description:
 
 - GitHub repository: `ChirayuAgg0706/Seam`; tag `v0.1.0`.
 - PyPI distribution: `seam-debugger`; executable `seam`.
-- VS Code extension: `seam-debugger`, currently using the placeholder publisher ID
-  `seam`. Confirm ownership of the actual publisher before publishing to Marketplace
-  or Open VSX; do not assume that ID is available.
+- VS Code extension: `chirayuagg0706.seam-debugger`. The owner created the Marketplace
+  publisher `chirayuagg0706` on 2026-10-07. Open VSX needs a namespace with the same ID.
 - Release notes: [releases/0.1.0.md](releases/0.1.0.md).
 - Screenshots: `vscode/images/`. These are unedited captures from the real VS Code
   packaged-extension acceptance job, not illustrative mockups.
@@ -57,11 +56,56 @@ After version/package checks pass and the owner has authorised publication:
 5. Install from PyPI with `pip install --only-binary=:all: seam-debugger==0.1.0` in
    another fresh environment, run doctor, and compare the downloaded wheel hash to
    the GitHub release asset.
-6. Publish the same VSIX to Marketplace and Open VSX after their publisher accounts
-   are configured. Check actual registry installation before announcing those routes.
+6. Publish the publisher-qualified VSIX to Marketplace and Open VSX using the steps
+   below. Check actual registry installation before announcing those routes.
 
 Keep all descriptions, requirements and limitations aligned with the README. Marketing
 starts after the public installation routes work.
+
+## Marketplace and Open VSX
+
+The original tag's VSIX used the placeholder publisher `seam`. Keep that release asset
+and its published checksum unchanged. The registry package is built from the original
+released wheel, with the owned publisher ID and corrected README image URLs. It is
+attached as `seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix`, with a companion
+`.sha256` asset. No debugger source or Python distribution is changed.
+
+For the first Marketplace publication, uploading in the browser is sufficient:
+
+1. Download the publisher-qualified VSIX from the GitHub release.
+2. Open <https://marketplace.visualstudio.com/manage>, select publisher
+   `chirayuagg0706`, then **New extension → Visual Studio Code**.
+3. Upload that VSIX and follow the portal's publication prompts. Wait for validation
+   to finish before claiming the extension is installable.
+
+For automatic Marketplace publishing instead, create an Azure DevOps PAT under the
+Microsoft account that owns the publisher: **All accessible organizations**, custom
+scopes, **Marketplace → Manage** only. Store it as GitHub repository secret `VSCE_PAT`;
+never put it in chat, source or command arguments. A short expiration suffices for
+this release. Microsoft retires global PATs on 2026-12-01; future automation will need
+Microsoft Entra ID authentication. See the
+[official publishing instructions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
+
+Open VSX first-time account setup:
+
+1. Create an [Eclipse account](https://accounts.eclipse.org/user/register) and set its
+   GitHub username to `ChirayuAgg0706`.
+2. Sign into <https://open-vsx.org> with that GitHub account. In Settings, connect the
+   Eclipse account and read and accept the Publisher Agreement if you agree.
+3. Generate an Open VSX access token and store it as repository secret `OVSX_PAT`.
+   The workflow creates namespace `chirayuagg0706` if it is absent, then publishes.
+   Existing namespaces must grant this account permission; a matching name alone
+   does not establish ownership.
+
+See [Open VSX's publishing instructions](https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions).
+Its Trusted Publishing requires an existing published extension and verified namespace
+ownership, so it is a follow-up to the first token-based upload.
+
+Dispatch `publish-extension.yml` with registry `marketplace`, `open-vsx` or `both`,
+tag `v0.1.0` and the publisher-qualified asset filename. The workflow verifies its
+checksum, identity, version, platform, bundled adapter/helper and public screenshot
+URLs before uploading the same file. It never rebuilds the package during publication.
+For a manual Marketplace upload, dispatch only `open-vsx` after its setup is complete.
 
 ## First-release publication record (2026-10-07)
 

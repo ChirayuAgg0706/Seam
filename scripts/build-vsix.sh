@@ -82,7 +82,9 @@ fi
 cd "$ROOT/vscode"
 cp ../LICENSE LICENSE.txt
 rm -f ./*.vsix
-npx --yes @vscode/vsce package --target linux-x64 --allow-missing-repository
+npx --yes @vscode/vsce package --target linux-x64 --allow-missing-repository \
+  --baseContentUrl https://github.com/ChirayuAgg0706/Seam/blob/main/vscode/ \
+  --baseImagesUrl https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/
 vsix="$(ls -1 ./*.vsix)"
 # The adapter really is inside, and the editor check is not.
 contents="$(python3 -m zipfile -l "$vsix")"

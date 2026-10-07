@@ -3,7 +3,7 @@
   "displayName": "Seam: Python + native debugger",
   "description": "Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.",
   "version": "0.1.0",
-  "publisher": "seam",
+  "publisher": "chirayuagg0706",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
