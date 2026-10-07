@@ -138,5 +138,30 @@ Published SHA-256:
 
 Local verification logs are `build/public-release-verification.txt`,
 `build/pypi-release-verification.txt` and `build/public-vsix-verification.txt`.
-Marketplace and Open VSX account/publisher setup and publication remain the next
-release step. Neither registry has been published by this task.
+Marketplace and Open VSX publication remain the next release step. Neither registry
+has been published by this task.
+
+## Extension registry preparation (2026-10-07)
+
+The owner confirmed creation of Marketplace publisher `chirayuagg0706`. Commit
+`588ede3` updates the extension identity, makes the editor checks read that identity
+from the manifest, fixes packaged README screenshot URLs for this repository's
+`vscode/` subdirectory, and adds the verified-file registry publishing workflow.
+
+- The publisher-qualified VSIX and its `.sha256` are attached to the public 0.1.0
+  release; unauthenticated downloads passed identity, version, platform and checksum checks.
+- Every bundled debugger/helper file matches the published Python wheel byte for byte.
+- The extracted extension passed doctor, including a real breakpoint/evaluation/exit session.
+- All 17 extension unit checks and the publishing script's lint passed. The verification
+  guard rejected wrong publishers, wrong versions and an altered package.
+- [Editor CI 37635105386](https://github.com/ChirayuAgg0706/Seam/actions/runs/37635105386)
+  passed packaged VS Code acceptance with and without Microsoft's Python extension,
+  plus Neovim acceptance, under the new extension ID.
+- [Main CI 37635094451](https://github.com/ChirayuAgg0706/Seam/actions/runs/37635094451)
+  passed: 296 tests, 16 documented skips, lint, versions and extension packaging.
+
+Registry VSIX SHA-256:
+`6939283aaa3acfbac92711b5eb10d58f8d059359566eb10998a3c5bd5ca25398`.
+Local verification log: `build/registry-package-verification.txt`.
+Marketplace still needs the owner's browser upload or `VSCE_PAT`; Open VSX still
+needs Eclipse/GitHub account setup, the Publisher Agreement and `OVSX_PAT`.
