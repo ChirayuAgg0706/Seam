@@ -73,6 +73,19 @@ def verify(package, publisher, version):
             )
             if url not in readme:
                 raise ValueError("Missing public screenshot URL: " + image)
+        if "python-rust-demo.gif" in readme:
+            url = (
+                "https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/"
+                "vscode/images/python-rust-demo.gif"
+            )
+            if url not in readme:
+                raise ValueError("Missing public demo GIF URL")
+            demo = archive.read("extension/images/python-rust-demo.gif")
+            if demo[:6] not in (b"GIF87a", b"GIF89a"):
+                raise ValueError("Demo must be a GIF")
+            width, height = struct.unpack("<HH", demo[6:10])
+            if width < 640 or height < 400 or b"NETSCAPE2.0" not in demo:
+                raise ValueError("Demo must be readable and loop")
     print(f"Verified {publisher}.seam-debugger {version}, Linux x64, SHA-256 {digest}")
 
 

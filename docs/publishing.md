@@ -1,18 +1,18 @@
-# Publishing Seam 0.1.0
+# Publishing Seam
 
 The release targets **Linux x86-64 with glibc, including WSL**. Native Windows,
-macOS and ARM are outside this release. The debugger version is 0.1.0 in both Python
-and the original VS Code release. Extension 0.1.1 is a logo update that bundles the
-unchanged debugger 0.1.0. Canonical description:
+macOS and ARM are outside this release. The released debugger is 0.1.0.
+Extension 0.1.2 combines the Joined S logo, demo GIF and revised copy while
+bundling the unchanged debugger 0.1.0. Canonical description:
 
-> Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.
+> Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.
 
 ## Release files and pages
 
 - GitHub repository: `ChirayuAgg0706/Seam`; tag `v0.1.0`.
 - PyPI distribution: `seam-debugger`; executable `seam`.
 - VS Code extension: `chirayuagg0706.seam-debugger`. The owner created the Marketplace
-  publisher `chirayuagg0706` on 2026-10-07. Open VSX needs a namespace with the same ID.
+  publisher `chirayuagg0706` on 2026-10-07. Open VSX is deferred.
 - Release notes: [releases/0.1.0.md](releases/0.1.0.md).
 - Screenshots: `vscode/images/`. These are unedited captures from the real VS Code
   packaged-extension acceptance job, not illustrative mockups.
@@ -210,3 +210,37 @@ Local log: `build/logo-release-verification.txt`.
 
 Extension 0.1.1 VSIX SHA-256:
 `521948764a193d2b0ba08074a1daa5a0f2bd1cb1a49c1970fb6c119d48d86618`.
+
+## Combined extension update 0.1.2. 2026-10-08
+
+Extension 0.1.2 includes the Joined S icon, recorded Python-to-Rust GIF and revised
+public copy. It bundles the released debugger 0.1.0. The READMEs, Neovim and demo
+guides, release notes, contributor and security text, settings descriptions and
+installation errors follow the installed unslop skill. The status and roadmap
+now reflect completed publication and automatic LLDB selection.
+
+Prepared package: `build/v1-presentation-release/seam-debugger-chirayuagg0706-linux-x64-0.1.2.vsix`.
+Its companion `.sha256` records this hash:
+`bfe304bad7050dd28728a93191b00c0fc7f138b7549a8f5ac8e6ea0dbe0512de`.
+Release copy is in [releases/extension-0.1.2.md](releases/extension-0.1.2.md).
+
+Validation passed 19 extension and bundled-adapter checks, lint and version checks,
+the publication guard, and a real installed VS Code session. Step Into opened Rust;
+locals showed `i = 2` and `total = 1`; Step Out returned to Python and the completed
+assignment showed `result = 30`. The program exited successfully. An installation
+in an empty CLI profile also passed the machine check's breakpoint, evaluation and
+exit session.
+
+All 30 debugger and extension-library files match 0.1.1 byte for byte. Configuration
+defaults and IDs are unchanged. Packaged images match their source files. Public
+document links, shell syntax, six JSON examples and the unchanged tested Neovim
+configuration passed checks. The extension's two installation-error strings changed;
+its debugging logic did not. Local evidence is in `build/v1-presentation-release/`.
+
+To update Marketplace, open the existing Seam extension in the publisher portal,
+choose **Update**, and upload this VSIX. Package preparation does not publish it.
+No publishing credential is configured for this task. Open VSX remains deferred.
+
+The rewritten root README is also the source for future PyPI metadata. PyPI's
+published 0.1.0 page keeps its existing description until a new Python package
+release. Do not replace the published 0.1.0 wheel, source archive or checksums.

@@ -4,9 +4,11 @@ Seam follows semantic versioning; until 1.0 any release may change behaviour.
 
 ## Unreleased
 
-No changes yet.
+- Rewrite the README, installation guides and public release descriptions.
+- Add a recorded Python-to-Rust debugging demo to the README.
+- Update package description text. Debugger behaviour is unchanged.
 
-## 0.1.0 — 2026-10-07
+## 0.1.0. 2026-10-07
 
 First public release for Linux x86-64, including WSL: mixed Python/native debugging
 in VS Code and Neovim. The complete changes included in this release follow.

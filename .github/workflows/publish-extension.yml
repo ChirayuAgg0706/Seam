@@ -11,12 +11,12 @@ on:
         required: true
       tag:
         description: "Published GitHub release tag"
-        default: "extension-v0.1.1"
+        default: "extension-v0.1.2"
         required: true
         type: string
       asset:
         description: "Release VSIX asset (with companion .sha256 asset)"
-        default: "seam-debugger-chirayuagg0706-linux-x64-0.1.1.vsix"
+        default: "seam-debugger-chirayuagg0706-linux-x64-0.1.2.vsix"
         required: true
         type: string
 

@@ -1,27 +1,26 @@
 # Security
 
-Seam is a debugger: by design it controls another process, reads its memory and runs
-code in it. That makes a few things worth stating plainly.
+Seam controls the program you debug, reads its memory and evaluates code inside it.
+Only debug programs and configurations you trust.
 
 ## What Seam does to the program it debugs
 
 - It controls the process with `ptrace`, through LLDB. It needs the same permission any
-  debugger needs, and no more: Seam never asks for root and has no setuid parts.
-- It loads a small helper into the program (`_seam_trap` and `seam_agent`), which
-  installs `sys.monitoring` callbacks and, while uncaught-exception stops are on, an audit
-  hook and a wrapper around `threading.excepthook`.
+  debugger needs. Seam does not require root and has no setuid components.
+- It loads `_seam_trap` and `seam_agent` into the program. The helper installs
+  `sys.monitoring` callbacks. Uncaught-exception stops also use an audit hook
+  and a wrapper around `threading.excepthook`.
 - Expressions typed in the editor (the debug console, watch expressions, breakpoint
   conditions, log messages) are executed in the program with the program's privileges.
   Opening a project's `launch.json` and starting it is running that project's code.
 - When attaching, Seam writes into the target's memory to make it load the helper
   (PEP 768 on Python 3.14+, a queued call on 3.12 and 3.13).
 
-## What Seam does not do
+## Connections and telemetry
 
-- It opens no network ports. The adapter talks to the editor over its standard input
-  and output; the only other channels are a pipe and Unix sockets in private temporary
-  directories, between Seam's own processes on the same machine.
-- It sends nothing anywhere. There is no telemetry.
+The adapter communicates with the editor over standard input and output. Seam's
+other processes use a pipe and Unix sockets in private temporary directories on
+the same machine. Seam opens no network ports and sends no telemetry.
 
 ## Attaching to processes
 
@@ -32,9 +31,9 @@ every other process of that user. Do that on development machines, not in produc
 
 ## Log files
 
-`SEAM_LOG` (or the extension's `seam.logFile` setting) makes the adapter write a protocol
-log. It contains source paths, variable values and expression results from the debugged
-program. Look through it before attaching it to a public bug report.
+Set `SEAM_LOG` or the extension's `seam.logFile` setting to record a protocol log.
+The log can contain source paths, variable values and expression results.
+Check it and its `.lldb` companion for private information before sharing them.
 
 ## Reporting a vulnerability
 

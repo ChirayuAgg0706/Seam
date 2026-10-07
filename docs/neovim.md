@@ -1,7 +1,12 @@
-# Using Seam from Neovim (nvim-dap)
+# Seam in Neovim
 
-Seam runs on **Linux x86-64, including WSL**, with CPython 3.12–3.14 and LLDB 19 or 20
-recommended. Install it into a separate environment (Ubuntu 24.04):
+Debug Python and native code in one nvim-dap session on Linux x86-64, including WSL.
+Use CPython 3.12, 3.13 or 3.14 and LLDB with Python scripting support. LLDB 19 or 20
+avoids LLDB 18's threaded-child-process failure.
+
+## Install
+
+On Ubuntu 24.04:
 
 ```bash
 sudo apt-get update
@@ -11,15 +16,18 @@ python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/seam doctor --python python3
 ```
 
-The published wheel includes the helper; LLDB remains a system dependency. You can
-also install the wheel from the
+The wheel includes Seam's compiled helper. Install LLDB separately. You can also
+install the wheel from the
 [GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
-Put `~/.venvs/seam/bin` on PATH or use its full executable path below. See the
-[requirements and limitations](../README.md#limitations) before starting.
+Add `~/.venvs/seam/bin` to PATH, or use the full executable path in the configuration.
+The program can use a different environment from Seam. Read the
+[requirements](../README.md#requirements) and [limitations](../README.md#limitations).
 
-Seam is an ordinary DAP adapter started with `seam dap`, so
-[nvim-dap](https://github.com/mfussenegger/nvim-dap) needs only an adapter entry and one
-or more configurations. Put this in your Neovim configuration:
+## Configure nvim-dap
+
+Install [nvim-dap](https://github.com/mfussenegger/nvim-dap), then add this Lua block
+to your Neovim configuration. It starts the adapter with `seam dap` and offers
+launch and attach configurations in Python and native buffers.
 
 ```lua
 local dap = require("dap")
@@ -56,22 +64,31 @@ for _, filetype in ipairs({ "python", "c", "cpp", "rust", "cython" }) do
 end
 ```
 
-Breakpoints set with `:lua require("dap").toggle_breakpoint()` in `.py`, `.c`, `.cpp`,
-`.rs` and `.pyx` buffers all go to the same session. Seam routes them by file extension:
-`.py`/`.pyw` are Python breakpoints, everything else is a native breakpoint.
+## Debug a program
 
-Launch options are the same as in the VS Code extension; the README lists them. Two are
-worth knowing here:
+Set a breakpoint with `:lua require("dap").toggle_breakpoint()`, then run
+`:lua require("dap").continue()` and choose the launch configuration. Step Into
+enters a native function called by Python. Step Out returns to the Python caller.
+
+Breakpoints in `.py`, `.c`, `.cpp`, `.rs` and `.pyx` buffers share the same session.
+Seam treats `.py` and `.pyw` as Python; other file extensions use native breakpoints.
+
+The [README](../README.md#launch-options) lists every launch option. In Neovim:
 
 - `console = "integratedTerminal"` runs the program in a Neovim terminal split, where it
   can read input. Without it the program's output goes to the nvim-dap REPL and its
   standard input is empty.
-- Exception stops: nvim-dap enables the adapter's default (uncaught Python exceptions).
-  `:lua require("dap").set_exception_breakpoints({ "uncaught", "raised" })` chooses others
-  (`cpp_throw` and `rust_panic` are the native ones).
+- nvim-dap enables uncaught Python exception stops by default. Use
+  `:lua require("dap").set_exception_breakpoints({ "uncaught", "raised" })`
+  to enable raised exceptions too. Other filters are `user_unhandled`, `cpp_throw`
+  and `rust_panic`.
 
-CI runs this exact configuration: `tests/editors/nvim_check.lua` reads the Lua block above
-out of this file, loads it into a headless Neovim with nvim-dap, and debugs
-`examples/pyo3-demo` with it (breakpoint, step into Rust, step out, run to the end, and
-once more in a terminal). If something misbehaves for you, set the environment variable
-`SEAM_LOG=/tmp/seam.log` before starting Neovim and attach the log to a bug report.
+## Troubleshooting
+
+Run `seam doctor --python /path/to/python` with your program's interpreter.
+To record a debug session, set `SEAM_LOG=/tmp/seam.log` before starting Neovim.
+Include the log and its `.lldb` companion in a bug report after checking them for
+private paths and values.
+
+CI tests the Lua block above in a real Neovim with nvim-dap. It debugs the PyO3 demo,
+steps into Rust and back, and checks output in the REPL and a terminal.

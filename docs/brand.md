@@ -33,5 +33,5 @@ The GIF is 1280 by 800 pixels, about 25 seconds long, at 10 frames per second.
 Recording starts at the first Python breakpoint. Pauses give viewers time to read
 the variables; the clip is not a startup benchmark. Capture scripts, the original
 MP4 and five inspected screenshots remain in the ignored `build/demo-capture/`
-directory. The GIF will join the next listing update with the revised introduction
-and installation instructions.
+directory. The GIF joins extension 0.1.2 with the revised introduction and
+installation instructions. This package keeps the released debugger 0.1.0.

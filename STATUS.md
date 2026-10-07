@@ -1,9 +1,9 @@
 # Seam status
 
-**Seam 0.1.0 is publicly released on GitHub, PyPI and VS Code Marketplace (2026-10-07).**
+Seam 0.1.0 was released on GitHub, PyPI and the VS Code Marketplace on 2026-10-07.
 Public downloads, checksums and fresh installed-wheel debug sessions pass. A fresh
 Marketplace installation also passed a real debug session and matched the uploaded
-VSIX's 37 files. Open VSX publishing remains. See
+VSIX's 37 files. Open VSX is deferred. See
 [docs/publishing.md](docs/publishing.md) for the release record and installation checks.
 
 Legend: **done** = run and seen passing; **partial** = part of it runs and passes, the rest
@@ -88,7 +88,7 @@ evidence and artifact hashes are in `docs/v1-readiness.md`.
 | 11 | VS Code extension as a `.vsix`; nvim-dap configuration | **done** | CI's `editors` job packages the extension with the adapter and its helper inside, checks that packaged adapter on its own (`vscode/test/unit.js --adapter`, `tests/editors/test_bundle.py` against the unpacked `.vsix`), then installs the `.vsix` into a real VS Code (extension host under a virtual display) with no Seam installed anywhere else. It opens a generated project with a virtual environment, presses F5 with no `launch.json`, and checks that the program being debugged is the environment's interpreter; steps into Rust and back; attaches through the process picker and detaches; runs "Seam: Check This Machine"; and reads what the user is told when LLDB is missing. A second run installs the Python extension and checks that the interpreter selected there is the one debugged. Pictures of the window at each stop are kept as the artifact `editor-check-screenshots`. It then loads the configuration from `docs/neovim.md` verbatim into a headless Neovim with nvim-dap and debugs the PyO3 demo with a pip-installed `seam`. |
 | 12 | Overhead within 10% with no breakpoints | **done** for CPU-bound and native-call workloads | `test_overhead.py`. Measured ratios vary from run to run between 0.94 and 1.05 on this machine when it is otherwise idle (one run made while other test runs were going measured 1.19 and passed when repeated alone), and are the same with a 15,000-function module loaded (1.001). A thread-creation-heavy workload is about twice as slow under Seam (measured 1.9 to 2.1; LLDB handles every thread start and exit); it is measured and printed, not held to 10%. |
 | 13 | Docs: README (install, quick start, architecture, limitations) | **done** | `README.md`, `docs/decisions.md`, `docs/neovim.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `vscode/README.md`. |
-| 14 | Clean-machine check with a PyO3 project | **done**, with one caveat | The `clean-machine` CI job starts from a bare `ubuntu:24.04` container, runs the README's pip install commands, `seam doctor`, and then debugs `examples/pyo3-demo` with the installed `seam`. Caveat: it installs from the checked-out repository instead of running the README's `git clone` line, because the repository is private. |
+| 14 | Clean-machine check with a PyO3 project | **done** | The `clean-machine` CI job starts from a bare `ubuntu:24.04` container, installs the checked-out sources, runs `seam doctor`, and debugs the PyO3 demo. Fresh installs from public GitHub and PyPI distributions also pass; see `docs/publishing.md`. |
 
 ## Since v1
 
@@ -124,7 +124,7 @@ evidence and artifact hashes are in `docs/v1-readiness.md`.
 | Unsupported interpreters refused by name (3.11, free-threaded) | **done** | `test_unsupported.py`. The refusal of non-x86-64 programs is written but **not tested** (no such machine here). |
 | Real third-party wheels in a virtual environment | **done** | `test_wheels.py`: numpy and orjson from PyPI |
 | LLDB 19 and 20 | **done** | CI `lldb` job (smoke scenarios); LLDB 20 is also what local runs use |
-| Release artifacts (manylinux wheel, sdist, `.vsix`) | **done on `610f460`** | Release run 37477455386 passes, including the bundled adapter and installed-wheel doctor. The final extension is installed in WSL and its doctor passes. Release version/tag selection remains shipping work; nothing is published. |
+| Release artifacts, including wheel, sdist and VSIX | **done** | Public release `v0.1.0` includes validated packages. Fresh GitHub, PyPI and Marketplace installations pass; `docs/publishing.md` records checksums and evidence. |
 
 ## CI
 
@@ -245,17 +245,15 @@ case was not re-measured.
   only. What the ordinary suite covers of the same mechanisms runs under 18 and 19 on CI.
 - **Attach, then Step Into a large module**: no scenario.
 - **Non-x86-64 machines**: the refusal message is untested.
-- **The release tag/version.** Artifacts from final code `610f460` pass the release
-  workflow (37477455386). Choosing a public version and validating its tag remain
-  shipping work; nothing is published.
-- **Python 3.15.0 final**: only the release candidate (rc3) exists so far.
+- Python 3.15 final has not been validated for this release. Tests used 3.15.0rc3.
 - **The weekly schedule** did not start a run on its first Monday (2026-10-05, due at
   03:17 UTC, nothing by 06:20 UTC). GitHub delays and sometimes drops scheduled runs;
   whether this one was dropped or the schedule is not taking effect is not known. The
   jobs it would have run were run by hand instead: the extended set above, and the looped
   soak with the weekly settings earlier (165 scenario runs, all passed, LLDB 18).
 
-## Needs the project owner
+## Publication
 
-- Publishing (PyPI, the VS Code Marketplace, Open VSX, making the repository public), and
-  with it a version number and a tagged release. Nothing has been published.
+The repository is public. Seam 0.1.0 is available on GitHub, PyPI and the Marketplace.
+Open VSX is deferred. The next extension package updates the presentation and copy
+while keeping debugger 0.1.0. See [the publishing record](docs/publishing.md).

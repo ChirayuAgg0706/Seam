@@ -1,11 +1,18 @@
 # Seam extension changelog
 
-## 0.1.1 — 2026-10-07
+## 0.1.2. 2026-10-08
 
-- Add the approved Joined S logo as the extension icon.
+- Add a recorded Python-to-Rust demo GIF.
+- Rewrite installation, debugging and troubleshooting instructions.
+- Clarify settings descriptions and installation errors.
+- Keep the Joined S icon and the released Seam debugger 0.1.0.
+
+## 0.1.1. 2026-10-07
+
+- Add the Joined S logo as the extension icon.
 - Carry the same Seam debugger 0.1.0 as the previous extension release.
 
-## 0.1.0 — 2026-10-07
+## 0.1.0. 2026-10-07
 
 - First Marketplace release: debug Python and C, C++ or Rust together on Linux
   x86-64, including WSL.

@@ -1,17 +1,17 @@
 # Contributing to Seam
 
-## Getting set up
+## Set up
 
-Seam is developed on Linux x86-64 (WSL works). You need LLDB 18 or newer with its Python
-bindings, gcc/g++, the CPython headers, [uv](https://docs.astral.sh/uv/) and, for the
-PyO3 scenarios, a Rust toolchain.
+Develop and test Seam on Linux x86-64, including WSL. Use LLDB with Python bindings,
+gcc/g++, CPython headers and [uv](https://docs.astral.sh/uv/). PyO3 tests also need a
+Rust toolchain. LLDB 18, 19 and 20 are tested; use 19 or 20 for new installations.
 
 ```bash
 scripts/test.sh -q                 # the whole suite against /usr/bin/python3.12
 ```
 
-The script creates a virtual environment under `~/.cache/seam/venv` with pytest and the
-binding libraries the test extensions are built with. Useful variations:
+The script creates `~/.cache/seam/venv` with pytest and the binding libraries used
+by the test extensions. To choose an interpreter, compiler optimisation or test group:
 
 ```bash
 SEAM_TEST_PYTHON=/path/to/python3.14 scripts/test.sh -q   # another interpreter
@@ -28,7 +28,7 @@ The last three are opt-in: they are not part of the ordinary suite or of CI. The
 are built from source with debug info under `~/.cache/seam/scale` (about 5 minutes and
 1 GB).
 
-## How the code is laid out
+## Code layout
 
 | Path | What it is |
 |---|---|
@@ -53,15 +53,13 @@ are built from source with debug info under `~/.cache/seam/scale` (about 5 minut
 
 ## Ground rules
 
-- **A feature is done when a scenario test has been seen passing**, not when the code
-  looks right. Tests launch real processes; there are no mocks of LLDB or of CPython.
-- **An intermittent failure is a bug.** Loop the scenario (`SEAM_TEST_REPEAT`) until it
-  reproduces, read the adapter log the failure report carries, and fix the cause. Several
-  entries in `docs/decisions.md` started as a failure seen once.
-- **Fix the cause, not the test.** If a test's expectation was wrong, say so in the commit.
-- **Python is run in the debugged program only at safe points.** At a native stop the
-  adapter reads memory. If a change needs to run something in the target anywhere else,
-  it needs a section in `docs/decisions.md` saying why that is safe.
+- Complete a feature only after its scenario test passes. Tests launch real programs
+  and do not mock LLDB or CPython.
+- Treat an intermittent failure as a bug. Repeat the scenario with `SEAM_TEST_REPEAT`,
+  read the adapter log in the failure report, and fix the cause.
+- If a test expectation was wrong, explain the correction in the commit.
+- Run Python in the program only at safe points. At native stops, read memory.
+  Any exception needs an entry in `docs/decisions.md` explaining why the call is safe.
 - Record design decisions, and things tried and rejected, in `docs/decisions.md`. Keep
   `STATUS.md` and `ROADMAP.md` truthful: what is tested, what is not, what is known broken.
 - New Python versions: add the `_Py_DebugOffsets` field list from that version's
@@ -79,7 +77,7 @@ for changes to the adapter's core, to stepping, or to anything version-specific,
 `[skip ci]` for changes that touch only documentation. A missing toolchain fails CI
 rather than skipping. Pushes to branches other than `main` start nothing.
 
-A run started by hand can be narrowed down, which is the cheap way to check one thing:
+To run one CI job or repeat a test group under load:
 
 ```bash
 gh workflow run ci.yml --ref my-branch -f only=editors      # one job: full, smoke, lldb,

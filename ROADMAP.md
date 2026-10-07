@@ -1,14 +1,14 @@
 # Roadmap
 
-What has been done since v1, what is still open, and what is waiting for the project
-owner. An item is **done** only when a scenario test for it has been seen passing;
-[STATUS.md](STATUS.md) has the evidence, [docs/decisions.md](docs/decisions.md) the
-reasons.
+Seam 0.1.0 is released on GitHub, PyPI and the VS Code Marketplace. The tables below
+record completed work. The open list is a backlog, not a requirement to add features
+before using v1. [STATUS.md](STATUS.md) records test evidence, and
+[docs/decisions.md](docs/decisions.md) explains the design choices.
 
 For the first public release, use [the v1 readiness checklist](docs/v1-readiness.md).
 The open items below are a backlog, not a requirement to add more features before v1.
 
-## From v1 to something people can rely on (done)
+## Debugger foundations. Complete
 
 | # | Item | Where |
 |---|---|---|
@@ -29,7 +29,7 @@ The open items below are a backlog, not a requirement to add more features befor
 | 15 | Lint in CI; contributor and security notes | |
 | 16 | The adapter split into a module per concern | `src/seam/adapter/` |
 
-## From "passes its scenarios" to "works on a stranger's project" (done)
+## Project and editor support. Complete
 
 | # | Item | Where |
 |---|---|---|
@@ -55,10 +55,9 @@ traced to Ubuntu's crash reporter and its test fixture corrected; see
 [the readiness checklist](docs/v1-readiness.md) for final validation.
 
 - **LLDB 18, threads and child processes.** LLDB 18 breaks when a thread is at a
-  breakpoint at the moment another thread starts a child process. Seam could not cure it
-  from outside (§21). LLDB 18 is Ubuntu 24.04's default; LLDB 19 is one `apt install`
-  away and is not affected. Worth considering: make `seam` prefer a newer LLDB when one
-  is installed.
+  breakpoint while another starts a child process. LLDB 19 and 20 avoid the bug.
+  Seam now prefers installed `lldb-20` and `lldb-19` over plain `lldb`.
+  An explicit `SEAM_LLDB` overrides that choice.
 - **Attaching to a program whose main thread is blocked** is refused after the timeout,
   because the helper cannot load. "Why is my program hung?" is a common reason to attach,
   and the merged call stack and native debugging need no helper. Staying attached without
@@ -79,23 +78,16 @@ traced to Ubuntu's crash reporter and its test fixture corrected; see
 - No breakpoints in the disassembly view; `stepOut` ignores instruction granularity.
 - Thread-heavy programs run about twice as slowly under Seam.
 - nanobind at `-O2` under LLDB 20: LLDB cannot unwind through its library code.
-- Re-run the suite on Python 3.15.0 when it is released (only rc3 exists so far).
-- Re-run CI and the release workflow on the final release commit. The bundled-adapter
-  release workflow passed on `24d5b78` during the v1 audit; that artifact predates the
-  audit's await-breakpoint fix.
+- Validate Python 3.15 final. This release was tested with 3.15.0rc3.
 
-## Needs the project owner
+## Release presentation
 
-- **One session by hand** in VS Code on Windows connected to WSL. It is the one path that
-  could not be driven from here. About ten minutes: build or download the `.vsix`,
-  install it in a WSL window, open `examples/pyo3-demo`, press F5, step in and out.
-- **Publishing**: the PyPI name, the VS Code Marketplace / Open VSX publisher, making the
-  repository public, a version number and a tagged release. Until then the README's pip
-  install line (`git clone`) only works for people with access. Nothing has been
-  published.
+The owner completed the Windows/WSL acceptance checks. The repository is public,
+and GitHub, PyPI and Marketplace installation routes are verified. The logo, demo
+GIF and revised copy are included in the next extension package. Open VSX is deferred.
 
 ## Not planned
 
-macOS, Windows, non-x86-64, free-threaded builds, PyPy, sub-interpreters, remote
-debugging, debugging child processes. Each is a project of its own; see the README's
-Limitations.
+Native Windows, macOS, non-x86-64, free-threaded Python, PyPy, sub-interpreters,
+remote debugging and child-process debugging are outside v1's scope. Windows users
+can run Seam in WSL. See the README's [limitations](README.md#limitations).

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "seam-debugger"
 dynamic = ["version"]
-description = "Debug Python and C, C++ or Rust together on Linux x86-64, including WSL."
+description = "Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

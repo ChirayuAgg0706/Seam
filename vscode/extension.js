@@ -13,9 +13,9 @@ const processes = require("./lib/processes");
 const PYTHON_EXTENSION = "ms-python.python";
 // Activating the Python extension can take a while on a cold start; F5 must not hang on it.
 const PYTHON_EXTENSION_PATIENCE_MS = 15000;
-const NO_BUNDLE = "Seam: this copy of the extension has no debug adapter inside (it is "
-  + "put there by scripts/build-vsix.sh). Install the packaged .vsix, or set "
-  + "\"seam.adapterCommand\" to your own installation, e.g. [\"seam\", \"dap\"].";
+const NO_BUNDLE = "Seam: the debugger is missing from this extension. Reinstall Seam "
+  + "from the Marketplace or a packaged VSIX. To use a separate installation, set "
+  + "\"seam.adapterCommand\" to its command, such as [\"seam\", \"dap\"].";
 
 let output;            // the "Seam" output channel
 const problems = [];   // every message shown to the user, newest last (read by the editor check)
@@ -245,8 +245,8 @@ async function checkMachine(extensionPath) {
       command = adapter.bundledCommand(python, extensionPath);
     }
     if (command[command.length - 1] !== "dap") {
-      throw new Error("Seam: \"seam.adapterCommand\" does not end in \"dap\", so the command "
-        + "that checks that installation cannot be derived from it. Run its `seam doctor`.");
+      throw new Error("Seam: \"seam.adapterCommand\" must end in \"dap\" to run the "
+        + "machine check. Run \"seam doctor\" from that installation directly.");
     }
   } catch (err) {
     tell(err.message);

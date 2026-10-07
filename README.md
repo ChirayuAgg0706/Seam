@@ -1,59 +1,65 @@
 # Seam
 
-Debug Python and C, C++ or Rust together on Linux x86-64, including WSL.
+Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.
 
-Python debuggers cannot see into native code, and native debuggers show CPython's
-internals instead of Python lines. Seam is one debugger that understands both sides:
+When Python calls a native extension, Step Into opens the native function.
+Set breakpoints there, inspect its variables, and Step Out to Python. The call
+stack shows both languages in the order they ran.
 
-- breakpoints in `.py` files and in `.c`/`.cpp`/`.rs`/`.pyx` files, in one session;
-- one call stack with Python and native frames interleaved in their true order;
-- stepping from a Python line into the native function it calls, and back out;
-- Python and native variables, each in their own frames;
-- the Debug Adapter Protocol, so it works in VS Code and Neovim.
+Seam supports C API, PyO3, pybind11, nanobind and Cython modules. It works in
+VS Code and Neovim through the Debug Adapter Protocol.
 
-Seam 0.1.0 supports VS Code and Neovim. Read [Limitations](#limitations) before
-relying on it; [STATUS.md](https://github.com/ChirayuAgg0706/Seam/blob/main/STATUS.md)
-records the tested scope.
+![Step into Rust, inspect its locals, and return to Python](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/images/python-rust-demo.gif)
 
-![A Rust breakpoint with Python callers in the same VS Code call stack](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/images/python-rust-stack.png)
-
-At a Rust breakpoint, inspect Rust locals and select the Python callers below it.
-This is an actual VS Code session from the packaged-extension acceptance tests.
+Recorded with the packaged extension. Python calls Rust's `sum_squares` and
+receives `30`. The recording starts at a Python breakpoint.
 
 ## Requirements
 
-- Linux x86-64 with glibc; Windows users run Seam inside WSL on Linux x86-64.
-- CPython 3.12, 3.13 or 3.14 as the program being debugged; 3.15 works as of its release
-  candidate (3.15.0rc3). Interpreters without debug info (uv-managed Pythons, `-slim`
-  container images) and virtual environments are supported.
-- LLDB 18, 19 or 20, with its Python scripting support (the normal distro package). For
-  new installations, prefer LLDB 19 or 20: LLDB 18 can lose sessions when threaded
-  programs start child processes (see [Limitations](#limitations)). Seam looks for
-  `lldb-20`, then `lldb-19`, before plain `lldb`. An explicit `SEAM_LLDB` always wins.
-- The published Linux x86-64 wheel and VS Code extension include the compiled helper;
-  neither needs a compiler to install. Building from source needs a C compiler and
-  the CPython headers. Building your own native extension still needs its toolchain.
-- Permission to `ptrace` the program (the default when Seam launches it).
+- Linux x86-64 with glibc. On Windows, run Seam in WSL.
+- CPython 3.12, 3.13 or 3.14 for your program. Python 3.15.0rc3 passed the release
+  tests; later 3.15 builds have not been validated for this release. Virtual
+  environments and interpreters without debug information are supported.
+- LLDB with Python scripting support. Versions 18, 19 and 20 are tested. Use 19 or 20
+  for new installations because LLDB 18 can lose sessions when threaded programs
+  start child processes. Seam chooses `lldb-20`, then `lldb-19`, then `lldb`.
+  `SEAM_LLDB` overrides that choice.
+- Build your native extension with debug information for source stepping. Use `-g`
+  for C and C++, a Rust debug build, or `[profile.release] debug = true` for Rust
+  release builds.
+- Permission to trace the program with `ptrace`. Launching your own program normally
+  has this permission. Attach has additional restrictions.
+
+The published wheel and VS Code extension include Seam's compiled helper. You do
+not need a compiler to install Seam. Building from source needs a C compiler and
+Python headers. Building your native extension still needs its toolchain.
+Read the [limitations](#limitations) before using Seam on a project.
 
 ## Install
 
-**VS Code users** need LLDB and the extension, which contains Seam itself. In a Linux
-or WSL terminal on Ubuntu 24.04:
+### VS Code
+
+On Ubuntu 24.04, run these commands in your Linux or WSL terminal:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y lldb-19
 ```
 
-Install [Seam from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger)
-in a Linux or WSL VS Code window. Alternatively, download
-`seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix` from the
-[0.1.0 release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
-In VS Code, run **Extensions: Install from VSIX…** and select that file. On Windows,
-first open your project in a WSL window and install the extension into WSL.
-Then follow [Quick start](#quick-start).
+1. Open your project in a Linux VS Code window. On Windows, open it in WSL.
+2. Install [Seam from the Marketplace](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger).
+   In WSL, install the extension on the WSL side.
+3. Open the Command Palette and run **Seam: Check This Machine**.
+   Fix any problems it reports before starting a session.
 
-**For Neovim, other DAP clients and the command line**, on Ubuntu 24.04:
+The extension includes the debugger. A separate pip installation is not needed.
+You can also install a Linux x64 VSIX from
+[GitHub Releases](https://github.com/ChirayuAgg0706/Seam/releases) with
+**Extensions: Install from VSIX...**. Then follow [Quick start](#quick-start).
+
+### Neovim and other DAP clients
+
+On Ubuntu 24.04:
 
 ```bash
 sudo apt-get update
@@ -63,15 +69,14 @@ python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/seam --version
 ```
 
-This command uses [PyPI](https://pypi.org/project/seam-debugger/0.1.0/). Alternatively,
-download the `.whl` from the
+The package comes from [PyPI](https://pypi.org/project/seam-debugger/0.1.0/).
+You can also download the wheel from the
 [GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) and install
 that file with `~/.venvs/seam/bin/pip install /path/to/downloaded.whl`.
 LLDB is a separate system dependency; pip does not install it.
 
-Seam itself can live in any Python 3.12+ environment; it does not have to be the
-environment of the program you debug. Put `~/.venvs/seam/bin` on `PATH`, or use the full
-path to `seam` in the editor configuration below.
+Seam can live in a different Python 3.12+ environment from the program you debug.
+Put `~/.venvs/seam/bin` on `PATH`, or use the full path to `seam` in your editor.
 
 Check the installation, naming the interpreter you will debug with:
 
@@ -79,9 +84,8 @@ Check the installation, naming the interpreter you will debug with:
 ~/.venvs/seam/bin/seam doctor --python python3
 ```
 
-It checks LLDB and its Python support, the helper, the ptrace setting and the interpreter,
-says how to fix anything that is wrong, and ends by running a short debug session for
-real. If something does not work later, its output is the first thing to look at.
+The check reports dependency and permission problems, then runs a short debug
+session. Include its output when reporting a problem.
 
 ## Quick start
 
@@ -100,11 +104,9 @@ main()
 Build the extension with debug info (`-g`; for Rust, a debug build or
 `[profile.release] debug = true`).
 
-**VS Code.** The extension contains Seam itself; nothing else has to be installed except
-LLDB (`sudo apt-get install -y lldb-19`). After [installing the extension](#install),
-run **Seam: Check This Machine** from the Command Palette. Open your project and a
-Python file, set a breakpoint on a native call and press F5. Step Into enters the
-native function; Step Out returns to Python. No `launch.json` is required.
+In VS Code, open your project and a Python file. Set a breakpoint on the native call
+and press F5. If VS Code asks, choose **Seam: Python + native**. Step Into enters
+the native function. Step Out returns to Python. No `launch.json` is required.
 
 Seam debugs with the project's interpreter: the one selected in the Python extension if
 that is installed, else the `python.defaultInterpreterPath` setting, else `.venv` or
@@ -119,16 +121,13 @@ that is installed, else the `python.defaultInterpreterPath` setting, else `.venv
 }
 ```
 
-The command **Seam: Check This Machine** (Command Palette) runs `seam doctor` for the
-project's interpreter, if the first session does not start.
+In this example, Step Into on `total = ...` stops inside the native `add` function,
+with `main` and `<module>` below it in Call Stack. To try a runnable project, follow
+the [PyO3 demo](https://github.com/ChirayuAgg0706/Seam/blob/main/examples/pyo3-demo/README.md).
 
-Set a breakpoint on the `total = ...` line, start the session, and use **Step Into**: the
-debugger stops inside your native `add`, with `main` and `<module>` below it in the same
-call stack. **Step Out** returns to the Python line.
-
-**Neovim.** See the [nvim-dap configuration](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/neovim.md).
-
-**Any DAP client.** The adapter is `seam dap`, speaking DAP on stdin/stdout.
+For Neovim, follow the [nvim-dap guide](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/neovim.md).
+Other DAP clients can start `seam dap`, which reads and writes the protocol on
+standard input and output.
 
 ### Launch options
 
@@ -142,10 +141,10 @@ call stack. **Step Out** returns to the Python line.
 | `console` | `integratedTerminal` or `externalTerminal`: run the program in the editor's terminal, where it can read input. `internalConsole`: show its output in the debug console; its input is empty. The VS Code extension defaults to `integratedTerminal`; the adapter itself, for other clients, to `internalConsole`. |
 | `stopOnEntry` | Stop on the first line of Python. |
 | `stopOnSignals` | Signals that stop the debugger (default `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`, `SIGABRT`). Every other signal goes straight to the program. Also valid for attach. |
-| `justMyCode` | Steps and the "Raised Python exceptions" breakpoint keep to your own code: Python files of the standard library and of installed packages are not stepped into (default true). |
+| `justMyCode` | Keep steps and raised-exception stops in your Python code. Skip standard-library and installed-package files while still entering your callbacks. Default `true`. |
 | `sourceMap` | Where the sources of native code are on this machine, when the debug info names another place (built in a container, in CI, in another directory, or with `-fdebug-prefix-map` / `--remap-path-prefix`). Pairs of path prefixes, debug info first: `{"/io": "${workspaceFolder}"}`, or lldb-dap's form `[["/io", "${workspaceFolder}"]]`. Use `"."` for relative paths in the debug info. Also valid for attach. |
 | `debugInfoLookup` | Let LLDB find locally installed separate debug-info files (default true). Seam disables automatic network symbol downloads, so startup does not wait for a symbol server. Set false to skip local separate files too; embedded native debug information still works. |
-| `frameworkPaths` | Extra path fragments marking native source as glue to step through. |
+| `frameworkPaths` | Native source-path fragments to treat as binding glue when stepping. |
 | `showGlueFrames` | Show binding-layer trampoline frames in the call stack (default false). |
 
 To debug a test run, launch pytest as a module:
@@ -178,19 +177,19 @@ Attaching needs ptrace permission for a non-child process
 
 Conditions, hit counts and log messages work on both sides of the boundary.
 
-- **Condition:** a Python expression on a Python line; a C, C++ or Rust expression
-  (evaluated by LLDB) on a native line.
-- **Hit count:** `5` or `==5` stops on the fifth hit only; `>=5`, `>5`, `<5` and `<=5` mean
-  what they say; `%5` stops on every fifth hit. With a condition as well, only hits where
-  the condition holds are counted.
-- **Log message:** the breakpoint prints the message to the debug console instead of
-  stopping. Text in braces is evaluated: `total is {total}`.
+- A condition is a Python expression on a Python line, or an expression evaluated
+  by LLDB on a native line.
+- A hit count of `5` or `==5` stops only on hit five. `>=5`, `>5`, `<5` and `<=5`
+  compare the hit count. `%5` stops on every fifth hit. With a condition, Seam counts
+  only hits where that condition is true.
+- A logpoint prints instead of stopping. Braces evaluate an expression, as in
+  `total is {total}`.
 
-- **Function breakpoint:** a function name, Python or native. For Python the bare name
-  (`compute`), the qualified name (`Point.__init__`) or the module-qualified one
-  (`mypackage.geometry.Point.__init__`) all work.
-- **Data breakpoint:** stop when a native variable changes ("Break on Value Change" in
-  the Variables view). Works for variables of 1, 2, 4 or 8 bytes that live in memory;
+- Function breakpoints accept Python or native names. Python names can be bare,
+  qualified or module-qualified, such as `compute`, `Point.__init__` or
+  `mypackage.geometry.Point.__init__`.
+- Native data breakpoints stop when a variable changes. Use **Break on Value Change**
+  in the Variables view. The variable must occupy 1, 2, 4 or 8 bytes in memory;
   a native frame's Globals scope lists the statics of its file. Not available for Python
   variables. A watch on a local variable is removed when a later access finds that its
   function has returned, so reusing its stack slot does not stop the program.
@@ -211,7 +210,13 @@ names source files that are not on your disk: breakpoints you set in your copy s
 and stops in that code have no source. Tell Seam where the files are:
 
 ```json
-"sourceMap": { "/io": "${workspaceFolder}" }
+{
+  "type": "seam",
+  "request": "launch",
+  "name": "Seam: mapped source",
+  "program": "${workspaceFolder}/demo.py",
+  "sourceMap": { "/io": "${workspaceFolder}" }
+}
 ```
 
 Each entry maps a path prefix in the debug info to a directory on this machine. Several
@@ -309,56 +314,52 @@ running. If the program ends by itself, its children are left alone; with
 
 | What you see | What to do |
 |---|---|
-| The session does not start | Run `seam doctor --python <your interpreter>` (in VS Code: **Seam: Check This Machine**). It checks LLDB, its Python support, the helper, ptrace permission and the interpreter, and runs one real session. |
+| The session does not start | Run **Seam: Check This Machine** in VS Code, or `seam doctor --python /path/to/python`. The check reports dependency and permission problems and runs a debug session. |
 | A native breakpoint stays grey | The extension was built without debug info (`-g`; for Rust `debug = true`), the line has no code of its own in an optimised build, or the library was built from another path: the debug console then names the path and the `sourceMap` entry to add. |
 | Step Into goes over a native call | The function has no debug info, or the optimiser removed it. A breakpoint by function name still works if the symbol exists. |
 | Step Into does not enter a library's Python code | That is `justMyCode`; set it to `false`. |
 | A breakpoint in a worker process never stops | Child processes are not debugged; the debug console says so the first time one starts. |
-| Attach is refused after a wait | The program's main thread is blocked (in a system call or a long native call) and cannot load Seam's helper. Attach while it is doing something, or make it do something. |
+| Attach times out | The main thread may be blocked in a system call or long native call. Attach while it is running Python and can load the helper. |
 | Python expressions are refused | The program is stopped in native code. Step or continue to a Python line; Python variables are still shown, read from memory. |
-| Anything else | Set `SEAM_LOG=/some/file` in the environment of `seam dap` (in VS Code: the `seam.logFile` setting), reproduce it, and keep that file and the one next to it ending in `.lldb`. |
+| Another problem | Set `seam.logFile` in VS Code, or `SEAM_LOG` in the adapter's environment. Reproduce the problem and keep the log and its `.lldb` companion. |
+
+Include the machine-check output and reproduction steps in a
+[bug report](https://github.com/ChirayuAgg0706/Seam/issues).
+Logs can include private paths and values. Check them before sharing.
 
 ## How it works
 
-The usual workaround for mixed debugging attaches two debuggers that each believe they
-control the process. Seam has a single controller.
+LLDB controls the process and handles native breakpoints, stepping and memory reads.
+A helper inside the program uses CPython's `sys.monitoring` for Python breakpoints
+and steps. At a Python stop, it calls `seam_trap()`, a C function on which LLDB has
+a breakpoint. The interpreter holds the GIL at that safe point, so Seam can
+evaluate Python expressions there.
 
-1. **LLDB owns the process.** It launches it, sets native breakpoints, steps native code
-   and reads memory. Seam's adapter is a script running inside LLDB.
-2. **A small helper runs inside the Python process.** It uses `sys.monitoring` (PEP 669)
-   to watch Python-level events. When a Python breakpoint or step fires, it calls an empty
-   C function, `seam_trap()`, on which LLDB keeps a breakpoint. Every Python stop is
-   therefore a native stop at a known safe point: the GIL is held and the interpreter is
-   consistent.
-3. **Python is only executed in the target at safe points.** Evaluating expressions and
-   reading variables with `repr()` happens at Python stops. At a native stop Seam reads
-   memory and nothing else, with two narrow exceptions for its own bookkeeping, described
-   in [docs/decisions.md](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md).
-4. **The merged stack is built from raw memory**, without Python's debug info. Seam walks
-   `_PyRuntime` → interpreter → thread state → frames, decodes code objects and line
-   tables, and splices each run of Python frames into the native stack at the C frame
-   whose stack area contains that run's entry frame.
-5. **Stepping across the boundary** combines both sides. Stepping in from Python arms a
-   Python step *and* a one-shot breakpoint on every user function of the extension
-   modules, so the step lands in the first user code entered, Python or native, whatever
-   binding layer sits in between. A native step that returns into the interpreter is
-   handed to the helper, which stops on the calling Python line.
+At native stops, Seam reads CPython's frames from memory and merges them with the
+native stack. It does not evaluate user Python expressions there. The
+[design notes](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md)
+explain memory decoding and the limited bookkeeping calls at native stops.
 
-With no breakpoints set and no step in progress, the helper has no monitoring events
-enabled, so the program runs at full speed. Stopping on uncaught exceptions costs nothing
-either: it hangs off the hook the interpreter calls when it reports one.
+To step across a native call, Seam arms a Python step and entry breakpoints in
+the extension's user functions. Returning from native code hands control back
+to the Python helper, which stops on the caller's line.
+
+When no breakpoint or step needs Python monitoring, the helper disables those
+events. Measured overhead still depends on the workload, thread activity and
+library loading. See [limitations](#limitations).
 
 ## Limitations
 
-Out of scope for this version: macOS, native Windows, architectures other than x86-64,
-free-threaded (no-GIL) builds, the experimental JIT, PyPy, sub-interpreters, and remote or
-container debugging (Seam must run on the same machine and in the same container as the
-program).
+Seam supports Linux x86-64 with glibc, including WSL. Native Windows, macOS, ARM,
+free-threaded Python, experimental JIT builds, PyPy and sub-interpreters are outside
+this release\'s validated scope. Remote debugging and managing container connections
+are unsupported. The adapter and program must run on the same machine and in the
+same container.
 
 Windows through WSL is supported because the adapter and program both run on Linux.
 The release wheel targets glibc Linux; Alpine/musl is not part of the validated scope.
 
-Known limits of what is in scope:
+The supported workflows have these limits:
 
 - **Python expressions cannot be evaluated at native stops.** If the program is stopped
   in C, C++ or Rust code, Seam refuses to run Python and says so. Python locals and globals
@@ -456,13 +457,13 @@ Known limits of what is in scope:
   helper at `Py_RunMain`). Programs that embed Python are not supported.
 - **LLDB quirks.** Seam works around LLDB showing stale or cut-short frame lists (see
   [docs/decisions.md](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md) §4d and §12); the workaround calls `getpid()` in
-  the target. Where LLDB genuinely cannot unwind a function (LLDB 20 through nanobind's
+  the target. Where LLDB cannot unwind a function (LLDB 20 through nanobind's
   optimised library code), native frames below it are missing; Seam says so in the debug
   console and still shows every Python frame.
 
 ## Building from source
 
-For contributors or machines building the helper locally (Ubuntu 24.04):
+To build Seam locally on Ubuntu 24.04:
 
 ```bash
 sudo apt-get install -y lldb-19 gcc python3-dev python3-venv git
@@ -481,7 +482,7 @@ for the development toolchain.
 scripts/test.sh -q              # full suite against /usr/bin/python3.12
 SEAM_TEST_PYTHON=/path/to/python3.14 scripts/test.sh -q
 SEAM_TEST_OPT=O2 scripts/test.sh -q
-SEAM_TEST_REPEAT=20 scripts/test.sh -q -k stepping   # hunt for flakiness
+SEAM_TEST_REPEAT=20 scripts/test.sh -q -k stepping   # repeat stepping scenarios
 ```
 
 The suite launches real programs under Seam through a scripted DAP client and needs LLDB,
