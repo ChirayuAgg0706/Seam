@@ -337,10 +337,11 @@ program).
 Known limits of what is in scope:
 
 - **Python expressions cannot be evaluated at native stops.** If the program is stopped
-  in C, C++ or Rust code, Seam refuses to run Python and says so. Python locals of the
-  frames below are still shown, decoded from memory: `int`, `float`, `str`, `bytes`,
+  in C, C++ or Rust code, Seam refuses to run Python and says so. Python locals and globals
+  of the frames below are still shown, decoded from memory: `int`, `float`, `str`, `bytes`,
   `bool`, `None` and shallow `list`/`tuple` show their values; other objects show their
-  type and address. Step or continue to a Python line for full inspection.
+  type and address. Namespace views show up to 500 bindings from the first 4,096
+  dictionary entries. Step or continue to a Python line for full inspection.
 - **Expressions that crash or time out.** Code evaluated by the debugger runs inside
   the program. A native crash or an interrupted evaluation can leave the interpreter
   damaged even after LLDB unwinds the call; restart the debug session before evaluating

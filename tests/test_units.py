@@ -31,6 +31,43 @@ def all_code_objects(limit=4000):
     return seen
 
 
+@pytest.mark.smoke
+def test_namespace_memory_reader_matches_real_dictionaries(python):
+    # Use the target interpreter, including stripped 3.13+ builds in the matrix.
+    # Its real dicts cover Unicode/general/split entries without executing repr.
+    probe = r'''
+import ctypes
+import sys
+from seam.adapter.pyread import PyReader
+runtime = ctypes.addressof(ctypes.c_char.in_dll(ctypes.pythonapi, "_PyRuntime"))
+reader = PyReader(ctypes.string_at, runtime, sys.version_info[:2])
+class Guard:
+    def __repr__(self):
+        raise AssertionError("repr must not run")
+guard = Guard()
+class Namespace:
+    pass
+instance = Namespace()
+instance.answer = 42
+instance.other = "split"
+for mapping in [{}, {"answer": 42, "café": "unicode", "guard": guard},
+                {1: "not a binding", "answer": 42}, vars(instance)]:
+    mapping["deleted"] = 1
+    del mapping["deleted"]
+    got = {name: (text, kind) for name, text, kind in reader._dict_bindings(id(mapping))}
+    assert set(got) == {key for key in mapping if isinstance(key, str)}, got
+    for name, value in mapping.items():
+        if not isinstance(name, str):
+            continue
+        if value is guard:
+            assert got[name][0].startswith("<Guard object at "), got
+        else:
+            assert got[name] == (repr(value), type(value).__name__), got
+'''
+    subprocess.run([python, "-c", probe], check=True,
+                   env=dict(os.environ, PYTHONPATH=os.path.join(ROOT, "src")))
+
+
 def test_linetable_decoder_matches_co_lines():
     codes = all_code_objects()
     assert len(codes) > 500

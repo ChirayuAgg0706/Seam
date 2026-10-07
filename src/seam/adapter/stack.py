@@ -278,9 +278,8 @@ class StackMixin:
         if record["kind"] == "py":
             scopes = [{"name": "Locals", "presentationHint": "locals", "expensive": False,
                        "variablesReference": self._new_ref(("py", "locals", record))}]
-            if self.safe_tid is not None:
-                scopes.append({"name": "Globals", "expensive": True,
-                               "variablesReference": self._new_ref(("py", "globals", record))})
+            scopes.append({"name": "Globals", "expensive": True,
+                           "variablesReference": self._new_ref(("py", "globals", record))})
             return {"scopes": scopes}
         return {"scopes": [
             {"name": "Locals", "presentationHint": "locals", "expensive": False,
@@ -331,14 +330,13 @@ class StackMixin:
                                        index=frame["index"], pm=frame.get("pm"))
                     return {"variables": [self._py_var(i, frame) for i in items]}
                 except DapError:
-                    if scope != "locals" or frame["pf"] is None:
+                    if frame["pf"] is None:
                         raise
-            elif scope != "locals":
-                raise DapError(UNSAFE_MESSAGE)
             # Native stop (or a thread the agent cannot see): decode from memory only.
+            read_scope = self.py.frame_locals if scope == "locals" else self.py.frame_globals
             return {"variables": [
                 {"name": name, "value": text, "type": tname, "variablesReference": 0}
-                for name, text, tname in self.py.frame_locals(frame["pf"])]}
+                for name, text, tname in read_scope(frame["pf"])]}
         if kind == "pyref":
             # Long sequences are fetched in the pages the client asks for.
             items = self.agent("variables", kind="ref", ref=record[1],

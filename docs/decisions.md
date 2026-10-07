@@ -1141,6 +1141,33 @@ continues to report the resolved path and actual version, and warns on 18. The R
 and its clean-machine installation script now recommend 19. This avoids the known bug
 when a suitable LLDB is installed; it does not fix LLDB 18 or install dependencies.
 
+### 36. Packaged-user audit: return monitoring and native Python namespaces (2026-10-07)
+
+Two independent black-box audits of the final wheel and VSIX found failures outside
+the documented limitations. Both were repeated twice by their finder and independently
+reproduced by the parent audit: Step Into a coroutine, Next across a suspended await,
+then Step Out at its constant return let the program exit; a Python caller's Globals
+and a module frame's Locals disappeared at a native breakpoint. Baseline traces and
+reports are retained under `build/adversarial-python/` and `build/adversarial-native/`.
+
+A standalone `sys.monitoring` probe reproduced the stepping cause without Seam:
+disabling PY_RETURN and enabling it again inside the LINE callback at RETURN_CONST
+loses that return event. Finishing the previous step had disabled monitoring before
+the next step rearmed it. When the paused instruction itself is RETURN_CONST or
+RETURN_VALUE, no user code remains in the frame; the next step now watches its caller
+resume directly. Native-return handling stays unchanged. The scenario covers Step
+Out, Next and Step Into, including the caller's result and clean exit.
+
+Globals were only offered when the agent could run safely; the native-stop memory
+reader only knew fast-local slots, which module frames do not use. Namespace bindings
+now come from the frame's globals/locals dictionary pointers. The decoder handles
+combined Unicode, general-key and split dictionaries using the supported CPython
+layouts, skips deleted entries, scans at most 4,096 entries and displays at most 500
+bindings. It uses the existing memory-only value formatter: no Python calls, mapping
+methods or repr execution, and no new permission to evaluate or mutate at native stops.
+Tests use real dictionaries and real native stops, including Unicode names, non-string
+keys, deleted entries and a repr that raises if executed, across Python 3.12–3.15.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

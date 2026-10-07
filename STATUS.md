@@ -8,7 +8,7 @@ scripted DAP client (`tests/`), or through a real editor where it says so. Nothi
 marked done on the strength of reading code. The first-release sign-off is in
 [docs/v1-readiness.md](docs/v1-readiness.md); the longer backlog is in [ROADMAP.md](ROADMAP.md).
 
-The suite has 306 scenarios; 13 are opt-in (timings with a 15,000-function module,
+The suite has 312 scenarios; 13 are opt-in (timings with a 15,000-function module,
 and sessions against four real projects built from source), and one specifically tests
 optimised-away locals at -O2. The CI section records validation under each LLDB version.
 
@@ -52,6 +52,12 @@ VSIX files. The historical pre-fix timeout's exact cause remains unproven; it di
 recur in either installed package. This closes the installed-package evidence gap,
 not a retrospective claim to have diagnosed that individual failure. See the detailed
 run links and evidence in `docs/v1-readiness.md`. Shipping work can proceed.
+
+The packaged-user audit found two additional v1 blockers: stepping out after a
+suspended await skipped the caller, and Python globals/module locals were missing
+at native stops. Both have regression tests and fixes; the six new checks pass locally
+on Python 3.12, 3.13, 3.14 and 3.15. Final CI and release-package verification are pending.
+The earlier shipping verdict is superseded until these checks complete.
 
 ## The v1 checklist
 

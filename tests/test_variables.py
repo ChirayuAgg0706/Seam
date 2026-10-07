@@ -18,6 +18,48 @@ def scope_reference(dap, frame_id, name="Locals"):
             if s["name"] == name][0]["variablesReference"]
 
 
+@pytest.mark.parametrize("general_keys", [False, True])
+def test_python_globals_and_module_locals_at_native_stops(dap, capi, tmp_path, general_keys):
+    program = str(tmp_path / "native_globals.py")
+    (tmp_path / "native_globals.py").write_text(
+        "import seamtest\n"
+        "GLOBAL_SENTINEL = 137\n"
+        "café = 'visible'\n"
+        "class Guard:\n"
+        "    def __repr__(self):\n"
+        "        raise AssertionError('native inspection executed Python')\n"
+        "guard = Guard()\n"
+        "deleted = 1\n"
+        "del deleted\n"
+        + ("globals()[42] = 'not a binding'\n" if general_keys else "") +
+        "def caller():\n"
+        "    local_sentinel = 19\n"
+        "    return seamtest.add(local_sentinel, 2)\n"
+        "print(caller())\n", encoding="utf-8")
+    dap.launch(program, dap.python, env=capi.env,
+               breakpoints={CAPI_SRC: [marker_line(CAPI_SRC, "add-impl-return")]})
+    tid = dap.wait_stopped()["threadId"]
+    frames = dap.stack(tid)
+    for name in ("caller", "<module>"):
+        frame = next(f for f in frames if f["name"] == name)
+        values = dap.scope(frame["id"], "Globals")
+        assert values["GLOBAL_SENTINEL"]["value"] == "137"
+        assert values["café"]["value"] == "'visible'"
+        assert values["guard"]["value"].startswith("<Guard object at ")
+        assert values["guard"]["variablesReference"] == 0
+        assert "deleted" not in values
+        local = dap.scope(frame["id"])
+        if name == "caller":
+            assert local["local_sentinel"]["value"] == "19"
+        else:
+            assert local["GLOBAL_SENTINEL"]["value"] == "137"
+        denied = set_variable(dap, scope_reference(dap, frame["id"], "Globals"),
+                              "GLOBAL_SENTINEL", "0", check=False)
+        assert not denied["success"] and "native code" in denied["message"]
+    dap.cont()
+    assert dap.wait_exit() == 0
+
+
 def test_python_variables_can_be_inspected_and_changed(dap, capi):
     line = marker_line(VARS, "before-call")
     dap.launch(VARS, dap.python, env=capi.env, breakpoints={VARS: [line]})

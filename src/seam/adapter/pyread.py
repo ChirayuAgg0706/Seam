@@ -146,6 +146,45 @@ class PyReader:
         except (ValueError, struct.error, UnicodeError):
             return "<unreadable object at %#x>" % obj, "?"
 
+    def _dict_bindings(self, obj):
+        """String-key namespace bindings, without calling mapping or repr methods.
+
+        CPython 3.12-3.15 use the same keys header: index-byte exponent at 9,
+        key kind at 10, entry count at 24, indices at 32. Namespace dicts normally
+        have combined Unicode entries; exec can supply general or split dicts too.
+        Bound both the memory read and the displayed results at a damaged stop.
+        """
+        if not obj:
+            return []
+        L = self.L
+        keys = self.u64(obj + L.dict_keys)
+        values = self.u64(obj + L.dict_values)
+        header = self.read(keys, 32)
+        index_bits, kind = header[9], header[10]
+        count = struct.unpack_from("<q", header, 24)[0]
+        if index_bits > 30 or kind not in (0, 1, 2) or not 0 <= count <= 1 << 24:
+            raise ValueError("invalid namespace dictionary at %#x" % obj)
+        count = min(count, 4096)
+        stride = 24 if kind == 0 else 16
+        entries = self.read(keys + 32 + (1 << index_bits), count * stride)
+        separate = (self.read(values + L.dict_values_items, count * 8) if values else None)
+        out = []
+        for i in range(count):
+            key, value = struct.unpack_from("<QQ", entries, i * stride + (8 if kind == 0 else 0))
+            if separate is not None:
+                value = struct.unpack_from("<Q", separate, i * 8)[0]
+            if not key or not value:
+                continue  # a deleted entry or an unset split-dict value
+            if kind == 0 and self.type_name(key) != "str":
+                continue  # not a Python binding; never run arbitrary key conversion
+            out.append((self.read_str(key), *self.describe(value)))
+            if len(out) == 500:
+                break
+        return out
+
+    def frame_globals(self, frame):
+        return self._dict_bindings(self.u64(frame.addr + self.L.frame_globals))
+
     def frame_locals(self, frame):
         """[(name, text, type)] for a PyFrame, decoded from memory only."""
         L = self.L
@@ -153,7 +192,10 @@ class PyReader:
         names_obj = struct.unpack_from("<Q", hdr, L.code_localsplusnames)[0]
         kinds = self.read_bytes(struct.unpack_from("<Q", hdr, L.code_localspluskinds)[0])
         count = struct.unpack("<q", self.read(names_obj + L.var_size, 8))[0]
-        if count <= 0 or count > 4096:
+        if count == 0:
+            # Module/class bodies use a namespace dictionary, not fast-local slots.
+            return self._dict_bindings(self.u64(frame.addr + L.frame_locals))
+        if count < 0 or count > 4096:
             return []
         names = struct.unpack("<%dQ" % count, self.read(names_obj + L.tuple_item, 8 * count))
         slots = struct.unpack("<%dQ" % count,

@@ -471,6 +471,7 @@ _CLEANUP_THROW = opmap.get("CLEANUP_THROW")
 _CO_GENERATOR = 0x20
 _CO_ITERABLE_COROUTINE = 0x100  # a generator used as a coroutine (types.coroutine)
 _CO_SUSPENDS = 0x3A0  # generator, coroutine, iterable coroutine or async generator
+_RETURN_OPS = {opmap[name] for name in ("RETURN_VALUE", "RETURN_CONST") if name in opmap}
 
 
 def _finish_step():
@@ -915,7 +916,20 @@ def _cmd_step(req):
         # "caller": native code has just returned into the interpreter: stop as soon as
         # the calling Python frame resumes (or, if the call raised, where it is handled).
         _step = st = _Step(mode, ident, None, bool(req.get("native_return")))
-        _aim(st, mode, frames[req.get("index", 0)])
+        frame = frames[req.get("index", 0)]
+        back = frame.f_back
+        while back is not None and _internal(back.f_code):
+            back = back.f_back
+        if (mode != "caller" and not st.native_return and back is not None
+                and frame.f_lasti >= 0 and frame.f_code.co_code[frame.f_lasti] in _RETURN_OPS):
+            # A LINE stop can be on the return instruction itself (notably 3.12's
+            # RETURN_CONST). Disabling PY_RETURN when the previous step finishes,
+            # then re-enabling it inside that LINE callback, can lose this return:
+            # CPython has already selected its non-instrumented opcode. There is
+            # no user code left in this frame; watch the caller resume directly.
+            _aim(st, "caller", back)
+        else:
+            _aim(st, mode, frame)
     _update_slow()
     _update_global()
     mon.restart_events()

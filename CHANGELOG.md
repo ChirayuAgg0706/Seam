@@ -84,6 +84,12 @@ Work towards a tool people can rely on; see [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Stepping out after stepping over a suspended `await` now stops in the awaiting
+  caller instead of letting the program exit. Step Over and Step Into at the same
+  return instruction also follow the caller.
+- Python Globals and module-level Locals remain visible at native stops, decoded
+  from memory without running Python or calling object representations.
+
 - Native stops without source remain the selected stack frame in VS Code, making
   disassembly available without manually selecting a dimmed frame above the Python caller.
 - Inherited debuginfod servers no longer stall launch/attach or interrupt helper

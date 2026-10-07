@@ -2,8 +2,11 @@
 
 Reviewed 2026-10-05–07, starting at `24d5b78`, with the local fixes below.
 
-**Verdict: v1 development and acceptance complete for the documented Linux x86-64
-scope; the 2026-10-07 release follow-up passed and shipping can proceed.** No additional features are required for v1. The old
+**Verdict: final validation pending for two fixes from the packaged-user audit:**
+async stepping past the awaiting caller, and missing Python globals/module locals
+at native stops. Both fixes pass their new local checks on Python 3.12–3.15;
+the earlier release sign-off is superseded until final CI and package checks pass.
+No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
 The package version is still `0.1.0`; choosing the first public version belongs to shipping.
 
@@ -17,7 +20,8 @@ The package version is still `0.1.0`; choosing the first public version belongs 
 | Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest passed on 2026-10-06. |
 | Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `001b8d6`; wheel, sdist and `.vsix` built and checked. The installed VSIX passed 50 consecutive launch/disassembly sessions and the HTTP regression. No release was published. Version/tag selection remains shipping work. |
 
-These development gates are complete. The remaining work is version selection,
+These earlier development gates passed on the commits named above. The two audit
+fixes must pass the final validation and artifact gates again. Shipping work is version selection,
 release preparation and publishing, listed below. Existing documented limitations
 remain part of the v1 scope.
 

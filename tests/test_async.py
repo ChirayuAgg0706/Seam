@@ -77,6 +77,30 @@ def launch(dap, scenario, *markers, **extra):
 
 # ------------------------------------------------------------------ coroutines
 
+@pytest.mark.parametrize("last_step", ["stepOut", "next", "stepIn"])
+def test_step_after_stepping_over_a_suspended_await(dap, tmp_path, iteration, last_step):
+    program = str(tmp_path / "suspended.py")
+    (tmp_path / "suspended.py").write_text(
+        "import asyncio\n"
+        "async def child():\n"
+        "    await asyncio.sleep(0)\n"
+        "    return 3\n"
+        "async def main():\n"
+        "    result = await child()\n"
+        "    print(result)\n"
+        "asyncio.run(main())\n")
+    dap.launch(program, dap.python, breakpoints={program: [6]})
+    tid = dap.wait_stopped()["threadId"]
+    assert step(dap, tid, "stepIn") == ("child", 3)
+    assert step(dap, tid) == ("child", 4)
+    assert step(dap, tid, last_step) == ("main", 6)
+    assert step(dap, tid) == ("main", 7)
+    assert dap.scope(dap.stack(tid)[0]["id"])["result"]["value"] == "3"
+    dap.set_breakpoints(program, [])
+    dap.cont()
+    assert dap.wait_exit() == 0
+
+
 def test_step_over_an_await_stays_in_the_coroutine(dap, iteration):
     tid = launch(dap, "waits", "waits-sleep")
     assert top(dap, tid) == ("waits", at("waits-sleep"))

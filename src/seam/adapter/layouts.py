@@ -22,6 +22,10 @@ class Layout:
     # _PyInterpreterFrame
     frame_code = 0
     frame_previous = 8
+    # Borrowed namespace pointers; unchanged in the supported non-free-threaded
+    # 3.12-3.15 frame headers (not published by _Py_DebugOffsets).
+    frame_globals = 24
+    frame_locals = 40
     frame_instr = 0
     frame_owner = 0
     frame_localsplus = 0
@@ -54,6 +58,9 @@ class Layout:
     float_value = 16
     cell_ref = 16
     dict_used = 16
+    dict_keys = 32
+    dict_values = 40
+    dict_values_items = 0  # 3.13+ adds an 8-byte header before split values
     # GIL: 3.12 reaches it through interp->ceval.gil; 3.13+ publish offsets within interp
     gil_ptr = None
     gil_holder = 8
@@ -246,6 +253,9 @@ def _layout_from_debug_offsets(read, runtime_addr, version):
     L.bytes_data = t["bytes_object.ob_sval"]
     L.tuple_item = t["tuple_object.ob_item"]
     L.list_item = t["list_object.ob_item"]
+    L.dict_keys = t["dict_object.ma_keys"]
+    L.dict_values = t["dict_object.ma_values"]
+    L.dict_values_items = 8
     L.long_tag = t["long_object.lv_tag"]
     L.long_digit = t["long_object.ob_digit"]
     L.float_value = t["float_object.ob_fval"]
