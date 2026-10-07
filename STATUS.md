@@ -40,11 +40,18 @@ doctor passes. On 2026-10-06 the owner confirmed the startup/disassembly retest 
 with disassembly open in the supplied screenshot. V1 development and acceptance are
 complete for the documented Linux x86-64 scope; shipping work remains.
 
-On 2026-10-07, publishing was held for a focused release follow-up: automatic selection
-now prefers installed LLDB 20/19 over plain `lldb`, preserving explicit overrides.
-The original pre-fix timeout's exact cause remains unproven. The installed `610f460`
-extension passed 30 further terminal/disassembly launches with no timeout; validation
-of the updated package is pending in `docs/v1-readiness.md`.
+The 2026-10-07 release follow-up passed. Automatic selection now prefers installed
+LLDB 20/19 over plain `lldb`, preserving explicit overrides; new-install instructions
+recommend 19. Production changes are in `001b8d6`, unchanged in `c32487d` (which aligns
+the clean-machine install script). Full CI: **290 passed, 16 documented skips**; all
+Python/optimisation and LLDB cells, both editors, clean installation and release builds
+passed. The installed updated VSIX passed **50 consecutive** terminal/disassembly/exit
+sessions (entry 0.67–0.86 s) and the real HTTP-server regression. The already-installed
+`610f460` release had also passed 30 sessions. Both packages were verified against their
+VSIX files. The historical pre-fix timeout's exact cause remains unproven; it did not
+recur in either installed package. This closes the installed-package evidence gap,
+not a retrospective claim to have diagnosed that individual failure. See the detailed
+run links and evidence in `docs/v1-readiness.md`. Shipping work can proceed.
 
 ## The v1 checklist
 

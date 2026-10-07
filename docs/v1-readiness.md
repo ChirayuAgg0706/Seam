@@ -1,9 +1,9 @@
 # First-release readiness
 
-Reviewed 2026-10-05–06, starting at `24d5b78`, with the local fixes below.
+Reviewed 2026-10-05–07, starting at `24d5b78`, with the local fixes below.
 
-**Verdict: v1 scope and owner acceptance complete; publishing held for the 2026-10-07
-LLDB selection and installed-package startup follow-up below.** No additional features are required for v1. The old
+**Verdict: v1 development and acceptance complete for the documented Linux x86-64
+scope; the 2026-10-07 release follow-up passed and shipping can proceed.** No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
 The package version is still `0.1.0`; choosing the first public version belongs to shipping.
 
@@ -12,10 +12,10 @@ The package version is still `0.1.0`; choosing the first public version belongs 
 | Gate | Concrete completion condition | Status |
 |---|---|---|
 | Resolve the intermittent attach-exit failure | Explain and fix, or establish a reproducible test-environment cause for, the full-run timeout after continuing an attached process's uncaught exception. A passing retry alone is insufficient. | Resolved: Ubuntu's apport exception hook delayed exit; the fixture now restores CPython's hook. See evidence below. |
-| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `610f460`; all extended CI jobs succeeded, including actual native-frame focus, disassembly and instruction stepping in VS Code. |
+| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed for production code `001b8d6`, also unchanged in `c32487d`: full suite, all compatibility cells, editors, package checks and updated clean-machine install. Run links below. |
 | Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. | Passed: owner confirmed the final startup/disassembly retest on 2026-10-06 after the earlier checks through attach/detach. Screenshot shows disassembly open with an instruction marker. |
 | Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest passed on 2026-10-06. |
-| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `610f460`; wheel, sdist and `.vsix` built and checked. No release was published. Version/tag selection remains shipping work. |
+| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `001b8d6`; wheel, sdist and `.vsix` built and checked. The installed VSIX passed 50 consecutive launch/disassembly sessions and the HTTP regression. No release was published. Version/tag selection remains shipping work. |
 
 These development gates are complete. The remaining work is version selection,
 release preparation and publishing, listed below. Existing documented limitations
@@ -30,22 +30,60 @@ failure's cause. It must not be described as a failure observed in the final pac
 or as conclusively explained by the separate deleted-breakpoint reproduction.
 Probe logs are preserved locally as `build/launch-repeat-*.log` and
 `build/launch-repeat-results.txt`. The post-fix 20-run probe used the source checkout;
-the follow-up repeats the scenario against the installed, byte-verified VSIX instead.
+the follow-up below repeated the scenario against the installed, byte-verified VSIX.
 
 ### 2026-10-07 release follow-up
 
 - Prefer installed LLDB 20/19 over the unversioned executable, while retaining explicit
   `SEAM_LLDB` overrides and the LLDB 18 machine-check warning. Selection and warning
   regressions added; all 16 doctor/selection tests, lint, version checks and 17 Linux
-  extension checks pass locally. Build and CI validation pending.
+  extension checks pass locally. Production changes are in `001b8d6`; `c32487d` only
+  aligns the clean-machine script with the new README install command and records
+  the selection decision. Their shipped sources are identical.
 - The already-installed `610f460` release passed 30 consecutive sessions (entry
   0.77–1.21 seconds; full session through exit 1.00–1.76 seconds). Every shipped file
   matched `build/v1-final-release/seam-debugger-linux-x64-0.1.0.vsix`, excluding only
   VS Code's added manifest installation metadata. Results and logs are in
   `build/installed-startup-baseline-results.txt` and `build/installed-startup-baseline/`.
-- Repeat terminal launch, native function breakpoint, disassembly and clean exit against
-  the installed extension, with normal local symbol lookup and automatic LLDB selection.
-  Retain phase logs and verify installed files against the release VSIX. Results pending.
+- The updated release VSIX from `001b8d6` passed **50 consecutive installed sessions**:
+  terminal launch, entry stop, native function breakpoint, disassembly and clean exit.
+  Entry took **0.67–0.86 seconds** (median 0.74); the whole session through exit took
+  **0.90–1.42 seconds** (median 0.99). Timings exclude the editor UI. The probe ran
+  `/usr/bin/python3 -I <installed-extension>/bundled dap`, with `SEAM_LLDB` and
+  `PYTHONPATH` unset, `debugInfoLookup` left at its true default, and Ubuntu's inherited
+  `DEBUGINFOD_URLS=https://debuginfod.ubuntu.com` still present. Doctor selected LLDB
+  20.1.2 automatically and passed its real session. All 34 installed package files
+  matched the VSIX (only VS Code's added `__metadata` manifest field was excluded).
+- A separate real HTTP-server regression run through the installed adapter confirmed
+  zero symbol-server requests, successful launch/evaluation/exit, and an unchanged
+  symbol-server environment variable in the target. This verifies the network-download
+  fix is present in the shipped package; it does not establish the old timeout's cause.
+- Evidence: `build/installed_startup_repeat.py`, `build/installed-startup-final-results.txt`,
+  `build/installed-startup-final/launch-*.log[.lldb]`, `build/installed_network_check.py`,
+  and `build/installed-network-final-results.txt`. Package:
+  `build/v1-lldb-release/seam-debugger-linux-x64-0.1.0.vsix`, SHA-256
+  `0683333943715f951fdc715968381dd312b457571cdcd0bd331b886ee938cd8e`.
+- [Full CI 37559329811](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559329811)
+  passed on `001b8d6`: **290 passed, 16 documented skips**, plus lint, version and
+  extension package checks. [Editor checks 37559341942](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559341942)
+  passed on that code: packaged adapter, VS Code with/without the Python extension,
+  and Neovim. [Release 37559339215](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559339215)
+  passed on the same commit: wheel, sdist, VSIX, installed-wheel doctor and 19 bundled
+  checks. No public release was created.
+- [Clean-machine check 37559440115](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559440115)
+  passed on `c32487d`, following the updated README installation with LLDB 19.1.1
+  selected automatically; doctor and the Python/Rust demo passed.
+- [Python/optimisation matrix 37559764335](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559764335)
+  passed on `c32487d`: Python 3.12.15/3.14.8 at -O2 (232 passed, four skips each), and
+  3.13.16/3.14.8/3.15.0rc3 at -O0 (234 passed, two skips each).
+  [LLDB matrix 37559766745](https://github.com/ChirayuAgg0706/Seam/actions/runs/37559766745)
+  passed on the same code: LLDB 19 and 20 each passed 235 scenarios with one skip.
+
+The installed-package evidence gap is closed: neither the pre-existing fixed release
+nor the updated package reproduced the historical timeout. Its exact cause remains
+unproven; passing repetitions alone are not a retrospective diagnosis. Any recurrence
+is a startup bug to investigate using the phase logs, not an accepted 60-second startup
+time or a reason to ask users to disable local debug-info lookup.
 
 The attach scenario now supports `--repeat`. To investigate, run it with
 `SEAM_LLDB=lldb-20 scripts/test.sh -q tests/test_attach_features.py::test_exception_breakpoints_on_an_attached_process --repeat=20`.
