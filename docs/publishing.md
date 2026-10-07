@@ -138,8 +138,8 @@ Published SHA-256:
 
 Local verification logs are `build/public-release-verification.txt`,
 `build/pypi-release-verification.txt` and `build/public-vsix-verification.txt`.
-Marketplace and Open VSX publication remain the next release step. Neither registry
-has been published by this task.
+Marketplace was subsequently published by the owner, as recorded below. Open VSX
+publication remains the next release step.
 
 ## Extension registry preparation (2026-10-07)
 
@@ -163,5 +163,22 @@ from the manifest, fixes packaged README screenshot URLs for this repository's
 Registry VSIX SHA-256:
 `6939283aaa3acfbac92711b5eb10d58f8d059359566eb10998a3c5bd5ca25398`.
 Local verification log: `build/registry-package-verification.txt`.
-Marketplace still needs the owner's browser upload or `VSCE_PAT`; Open VSX still
-needs Eclipse/GitHub account setup, the Publisher Agreement and `OVSX_PAT`.
+The owner subsequently uploaded this package to Marketplace. Open VSX still needs
+Eclipse/GitHub account setup, the Publisher Agreement and `OVSX_PAT`.
+
+## Marketplace publication (2026-10-07)
+
+The owner uploaded the verified publisher-qualified VSIX through the Marketplace
+portal, which displayed successful validation, version 0.1.0 and Public availability.
+The [public listing](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger)
+was fetched without authentication. The VS Code CLI installed
+`chirayuagg0706.seam-debugger` 0.1.0 directly from Marketplace into an empty, isolated
+extensions directory and profile, leaving the existing laptop installation untouched.
+
+All 37 installed files matched the uploaded VSIX (with VS Code's added manifest
+`__metadata` excluded from the comparison); the registry selected target `linux-x64`.
+The installed bundle passed doctor under LLDB 20.1.2, including a real launch,
+breakpoint, expression evaluation and successful exit. Local log:
+`build/marketplace-install-verification.txt`.
+
+Marketplace publication is complete. Open VSX remains unpublished pending account setup.

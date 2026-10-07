@@ -1,8 +1,9 @@
 # Seam status
 
-**Seam 0.1.0 is publicly released on GitHub and PyPI (2026-10-07).** Public downloads,
-checksums and fresh installed-wheel debug sessions pass. The VSIX is available as a
-GitHub release asset; Marketplace and Open VSX publishing remain. See
+**Seam 0.1.0 is publicly released on GitHub, PyPI and VS Code Marketplace (2026-10-07).**
+Public downloads, checksums and fresh installed-wheel debug sessions pass. A fresh
+Marketplace installation also passed a real debug session and matched the uploaded
+VSIX's 37 files. Open VSX publishing remains. See
 [docs/publishing.md](docs/publishing.md) for the release record and installation checks.
 
 Legend: **done** = run and seen passing; **partial** = part of it runs and passes, the rest

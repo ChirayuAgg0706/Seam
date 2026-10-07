@@ -45,7 +45,9 @@ sudo apt-get update
 sudo apt-get install -y lldb-19
 ```
 
-Download `seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix` from the
+Install [Seam from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger)
+in a Linux or WSL VS Code window. Alternatively, download
+`seam-debugger-chirayuagg0706-linux-x64-0.1.0.vsix` from the
 [0.1.0 release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
 In VS Code, run **Extensions: Install from VSIX…** and select that file. On Windows,
 first open your project in a WSL window and install the extension into WSL.
