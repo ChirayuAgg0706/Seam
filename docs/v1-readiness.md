@@ -2,10 +2,9 @@
 
 Reviewed 2026-10-05–07, starting at `24d5b78`, with the local fixes below.
 
-**Verdict: final validation pending for two fixes from the packaged-user audit:**
-async stepping past the awaiting caller, and missing Python globals/module locals
-at native stops. Both fixes pass their new local checks on Python 3.12–3.15;
-the earlier release sign-off is superseded until final CI and package checks pass.
+**Verdict: v1 development and acceptance complete for the documented Linux x86-64
+scope. Both packaged-user audit findings are fixed in `c3d84d1`; final extended CI,
+release builds and original-fixture package replays pass. Shipping can proceed.**
 No additional features are required for v1. The old
 roadmap's "since v1" means the original implementation milestone, not a public release.
 The package version is still `0.1.0`; choosing the first public version belongs to shipping.
@@ -15,13 +14,13 @@ The package version is still `0.1.0`; choosing the first public version belongs 
 | Gate | Concrete completion condition | Status |
 |---|---|---|
 | Resolve the intermittent attach-exit failure | Explain and fix, or establish a reproducible test-environment cause for, the full-run timeout after continuing an attached process's uncaught exception. A passing retry alone is insufficient. | Resolved: Ubuntu's apport exception hook delayed exit; the fixture now restores CPython's hook. See evidence below. |
-| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed for production code `001b8d6`, also unchanged in `c32487d`: full suite, all compatibility cells, editors, package checks and updated clean-machine install. Run links below. |
+| Validate the final code | The final commit, including these fixes, passes the extended CI set: supported Python versions, LLDB 18/19/20, optimised builds, packaged VS Code, Neovim and clean-machine installation. Do not substitute an earlier green commit. | Passed on `c3d84d1`, including both audit fixes: full suite, all compatibility cells, editors, package checks and clean-machine install. Run 37624541647 below. |
 | Use the actual Windows + WSL editor path | Install the final Linux `.vsix` in a VS Code WSL window and complete the short acceptance session below. Record the versions and result. | Passed: owner confirmed the final startup/disassembly retest on 2026-10-06 after the earlier checks through attach/detach. Screenshot shows disassembly open with an instruction marker. |
 | Resolve the manual-session startup failure | Diagnose the failed helper injection reporting an already-deleted startup breakpoint; validate any fix against repeated launches. | Cause reproduced and corrected: synchronous network symbol requests could outlast injection's deadline. A delayed local server reproduced the exact error; disabling downloads passed the same probe, the HTTP regression, 20 repeated launches, and 17 relevant scenarios. Final extended CI and release package pass on `610f460`; owner retest passed on 2026-10-06. |
-| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `001b8d6`; wheel, sdist and `.vsix` built and checked. The installed VSIX passed 50 consecutive launch/disassembly sessions and the HTTP regression. No release was published. Version/tag selection remains shipping work. |
+| Validate the artifacts that will ship | Build wheel, sdist and `.vsix` from that same final commit; run the release workflow and its install/startup checks. After choosing a release version, the tag must pass the version check too. | Passed on `c3d84d1`: release run 37624541257, 12 original-audit fixture replays across wheel/VSIX, and byte-verified WSL installation with doctor and launch/disassembly/exit checks. No release was published. Version/tag selection remains shipping work. |
 
-These earlier development gates passed on the commits named above. The two audit
-fixes must pass the final validation and artifact gates again. Shipping work is version selection,
+These development gates are complete, including final validation of both audit
+fixes. Shipping work is version selection,
 release preparation and publishing, listed below. Existing documented limitations
 remain part of the v1 scope.
 
@@ -35,6 +34,63 @@ or as conclusively explained by the separate deleted-breakpoint reproduction.
 Probe logs are preserved locally as `build/launch-repeat-*.log` and
 `build/launch-repeat-results.txt`. The post-fix 20-run probe used the source checkout;
 the follow-up below repeated the scenario against the installed, byte-verified VSIX.
+
+### 2026-10-07 packaged-user audit fixes
+
+Two independent Sol testers used the packaged wheel and VSIX as DAP clients, without
+reading product sources, tests or Markdown. Their 12 Python/lifecycle workflows and
+11 native/mixed workflow groups found two supported workflows that failed. Each was
+repeated twice by its finder and once independently before fixing it (§36):
+
+- Step Into a coroutine, Next across a suspending await, then Step Out at its return
+  skipped the awaiting caller and let the program exit. A standalone monitoring probe
+  isolated a missed return event after toggling monitoring at the return instruction.
+  The fix watches the caller directly when the paused instruction is already a return.
+- At a native stop, Python caller Globals were absent and module Locals were empty.
+  Both namespaces now use bounded memory-only dictionary decoding, preserving the
+  refusal to evaluate or mutate Python at native stops.
+
+Production changes and six regression cases are in `c3d84d1`. The new cases passed
+locally on Python 3.12.3, 3.13.16, 3.14.8 and 3.15.0rc3. The full local suite under LLDB
+20.1.2 passed **298 tests, 14 expected skips** in 491 seconds. The skips are the 13
+opt-in scale/real-project scenarios and the optimised-only inspection scenario.
+Lint, version consistency and all 19 extension checks passed locally.
+
+[Extended CI 37624541647](https://github.com/ChirayuAgg0706/Seam/actions/runs/37624541647)
+passed all 11 applicable jobs on `c3d84d1` (the optional soak job was not requested):
+
+- Full suite on Python 3.12/LLDB 18: **296 passed, 16 documented skips**.
+- Python 3.12 and 3.14 at -O2: **238 passed, four skips** each.
+- Python 3.13, 3.14 and 3.15 at -O0: **240 passed, two skips** each.
+- LLDB 19 and 20 smoke jobs: **241 passed, one skip** each.
+- Real VS Code with/without its Python extension, Neovim, clean-machine installation,
+  lint, version consistency and VSIX package checks all passed.
+
+[Release run 37624541257](https://github.com/ChirayuAgg0706/Seam/actions/runs/37624541257)
+passed on that commit. The final wheel, sdist and VSIX are in `build/v1-audit-release/`.
+The original audit fixtures then passed **12 sessions** against those downloaded
+artifacts: each bug, three fresh runs, through both an installed wheel and the isolated
+VSIX adapter. These are protocol tests, not a new manual GUI acceptance session.
+The source files in both packages match the committed checkout.
+
+The final VSIX is installed in WSL; all 34 installed files match the artifact, excluding
+VS Code's added manifest metadata. Its doctor passes, automatically selecting LLDB
+20.1.2. A terminal/disassembly/exit smoke check passed with entry at 0.72 seconds and
+exit at 1.05 seconds, excluding the editor UI. The real VS Code/Neovim CI job also
+passed; its native-stop screenshot shows the selected Python frame with both Locals
+and Globals scopes. No public release was published and the version remains 0.1.0.
+
+Artifact SHA-256:
+
+- VSIX: `aef19b71305a74308c524c4dc6d891c5e5d2a5c18c406d8894c9c5b2663217dd`.
+- Wheel: `8e5065166dc1516b134f374ccfad8589f2a6f508005576c300e7677b1e14ac64`.
+- Sdist: `0fdeec9290beefa1d94fc7b39b1c9a764259ae2422137a5ee102a70f94509b4e`.
+
+Local evidence: `build/adversarial-fix-full-local.txt`, `build/verify_audit_packages.py`,
+`build/v1-audit-release/replay-results.txt`, `source-check.txt`,
+`installed-smoke-results.txt`, and `editor-evidence/` in that release directory.
+Original failures and final replay traces remain in `build/adversarial-python/` and
+`build/adversarial-native/`; original failure logs were not overwritten.
 
 ### 2026-10-07 release follow-up
 

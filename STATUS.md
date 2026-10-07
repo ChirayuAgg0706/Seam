@@ -53,11 +53,17 @@ recur in either installed package. This closes the installed-package evidence ga
 not a retrospective claim to have diagnosed that individual failure. See the detailed
 run links and evidence in `docs/v1-readiness.md`. Shipping work can proceed.
 
-The packaged-user audit found two additional v1 blockers: stepping out after a
-suspended await skipped the caller, and Python globals/module locals were missing
-at native stops. Both have regression tests and fixes; the six new checks pass locally
-on Python 3.12, 3.13, 3.14 and 3.15. Final CI and release-package verification are pending.
-The earlier shipping verdict is superseded until these checks complete.
+The packaged-user audit found two additional v1 blockers, now fixed in `c3d84d1`:
+stepping out after a suspended await skipped the caller, and Python globals/module
+locals were missing at native stops. Six regression cases pass on Python 3.12–3.15.
+The local full suite passed **298 tests / 14 expected skips** under LLDB 20; final
+extended CI (37624541647) passed **296 / 16 documented skips** under LLDB 18, all
+compatibility cells, both editors and clean installation. Release run 37624541257
+passed on the same commit. Both original failures now pass three times each against
+both the final installed wheel and isolated VSIX (12 sessions). The updated VSIX is
+installed and byte-verified in WSL; doctor and terminal/disassembly/exit checks pass.
+V1 development is complete for the documented scope; shipping can proceed. Full
+evidence and artifact hashes are in `docs/v1-readiness.md`.
 
 ## The v1 checklist
 
@@ -66,7 +72,7 @@ The earlier shipping verdict is superseded until these checks complete.
 | 1 | Python 3.12, 3.13, 3.14, including builds with no debug info | **done** | With debug info: Ubuntu's 3.12 and the deadsnakes 3.13/3.14 with their `-dbg` packages. Without: uv's standalone builds (symbol table, no DWARF), and system 3.12 with symbol lookup disabled. Python 3.15.0rc3 passes too (smoke cell on CI). |
 | 2 | Breakpoints in Python files (incl. modules imported later) and native files, in one session, add/remove while running | **done** | `test_python.py`, `test_mixed.py`. Conditions, hit counts and log messages: `test_breakpoints.py`. |
 | 3 | Merged call stack, Seam's frames hidden, nested Python → native → Python → native, multi-threaded | **done** | `test_mixed.py`. Python frames are compared with what Python itself reports inside the target. Also against real wheels without debug info (`test_wheels.py`: numpy, orjson). |
-| 4 | Variables: Python locals in Python frames, native locals in native frames | **done** | Same tests. At native stops Python locals are decoded from memory (simple built-in types show values, others type and address). |
+| 4 | Variables: Python locals and globals in Python frames, native locals in native frames | **done** | Same tests and `test_variables.py`. At native stops Python locals and globals are decoded from memory (simple built-in types show values, others type and address); module frames use their namespace dictionaries. |
 | 5 | Evaluate Python at Python stops; clear refusal at native stops, process stays healthy | **done** | `test_python.py`, `test_mixed.py`. |
 | 6 | Stepping: over/in/out in Python; Python → native; native → calling Python line; native → Python callback; callback → native caller | **done** | `test_python.py::test_stepping`, `test_stepping.py`. |
 | 7 | Binding layers: step in from Python lands in user code for C API, PyO3, pybind11, nanobind, Cython | **done at -O0; partial at -O2** | `test_bindings.py`. See the matrix below for the two -O2 cells. |
