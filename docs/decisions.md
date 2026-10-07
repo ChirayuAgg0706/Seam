@@ -1129,6 +1129,18 @@ Twenty consecutive terminal launch/disassembly sessions and all 17 no-source/rob
 scenarios passed locally under LLDB 20. Startup phase timings and detailed failed-call
 stop information remain in the adapter log for further diagnosis.
 
+### 35. Prefer validated LLDB versions over the distro alias (2026-10-07)
+
+Looking for plain `lldb` first meant that installing LLDB 19/20 did not avoid the
+documented LLDB 18 threaded-child-process failure if the distro alias still named 18.
+The launcher now tries `lldb-20`, `lldb-19`, then the existing fallback executables.
+`SEAM_LLDB` always wins, including when it explicitly selects 18 or a missing path;
+an invalid explicit choice must fail rather than silently debug with something else.
+This does not add a version-probing subprocess to each launch. The machine check
+continues to report the resolved path and actual version, and warns on 18. The README
+and its clean-machine installation script now recommend 19. This avoids the known bug
+when a suitable LLDB is installed; it does not fix LLDB 18 or install dependencies.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

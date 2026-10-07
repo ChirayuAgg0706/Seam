@@ -14,7 +14,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "### README: install prerequisites"
 $SUDO apt-get update
-$SUDO apt-get install -y lldb gcc python3-dev python3-venv git
+$SUDO apt-get install -y lldb-19 gcc python3-dev python3-venv git
 
 echo "### README: install Seam into its own environment"
 python3 -m venv "$HOME/.venvs/seam"
