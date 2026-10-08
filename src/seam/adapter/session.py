@@ -432,6 +432,9 @@ class SessionMixin:
 
     def _require_x86_64(self):
         triple = self.target.GetTriple() or ""
+        if sys.platform == "darwin" and not triple.startswith(("arm64", "aarch64")):
+            raise DapError("The macOS build needs an Apple Silicon ARM64 interpreter; "
+                           "Intel and Rosetta targets are unsupported: %s" % triple)
         # Stage 1 is an explicitly opted-in feasibility experiment, not released support.
         if (sys.platform == "darwin" and triple.startswith(("arm64", "aarch64"))
                 and os.environ.get("SEAM_EXPERIMENTAL_MACOS") == "1"):
