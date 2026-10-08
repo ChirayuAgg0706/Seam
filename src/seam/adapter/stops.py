@@ -6,7 +6,8 @@ import time
 import lldb
 
 from .common import (
-    DapError, FAULT_SIGNALS, FRAMEWORK_FUNCTIONS, GLUE, LOG_FLAG, R_BREAKPOINT, R_EXCEPTION, R_RETURN_NATIVE,
+    DapError, FAULT_SIGNALS, FRAMEWORK_FUNCTIONS, GLUE, LOG_FLAG, R_BREAKPOINT, R_EXCEPTION,
+    R_RETURN_NATIVE,
     R_UNCAUGHT,
 )
 
@@ -606,6 +607,7 @@ class StopsMixin:
         if self.user_bps_on:
             self.traps.arm()  # they are out at every stop; in again while the step lasts
         self._sync_fork_cleanup()
+        self.last_resume_stop_id = self.process.GetStopID()
         err = self.process.Continue()
         if not err.Success():
             self.traps.disarm()
@@ -617,6 +619,8 @@ class StopsMixin:
         # Not SBProcess.Stop(): on LLDB 18 the stop it produces leaves the thread's frame
         # list cached, so the *next* stop shows the frames of this one.
         if sys.platform == "darwin":
+            self.log("internal pause: state", self.process.GetState(), "stop-id",
+                     self.process.GetStopID(), "resumed from", self.last_resume_stop_id)
             # Older Apple LLDB can immediately resume SendAsyncInterrupt's SIGINT
             # when the program's signal policy passes SIGINT. Halt forces a stop.
             # Continue is asynchronous. A configuration request can arrive before
