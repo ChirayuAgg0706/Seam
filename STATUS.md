@@ -1,5 +1,12 @@
 # Seam status
 
+Debugger 0.1.1 and extension 0.1.3 are ready for the Apple Silicon release build.
+The existing product works on macOS 14+ with ARM64 CPython 3.12, 3.13 and 3.14.
+The final native matrix, installed wheels and packaged editor checks pass, as do
+12 real-project/scale cases and the final 300-case Linux suite. See the
+[Mac validation record](docs/macos-stage1.md) for evidence and measured limits.
+The original Linux release records follow below.
+
 Seam 0.1.0 was released on GitHub, PyPI and the VS Code Marketplace on 2026-10-07.
 Public downloads, checksums and fresh installed-wheel debug sessions pass. A fresh
 Marketplace installation also passed a real debug session and matched the uploaded
@@ -255,5 +262,5 @@ case was not re-measured.
 ## Publication
 
 The repository is public. Seam 0.1.0 is available on GitHub, PyPI and the Marketplace.
-Open VSX is deferred. The next extension package updates the presentation and copy
-while keeping debugger 0.1.0. See [the publishing record](docs/publishing.md).
+Open VSX is deferred. Debugger 0.1.1 and extension 0.1.3 add Apple Silicon support
+and keep the existing logo and demo. See [the publishing record](docs/publishing.md).

@@ -83,11 +83,12 @@ traced to Ubuntu's crash reporter and its test fixture corrected; see
 ## Release presentation
 
 The owner completed the Windows/WSL acceptance checks. The repository is public,
-and GitHub, PyPI and Marketplace installation routes are verified. The logo, demo
-GIF and revised copy are included in the next extension package. Open VSX is deferred.
+and the original GitHub, PyPI and Marketplace installation routes are verified.
+Debugger 0.1.1 and extension 0.1.3 add Apple Silicon support. The logo, demo GIF
+and revised copy are included. Open VSX is deferred.
 
 ## Not planned
 
-Native Windows, macOS, non-x86-64, free-threaded Python, PyPy, sub-interpreters,
+Native Windows, Intel Macs, Rosetta targets, Linux ARM, free-threaded Python, PyPy, sub-interpreters,
 remote debugging and child-process debugging are outside v1's scope. Windows users
 can run Seam in WSL. See the README's [limitations](README.md#limitations).

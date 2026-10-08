@@ -18,13 +18,31 @@ Separate jobs install freshly built wheels, repeat complete debug sessions, and
 run the packaged extension in real VS Code. The Python extension interpreter
 selection and Neovim's documented nvim-dap configuration are checked too.
 
-[The port validation on 7c32b9c](https://github.com/ChirayuAgg0706/Seam/actions/runs/37762461119)
-passed the full CPython 3.12 suite, the Mac 14 smoke checks, Mac 15 CPython 3.13,
-optimized regressions, installed-wheel sessions, and packaged editor checks.
-Mac 14 attach tests passed but their artifact upload failed. A Mac 15 optimized
-run stalled during a debugger-exit test; subsequent runs include Python stack
-capture and a focused repeat check. Final validation is recorded in the readiness
-and publication records.
+[The final runtime matrix](https://github.com/ChirayuAgg0706/Seam/actions/runs/37770733074)
+passed every native matrix cell, including the full Mac 15 CPython 3.12 suite with
+298 passing tests and 16 expected skips. Mac 14 passed 242 debug-build and 240
+optimized-build smoke checks. Installed wheels, architecture rejection, packaged
+VS Code, Python-extension selection, Neovim, attach updates, fork/crash cases and
+optimized regressions passed. The matrix's real-project job still used an outdated
+C++ exception-description assertion; the corrected check passed in the final run below.
+
+[The final real-project and scale run](https://github.com/ChirayuAgg0706/Seam/actions/runs/37773549934)
+passed all 12 selected cases against regex, msgpack, contourpy, pydantic-core and
+a generated 15,000-function module. The pydantic-core Python Step Into case remains
+excluded because it exceeds the documented Mac function-count limit. Source/function
+breakpoints, Python callbacks, native returns and exceptions in that library passed.
+The final no-breakpoint timing ratios were 1.011 for Python work and 1.053 for
+native work. These are measurements on a runner, not a universal overhead promise.
+
+The final Linux suite passed 300 tests with 14 expected skips under LLDB 20.
+Linux optimized smoke coverage passed 240 cases with three compiler-related skips;
+its remaining help-text assertion passed after the CLI wording update. The final
+Step Out changes also passed 39 focused Linux cases across debug and optimized builds.
+
+An earlier Mac optimized run stalled during the debugger-exit test. The harness now
+bounds process-status commands and closes benchmark sessions between samples.
+Subsequent complete suites and 15 repeated exit cases passed. No Mac manual test
+on the owner's laptop was needed; these jobs used actual ARM64 hardware.
 
 ## Port changes
 

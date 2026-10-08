@@ -1,5 +1,18 @@
 # First-release readiness record
 
+## Apple Silicon release checks, 2026-10-08
+
+Debugger 0.1.1 and extension 0.1.3 add Apple Silicon macOS 14+ support to the existing
+product. Default support, Python 3.12-3.14, debug and optimized native code, attach,
+crashes, child-process cleanup, disassembly, installed wheels and real editor sessions
+are verified. The [Mac validation record](macos-stage1.md) links the actual jobs and
+records the larger-module performance limits. The final Linux suite passed 300 cases;
+the final Mac real-project and scale run passed 12 selected cases.
+
+Release publication requires the tag's two-platform artifact build to pass and its
+exact wheel, source and VSIX checksums to verify. Marketplace uses manual upload of
+both platform VSIX files. The original first-release record follows unchanged.
+
 This records the original Linux release. Apple Silicon validation is recorded in
 [the Mac port checks](macos-stage1.md). Current requirements are in the README.
 

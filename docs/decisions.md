@@ -1216,6 +1216,13 @@ sets a temporary SIGINT stop/notify/suppress policy while halting. Function brea
 requests update the native breakpoints and Python table during one pause. An immediate
 second interrupt after resume had timed out on Apple's LLDB 1500.
 
+Real optimized contourpy and pydantic-core checks found two additional Step Out
+problems. A user inline function now uses LLDB's inline step-out plan to return to
+its user host, rather than the physical-return breakpoint that skipped the host.
+Artificial Rust tail-call frames can supply a valid return PC with an invalid SP.
+The return check uses the closest younger physical frame's stack depth in that case;
+an invalid-address bound had rejected every legitimate return hit and run to exit.
+
 Process discovery uses libproc, sysctl and lsof. Packaging builds a thin ARM64 helper
 with a macOS 14 deployment target. The same Python stable ABI serves CPython 3.12,
 3.13 and 3.14. Validation uses actual ARM64 macOS runners and installed packages.
