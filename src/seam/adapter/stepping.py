@@ -205,7 +205,18 @@ class SteppingMixin:
         in general: LLDB gives the function a frame was inlined into the address where the
         inlined code starts, and the two only coincide on its first instruction.
         """
-        return frame.GetSP() == other.GetSP()
+        if frame.GetSP() != other.GetSP() or frame.GetModule() != other.GetModule():
+            return False
+        function, other_function = frame.GetFunction(), other.GetFunction()
+        if function.IsValid() and other_function.IsValid():
+            return (function.GetStartAddress().GetFileAddress()
+                    == other_function.GetStartAddress().GetFileAddress())
+        # Equal SP alone does not imply inlining: an ARM64 leaf can share SP with
+        # its real caller. Symbol identity is the fallback when no DWARF function exists.
+        symbol, other_symbol = frame.GetSymbol(), other.GetSymbol()
+        return (symbol.IsValid() and other_symbol.IsValid()
+                and symbol.GetStartAddress().GetFileAddress()
+                == other_symbol.GetStartAddress().GetFileAddress())
 
     def _step_out_of_glue(self, thread, above=0):
         """Step out to the nearest frame that is user code or the interpreter.
