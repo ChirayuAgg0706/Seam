@@ -23,7 +23,9 @@ class SteppingMixin:
         physical = frame.GetFunction()
         own_frame = (physical.IsValid()
                      and frame.GetFunctionName() == physical.GetName())
-        if path and self._is_glue_path(path) and not frame.IsInlined() and own_frame:
+        # Some LLDB builds report IsInlined for the PC's scope even on the physical
+        # host frame. Its own name matching the physical function is the reliable test.
+        if path and self._is_glue_path(path) and own_frame:
             caller = self._inline_user_callsite(frame.GetPCAddress())
             if caller is not None:
                 return caller
