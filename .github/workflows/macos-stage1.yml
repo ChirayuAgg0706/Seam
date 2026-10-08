@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: apple-silicon-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mac14-attach-regressions:
     runs-on: macos-14
