@@ -131,4 +131,4 @@ def test_bundle_without_lldb_says_so(bundle, python):
                           env=dict(os.environ, SEAM_LLDB="/no/such/lldb"),
                           stdin=subprocess.DEVNULL, timeout=60)
     assert done.returncode == 1
-    assert "LLDB 18 or newer is required" in done.stderr
+    assert "No `lldb` was found on PATH" in done.stderr

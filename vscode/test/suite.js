@@ -494,7 +494,7 @@ async function refusals() {
   try {
     await startRefused(folder, Object.assign({ name: "editor check (no LLDB)" }, base));
     const reply = await refusal("initialize");
-    assert.ok(reply.message.startsWith("LLDB 18 or newer is required"), reply.message);
+    assert.ok(reply.message.startsWith("No `lldb` was found on PATH"), reply.message);
     log(`without LLDB the session is refused: ${reply.message}`);
   } finally {
     delete process.env.SEAM_LLDB;

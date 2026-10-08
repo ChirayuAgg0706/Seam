@@ -536,7 +536,7 @@ if (WITH_ADAPTER) {
     const client = await bundled({ SEAM_LLDB: "/no/such/lldb" });
     const reply = await client.request("initialize", { adapterID: "seam" });
     assert.strictEqual(reply.success, false);
-    assert.ok(reply.message.startsWith("LLDB 18 or newer is required"), reply.message);
+    assert.ok(reply.message.startsWith("No `lldb` was found on PATH"), reply.message);
     await client.closed;
   });
 
