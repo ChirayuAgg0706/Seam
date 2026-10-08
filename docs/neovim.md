@@ -1,6 +1,6 @@
 # Seam in Neovim
 
-Debug Python and native code in one nvim-dap session on Linux x86-64, including WSL.
+Debug Python and native code in one nvim-dap session.
 Use CPython 3.12, 3.13 or 3.14 and LLDB with Python scripting support. LLDB 19 or 20
 avoids LLDB 18's threaded-child-process failure.
 

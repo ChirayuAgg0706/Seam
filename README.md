@@ -1,6 +1,6 @@
 # Seam
 
-Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.
+Debug Python and C, C++ or Rust in one session.
 
 When Python calls a native extension, Step Into opens the native function.
 Set breakpoints there, inspect its variables, and Step Out to Python. The call

@@ -1,7 +1,7 @@
 {
   "name": "seam-debugger",
   "displayName": "Seam: Python + native debugger",
-  "description": "Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.",
+  "description": "Debug Python and C, C++ or Rust in one session.",
   "version": "0.1.2",
   "seamAdapterVersion": "0.1.0",
   "publisher": "chirayuagg0706",

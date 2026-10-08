@@ -1,6 +1,6 @@
 # Seam for VS Code
 
-Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.
+Debug Python and C, C++ or Rust in one session.
 
 Step Into a native function called by Python, inspect its variables, and Step Out
 to Python. Set breakpoints in either language. The call stack shows Python and
