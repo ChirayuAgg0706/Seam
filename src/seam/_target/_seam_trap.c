@@ -42,6 +42,7 @@ static PyObject *g_bps = NULL;      /* dict: id(code) -> set of line numbers */
 static PyObject *g_disable = NULL;  /* sys.monitoring.DISABLE */
 static PyObject *g_py_line = NULL;  /* slow-path LINE handler */
 static int g_slow = 0;              /* route every LINE event to g_py_line */
+static int g_fork_debug = 0;
 
 EXPORT __attribute__((noinline)) void
 seam_trap(PyObject *code, long line, long reason)
@@ -432,12 +433,18 @@ fork_child(void)
      * their ARM64 instructions in the child's private mapping before user code runs.
      * VM_PROT_COPY requests copy-on-write when the original code mapping is read-only.
      */
+    if (g_fork_debug) {
+        const char message[] = "Seam fork cleanup: restoring inherited code\n";
+        write(STDERR_FILENO, message, sizeof(message) - 1);
+    }
     for (long i = 0; i < count; i++) {
         mach_vm_address_t address = table[i].address;
         mach_vm_address_t page = address & ~((mach_vm_address_t)vm_page_size - 1);
         if (mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
                             VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE | VM_PROT_COPY)
                 != KERN_SUCCESS) {
+            const char message[] = "Seam: could not make inherited breakpoint code writable\n";
+            write(STDERR_FILENO, message, sizeof(message) - 1);
             return;
         }
         uint32_t instruction = (uint32_t)table[i].original;
@@ -446,6 +453,10 @@ fork_child(void)
                                 (char *)(uintptr_t)(address + sizeof(instruction)));
         mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
                         VM_PROT_READ | VM_PROT_EXECUTE);
+    }
+    if (g_fork_debug) {
+        const char message[] = "Seam fork cleanup: completed\n";
+        write(STDERR_FILENO, message, sizeof(message) - 1);
     }
 #else
     /* The code is mapped read-only; a process may still write to it through this file. */
@@ -466,6 +477,7 @@ fork_child(void)
 PyMODINIT_FUNC
 PyInit__seam_trap(void)
 {
+    g_fork_debug = getenv("SEAM_LOG") != NULL;
     static int registered = 0;
     if (!registered) {
         /* In a forked child: the entry traps come out, then the helper goes dormant. */

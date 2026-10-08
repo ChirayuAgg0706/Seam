@@ -110,6 +110,7 @@ class SessionMixin:
         data = b"".join(struct.pack("<QQ", address,
                                    struct.unpack("<I", self._read(address, 4))[0])
                         for address in addresses)
+        self.log("macOS fork cleanup:", len(addresses), "sites; first records", data[:48].hex())
         capacity = getattr(self, "mac_fork_capacity", 0)
         if len(data) > capacity:
             error = lldb.SBError()
@@ -304,6 +305,15 @@ class SessionMixin:
         return os.path.abspath(path)
 
     def _apply_settings(self, args):
+        if sys.platform == "darwin":
+            # Let the kernel translate faults to BSD signals. Resuming a raw Mach
+            # exception otherwise retries the fault forever instead of delivering it.
+            result = lldb.SBCommandReturnObject()
+            self.dbg.GetCommandInterpreter().HandleCommand(
+                "settings set platform.plugin.darwin.ignored-exceptions "
+                "EXC_BAD_ACCESS|EXC_BAD_INSTRUCTION|EXC_ARITHMETIC", result)
+            if not result.Succeeded():
+                raise DapError("cannot configure macOS fault delivery: %s" % result.GetError())
         unknown = [str(s) for s in args.get("stopOnSignals") or ()
                    if str(s).upper() not in signal.Signals.__members__]
         if unknown:
