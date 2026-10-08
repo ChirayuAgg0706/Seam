@@ -385,9 +385,15 @@ def bench(python, env, args):
 
 def bench_under_seam(make, python, env, args):
     dap = make()
-    dap.launch(BENCH, python, args=args, env=env)
-    assert dap.wait_exit(timeout=300) == 0
-    return float(re.search(r"elapsed ([\d.]+)", dap.output).group(1))
+    try:
+        dap.launch(BENCH, python, args=args, env=env)
+        assert dap.wait_exit(timeout=300) == 0
+        return float(re.search(r"elapsed ([\d.]+)", dap.output).group(1))
+    finally:
+        # Each sample must release LLDB and the large module's symbol data before
+        # the next sample. Retaining nine adapters changes memory pressure during
+        # the benchmark and does not match an editor ending each session.
+        dap.close()
 
 
 @pytest.mark.parametrize("mode", ["cpu", "native"])
