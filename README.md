@@ -446,7 +446,9 @@ The supported workflows have these limits:
   15,000 functions and about 4 s for pydantic-core with 123,000 functions and inline
   instances. Later steps take the usual few hundredths of a second. This shortcut
   writes `/proc/<pid>/mem`. On macOS, or where that write is unavailable, Seam uses
-  LLDB breakpoints and excludes modules with more than 20,000 functions from Step
+  LLDB breakpoints. A 15,000-function Mac check measured about 5.3 s for the first
+  Step Into and 2.7-3.2 s for later steps. Mac excludes modules with more than
+  20,000 functions from Step
   Into from Python. Source and function breakpoints still work in those modules.
   `SEAM_ENTRY_TRAPS=off` disables the Linux shortcut.
 - **Programs with busy Python threads.** If a request Seam runs in the program cannot

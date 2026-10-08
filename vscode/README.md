@@ -148,7 +148,8 @@ The [main README](https://github.com/ChirayuAgg0706/Seam#readme) lists every lau
 - Disassembly breakpoints are not supported. Linux thread-heavy workloads measured about
   twice as slowly; there is no universal low-overhead guarantee.
 - On macOS, Step Into from Python excludes native modules with more than 20,000
-  functions. Set a source or function breakpoint to enter them. LLDB can omit the
+  functions. A 15,000-function check took about three seconds for repeated Step Into.
+  Set a source or function breakpoint to enter larger modules. LLDB can omit the
   interrupted native frame when a signal handler runs; Python callers remain visible.
 
 See the [complete limitations](https://github.com/ChirayuAgg0706/Seam#limitations).

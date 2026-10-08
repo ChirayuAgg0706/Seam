@@ -115,8 +115,10 @@ def test_regex_step_in_out_and_native_variables(dap):
     assert s.names()[1:] == ["main", "<module>"]
     assert {"self", "args", "kwargs"} <= set(dap.scope(s.stack[0]["id"]))
     s.step("next", "step over a native line")
-    assert s.top()[0] == "pattern_search"
-    s.step("stepOut", "step out, native to Python")
+    # Clang can place the entry stop on the wrapper's return statement. Next
+    # completes that statement and returns directly to its Python caller.
+    if s.top()[0] == "pattern_search":
+        s.step("stepOut", "step out, native to Python")
     assert s.top() == ("main", s.program, s.line("search"))
     s.finish()
 
@@ -195,8 +197,11 @@ def test_pydantic_core_breakpoints_callback_and_stepping_out(dap):
     name, path, where = s.top()
     assert "FunctionPlainValidator" in name and (path, where) == (rust, call), s.top()
     callers = s.names()[1:]
-    assert "SchemaValidator>::_validate" in callers[0], callers
-    assert callers[1].endswith("validate_python") and callers[2:] == ["main", "<module>"]
+    # Optimized Apple Rust/LLDB can omit the intermediate _validate frame.
+    has_validate_frame = "SchemaValidator>::_validate" in callers[0]
+    if has_validate_frame:
+        callers = callers[1:]
+    assert callers[0].endswith("validate_python") and callers[1:] == ["main", "<module>"]
     dap.set_breakpoints(rust, [])
     # The line is seven pieces of inlined glue and then the call: one press.
     s.step("stepIn", "step in, native to the Python callback")
@@ -205,8 +210,9 @@ def test_pydantic_core_breakpoints_callback_and_stepping_out(dap):
     assert "FunctionPlainValidator" in s.top()[0]
     # Out of each native frame in turn (the first has glue inlined at this very place).
     s.step("stepOut", "step out, native to native")
-    assert "_validate" in s.top()[0], s.top()
-    s.step("stepOut")
+    if has_validate_frame:
+        assert "_validate" in s.top()[0], s.top()
+        s.step("stepOut")
     assert s.top()[0].endswith("validate_python"), s.top()
     s.step("stepOut", "step out, native to Python")
     assert s.top() == ("main", s.program, s.line("callback"))
@@ -269,9 +275,15 @@ def test_contourpy_step_in_and_cpp_throw(dap):
     s.first_stop()
     s.step("stepIn", "step in, Python to native (first)")
     name, path, _ = s.top()
-    assert name.startswith("contourpy::BaseContourGenerator") and "::lines(" in name, name
+    assert name.startswith("contourpy::BaseContourGenerator"), name
     assert path == source("contourpy", "src", "base_impl.h")
-    assert s.names()[1:] == ["main", "<module>"], s.names()  # pybind11's dispatcher is hidden
+    # Clang inlines pre_lines into lines and puts the entry stop inside it.
+    if "::pre_lines(" in name:
+        assert "::lines(" in s.names()[1] and s.names()[2:] == ["main", "<module>"]
+        s.step("stepOut", "step out of the inline function")
+        assert "::lines(" in s.top()[0], s.top()
+    else:
+        assert "::lines(" in name and s.names()[1:] == ["main", "<module>"], s.names()
     assert dap.scope(s.stack[0]["id"])["level"]["value"] == "0.5"
     s.step("next", "step over a native line")
     s.step("stepOut", "step out, native to Python")

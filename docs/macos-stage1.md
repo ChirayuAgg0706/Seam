@@ -40,7 +40,9 @@ and publication records.
 
 The Linux entry-trap shortcut writes `/proc/<pid>/mem` and cannot run on macOS.
 Mac Step Into excludes modules with more than 20,000 functions; source and function
-breakpoints remain available. LLVM can omit an interrupted native frame under a
+breakpoints remain available. With 15,000 functions loaded, the measured first
+Step Into took 5.3 seconds and repeated entries took 2.7-3.2 seconds. The Linux
+subsecond performance bound does not apply to this Mac path. LLVM can omit an interrupted native frame under a
 signal handler. Seam keeps Python callers and reports native unwind problems.
 
 The CI checks needed no signing changes, `sudo`, or system security changes.
