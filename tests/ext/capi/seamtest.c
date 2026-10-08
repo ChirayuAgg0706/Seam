@@ -11,7 +11,9 @@
 __attribute__((noinline)) static long
 add_impl(long a, long b)
 {
-    long sum = a + b;
+    /* Conditions/logpoints in the concurrency scenarios need a value guaranteed
+     * to have storage at -O2. Entry-value reconstruction differs across LLDB builds. */
+    volatile long sum = a + b;
     return sum; /* add-impl-return */
 }
 

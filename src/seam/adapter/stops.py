@@ -6,7 +6,7 @@ import time
 import lldb
 
 from .common import (
-    DapError, FAULT_SIGNALS, GLUE, LOG_FLAG, R_BREAKPOINT, R_EXCEPTION, R_RETURN_NATIVE,
+    DapError, FAULT_SIGNALS, FRAMEWORK_FUNCTIONS, GLUE, LOG_FLAG, R_BREAKPOINT, R_EXCEPTION, R_RETURN_NATIVE,
     R_UNCAUGHT,
 )
 
@@ -434,7 +434,8 @@ class StopsMixin:
                 # inlined call. A user function with DWARF is still the function
                 # being stepped; get through the gap instead of stepping out of it.
                 if (function.IsValid() and source and not self._is_glue_path(source)
-                        and frame.GetFunctionName() == function.GetName()):
+                        and frame.GetFunctionName() == function.GetName()
+                        and not FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or "")):
                     self.native_stepping["hops"] += 1
                     self._new_stop()
                     error = lldb.SBError()
