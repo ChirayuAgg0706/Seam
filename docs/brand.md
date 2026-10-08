@@ -12,8 +12,8 @@ canvas, smaller variants, labels and wordmark; and requested a standalone square
 PNG with transparency outside the rounded tile. No third-party language logos are
 included.
 
-Extension 0.1.1 is a presentation update carrying the unchanged released debugger
-0.1.0. The manifest explicitly records `seamAdapterVersion`; package construction
+Extension 0.1.3 carries debugger 0.1.1. The original logo release was extension
+0.1.1 with debugger 0.1.0. The manifest explicitly records `seamAdapterVersion`; package construction
 and release verification check that this matches the adapter actually included.
 
 ## Debugging demo

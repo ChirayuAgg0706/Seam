@@ -439,7 +439,8 @@ class SessionMixin:
             self.log("Apple Silicon target:", triple)
             return
         if triple and not triple.startswith("x86_64"):
-            raise DapError("Seam needs an x86-64 Linux or Apple Silicon macOS interpreter; this one is %s" % triple)
+            raise DapError("Seam needs an x86-64 Linux or Apple Silicon macOS interpreter; "
+                           "this one is %s" % triple)
 
     def req_launch(self, args):
         self._require_no_session()

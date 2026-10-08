@@ -301,5 +301,6 @@ def make_client(tmp_path, python):
 
 
 def _children(pid):
-    out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, timeout=5).stdout
+    out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True,
+                         timeout=5).stdout
     return [int(p) for p in out.split()]

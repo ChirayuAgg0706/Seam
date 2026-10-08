@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from dapclient import DapClient  # noqa: E402
 
 
-def check(output, repeat):
+def check(output, repeat, unsupported_target=None):
     import seam
     import seam._target._seam_trap as helper
 
@@ -34,6 +34,18 @@ def check(output, repeat):
               "installed_package": seam.__file__, "helper": helper.__file__, "runs": []}
     try:
         assert "SEAM_EXPERIMENTAL_MACOS" not in os.environ
+        if unsupported_target:
+            client = DapClient(command=[sys.executable, "-m", "seam", "dap"],
+                               log_path=str(output.resolve() / "architecture-guard.log"))
+            try:
+                client.request("initialize", {"adapterID": "seam"})
+                rejected = client.request("launch", {"program": str(target),
+                                          "python": str(unsupported_target)}, check=False)
+                assert not rejected["success"], rejected
+                assert "Intel and Rosetta targets are unsupported" in rejected["message"]
+                report["intel_target_refused"] = True
+            finally:
+                client.close()
         for index in range(repeat):
             start = time.monotonic()
             with (output / ("run-%d.stderr" % index)).open("w") as stderr:
@@ -81,5 +93,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeat", type=int, default=5)
+    parser.add_argument("--unsupported-target", type=Path)
     args = parser.parse_args()
-    check(args.output, args.repeat)
+    check(args.output, args.repeat, args.unsupported_target)

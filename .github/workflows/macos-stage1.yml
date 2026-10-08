@@ -218,7 +218,9 @@ jobs:
         env:
           SEAM_LLDB: /usr/bin/lldb
         run: |
-          "$RUNNER_TEMP/seam-venv/bin/python" scripts/macos-stage1-check.py --output stage1-results --repeat 5
+          printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/intel-target.c"
+          clang -arch x86_64 "$RUNNER_TEMP/intel-target.c" -o "$RUNNER_TEMP/intel-target"
+          "$RUNNER_TEMP/seam-venv/bin/python" scripts/macos-stage1-check.py --output stage1-results --repeat 5 --unsupported-target "$RUNNER_TEMP/intel-target"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
