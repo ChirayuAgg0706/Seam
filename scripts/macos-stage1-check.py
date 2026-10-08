@@ -1,6 +1,7 @@
 """Test the installed wheel on Apple Silicon, without importing Seam from the checkout."""
 import argparse
 import json
+import os
 import platform
 import sys
 import time
@@ -32,6 +33,23 @@ def check(output, repeat):
     report = {"platform": platform.platform(), "python": sys.version,
               "installed_package": seam.__file__, "helper": helper.__file__, "runs": []}
     try:
+        # An experimental wheel must still reject ARM64 unless explicitly opted in.
+        opt_in = os.environ.pop("SEAM_EXPERIMENTAL_MACOS", None)
+        try:
+            client = DapClient(command=[sys.executable, "-m", "seam", "dap"],
+                               log_path=str(output.resolve() / "guard.log"))
+        finally:
+            if opt_in is not None:
+                os.environ["SEAM_EXPERIMENTAL_MACOS"] = opt_in
+        try:
+            client.request("initialize", {"adapterID": "seam"})
+            rejected = client.request("launch", {"program": str(target),
+                                      "python": sys.executable}, check=False)
+            assert not rejected["success"], rejected
+            assert "supports x86-64 Linux programs only" in rejected["message"], rejected
+            report["requires_experimental_opt_in"] = True
+        finally:
+            client.close()
         for index in range(repeat):
             start = time.monotonic()
             with (output / ("run-%d.stderr" % index)).open("w") as stderr:
@@ -53,6 +71,9 @@ def check(output, repeat):
                     assert "apple silicon" in variables["label"]["value"], variables
                     evaluated = client.evaluate("number + 35", frame["id"])
                     assert evaluated["result"] == "42", evaluated
+                    flag = client.evaluate(
+                        "'SEAM_EXPERIMENTAL_MACOS' in __import__('os').environ", frame["id"])
+                    assert flag["result"] == "False", flag
                     status = client.status()
                     stepped = client.step("next", stopped["threadId"])
                     frames = client.stack(stepped["threadId"])
