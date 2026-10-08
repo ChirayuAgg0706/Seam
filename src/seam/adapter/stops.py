@@ -426,6 +426,24 @@ class StopsMixin:
                      "class", kind, "hops", self.native_stepping["hops"])
             if kind == "interp" and self._resume_in_python(thread):
                 return
+            if kind == "nodebug" and self.native_stepping["hops"] < 64:
+                frame = thread.GetFrameAtIndex(0)
+                function = frame.GetFunction()
+                source = frame.GetCompileUnit().GetFileSpec().fullpath or ""
+                # Clang can leave a few instructions without a line after an
+                # inlined call. A user function with DWARF is still the function
+                # being stepped; get through the gap instead of stepping out of it.
+                if (function.IsValid() and source and not self._is_glue_path(source)
+                        and frame.GetFunctionName() == function.GetName()):
+                    self.native_stepping["hops"] += 1
+                    self._new_stop()
+                    error = lldb.SBError()
+                    thread.StepInstruction(True, error)
+                    if not error.Success():
+                        raise DapError("could not step through an optimized line gap: %s"
+                                       % error.GetCString())
+                    self.running = True
+                    return
             if kind in GLUE and self.native_stepping["hops"] < 64:
                 # Returned into binding glue: keep going until user code or the interpreter.
                 self.native_stepping["hops"] += 1
