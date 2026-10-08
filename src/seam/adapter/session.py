@@ -343,6 +343,21 @@ class SessionMixin:
             threading.Thread(target=self._serve_terminal, args=(self.terminal, pid),
                              daemon=True).start()
         state = self._wait_stop()
+        # Framework Python on macOS starts through a launcher which execs the real
+        # interpreter. Apple LLDB reports that exec before our pending entry breakpoint.
+        # Keep waiting for Py_RunMain, with a deadline even for a broken exec loop.
+        bootstrap_deadline = time.monotonic() + 30
+        while (sys.platform == "darwin" and state == lldb.eStateStopped
+               and self.process.GetSelectedThread().GetStopReason() == lldb.eStopReasonExec):
+            self.log("launch: framework interpreter exec; waiting for Py_RunMain")
+            self._require_x86_64()
+            if time.monotonic() >= bootstrap_deadline:
+                raise DapError("timed out waiting for the macOS interpreter launcher")
+            resumed = self.process.Continue()
+            if not resumed.Success():
+                raise DapError("cannot continue the interpreter launcher: %s"
+                               % resumed.GetCString())
+            state = self._wait_stop(timeout=max(1, bootstrap_deadline - time.monotonic()))
         if state != lldb.eStateStopped:
             self._on_exit()
             raise DapError("the process exited before reaching Py_RunMain; is %s a "
