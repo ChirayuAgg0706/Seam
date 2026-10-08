@@ -21,7 +21,9 @@
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#if defined(__arm64__) || defined(__aarch64__)
 #include <mach/arm/thread_status.h>
+#endif
 #endif
 
 #define SEAM_REQ_CAP (1 << 20)
@@ -435,11 +437,13 @@ fork_child(void)
         return;
     }
 #ifdef __APPLE__
+#if defined(__arm64__) || defined(__aarch64__)
     arm_debug_state64_t debug_state = {0};
     thread_t thread = mach_thread_self();
     thread_set_state(thread, ARM_DEBUG_STATE64, (thread_state_t)&debug_state,
                      ARM_DEBUG_STATE64_COUNT);
     mach_port_deallocate(mach_task_self(), thread);
+#endif
     /* Apple's debugserver leaves software breakpoints in a forked child. Restore
      * their ARM64 instructions in the child's private mapping before user code runs.
      * VM_PROT_COPY requests copy-on-write when the original code mapping is read-only.

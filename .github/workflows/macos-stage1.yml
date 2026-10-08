@@ -48,7 +48,7 @@ jobs:
       - name: Build Mac wheel and VSIX
         run: |
           python -m pip install build
-          python -m build --wheel
+          ARCHFLAGS='-arch arm64' MACOSX_DEPLOYMENT_TARGET=14.0 _PYTHON_HOST_PLATFORM=macosx-14.0-arm64 python -m build --wheel
           bash scripts/build-vsix.sh dist/*.whl
           cargo build --manifest-path examples/pyo3-demo/Cargo.toml
           cp examples/pyo3-demo/target/debug/libseam_demo.dylib examples/pyo3-demo/seam_demo.so
@@ -125,7 +125,7 @@ jobs:
       - name: Build and install wheel
         run: |
           python -m pip install build
-          python -m build --wheel
+          ARCHFLAGS='-arch arm64' MACOSX_DEPLOYMENT_TARGET=14.0 _PYTHON_HOST_PLATFORM=macosx-14.0-arm64 python -m build --wheel
           python -m venv "$RUNNER_TEMP/seam-venv"
           "$RUNNER_TEMP/seam-venv/bin/python" -m pip install dist/*.whl
           "$RUNNER_TEMP/seam-venv/bin/python" -c 'import seam._target._seam_trap as h; import subprocess; subprocess.run(["file", h.__file__], check=True)'
