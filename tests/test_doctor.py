@@ -87,7 +87,7 @@ def test_doctor_explains_a_python_that_does_not_exist():
 def test_dap_without_lldb_says_so():
     done = seam("dap", SEAM_LLDB="/no/such/lldb")
     assert done.returncode == 1
-    assert "LLDB 18 or newer is required" in done.stderr
+    assert "No `lldb` was found on PATH" in done.stderr
 
 
 def test_dap_with_an_lldb_that_cannot_load_the_adapter(tmp_path):

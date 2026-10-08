@@ -1184,6 +1184,42 @@ own changelog and `extension-v<version>` release tags. Python releases retain
 All debugger/helper and JavaScript files are compared byte for byte with the prior
 public VSIX for this presentation-only update, then the installed bundle runs doctor.
 
+## 36. Apple Silicon keeps the existing debugger behavior
+
+The Mac adapter runs inside Apple's LLDB. It reads ARM64 arguments from x0/x1/x2
+and the program counter from pc. Framework Python executes another interpreter
+image before Py_RunMain; launch waits through that exec stop rather than treating
+it as a failed Python entry. Intel and Rosetta targets fail before launch.
+
+On ARM64, frameless functions can share their caller's stack pointer. Matching
+Python and native frames by stack pointer alone hid real native functions and their
+globals. Interpreter anchors now require an interpreter module, and physical
+function identity includes the module and function start. Inline source recovery
+uses the actual PC and user callsite. Bounded instruction stepping crosses optimized
+line-table gaps without skipping the entire function.
+
+Fork observers record user and LLDB-internal software breakpoint sites. The child
+restores inherited instructions on a separate aligned callback page, changes the
+affected pages from writable to executable, clears the instruction cache and clears
+hardware debug registers. It never maps those pages writable and executable together.
+The Linux fast entry-trap path remains Linux-only. Mac uses ordinary LLDB breakpoints.
+
+Darwin faults first pass through the program's signal handler. Seam temporarily
+changes the signal policy, steps one instruction into that handler and restores the
+policy before continuing. A stopped SBProcess.Signal failed with Apple's LLDB, so
+this path uses LLDB's Unix signal policy. A second faulthandler fault can have an
+incomplete native unwind; Seam does not invent the missing native frame.
+
+Older Apple LLDB can show a stale stopped state after asynchronous Continue until
+its listener consumes the queued resume event. Internal pause drains that event and
+sets a temporary SIGINT stop/notify/suppress policy while halting. Function breakpoint
+requests update the native breakpoints and Python table during one pause. An immediate
+second interrupt after resume had timed out on Apple's LLDB 1500.
+
+Process discovery uses libproc, sysctl and lsof. Packaging builds a thin ARM64 helper
+with a macOS 14 deployment target. The same Python stable ABI serves CPython 3.12,
+3.13 and 3.14. Validation uses actual ARM64 macOS runners and installed packages.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped
