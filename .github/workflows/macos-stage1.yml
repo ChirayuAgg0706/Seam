@@ -64,6 +64,17 @@ jobs:
           export SEAM_DEMO_DIR="$GITHUB_WORKSPACE/examples/pyo3-demo"
           node vscode/test/run.js
           node vscode/test/run.js python-extension
+      - name: Installed wheel through Neovim's documented configuration
+        env:
+          SEAM_LLDB: /usr/bin/lldb
+          SEAM_EXPERIMENTAL_MACOS: '1'
+          SEAM_LOG: ${{ runner.temp }}/mac-neovim.log
+        run: |
+          command -v nvim || brew install neovim
+          python -m venv "$RUNNER_TEMP/neovim-seam"
+          "$RUNNER_TEMP/neovim-seam/bin/pip" install dist/*.whl
+          git clone --quiet --depth 1 https://github.com/mfussenegger/nvim-dap "$RUNNER_TEMP/nvim-dap"
+          SEAM_BIN="$RUNNER_TEMP/neovim-seam/bin/seam" nvim --headless -u NONE --cmd "set rtp+=$RUNNER_TEMP/nvim-dap" -l tests/editors/nvim_check.lua
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -73,6 +84,7 @@ jobs:
             dist/*.whl
             .vscode-test/**/logs/
             ${{ runner.temp }}/mac-editor.log*
+            ${{ runner.temp }}/mac-neovim.log*
   native-features:
     name: native features (${{ matrix.os }}, ${{ matrix.python }}, ${{ matrix.opt }})
     runs-on: ${{ matrix.os }}

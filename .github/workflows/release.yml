@@ -11,6 +11,48 @@ permissions:
   contents: read
 
 jobs:
+  combined:
+    name: verified release files and combined checksums
+    needs: [build, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: seam-*release-artifacts
+          merge-multiple: true
+          path: dist
+      - name: Name and verify the extension packages
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          import zipfile
+          publisher = json.loads(Path('vscode/package.json').read_text())['publisher']
+          for package in list(Path('dist').glob('*.vsix')):
+              with zipfile.ZipFile(package) as archive:
+                  metadata = json.loads(archive.read('extension/package.json'))
+                  identity = ET.fromstring(archive.read('extension.vsixmanifest')).find('{*}Metadata/{*}Identity')
+                  target = identity.get('TargetPlatform')
+              if target not in ('linux-x64', 'darwin-arm64'):
+                  raise SystemExit('Unsupported extension platform')
+              renamed = package.with_name(f'seam-debugger-{publisher}-{target}-{metadata["version"]}.vsix')
+              package.rename(renamed)
+              Path(str(renamed) + '.sha256').write_text(hashlib.sha256(renamed.read_bytes()).hexdigest() + '  ' + renamed.name + '\n')
+          PY
+          publisher="$(python -c 'import json; print(json.load(open("vscode/package.json"))["publisher"])')"
+          version="$(python -c 'import json; print(json.load(open("vscode/package.json"))["version"])')"
+          for package in dist/*.vsix; do
+            python scripts/verify-extension-release.py "$package" "$publisher" "$version"
+          done
+          cd dist
+          sha256sum *.whl *.tar.gz *.vsix > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seam-combined-release
+          path: dist/*
+          if-no-files-found: error
   macos:
     name: Apple Silicon wheel and .vsix
     runs-on: macos-14
