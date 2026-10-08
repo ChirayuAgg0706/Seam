@@ -1,6 +1,7 @@
 """Starting and ending a session: launch, attach, the terminal, exit, detach."""
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -37,29 +38,31 @@ class SessionMixin:
         self.macos_passed_fault = number
         return True
 
-    def _watch_macos_children(self):
-        """Apple debugserver lacks fork packets; observe the native spawn calls instead."""
-        if sys.platform != "darwin" or hasattr(self, "mac_child_entries"):
+    def _watch_fork_calls(self):
+        """Observe forks to save stepping breakpoints before they reach a child."""
+        if sys.platform != "darwin" and not self.native_stepping:
             return
-        self.mac_child_entries, self.mac_child_returns = {}, {}
-        self.mac_child_internal_ids = set()
+        if getattr(self, "fork_observer_entries", None):
+            return
+        self.fork_observer_entries, self.fork_observer_returns = {}, {}
+        self.fork_observer_internal_ids = set()
         for name in ("fork", "vfork", "posix_spawn"):
             bp = self._entry_breakpoint(name)
-            self.mac_child_entries[bp.GetID()] = name
-            self.mac_child_internal_ids.add(bp.GetID())
+            self.fork_observer_entries[bp.GetID()] = name
+            self.fork_observer_internal_ids.add(bp.GetID())
 
-    def _macos_child_stop(self, thread):
-        if (not hasattr(self, "mac_child_entries")
+    def _fork_observer_stop(self, thread):
+        if (not hasattr(self, "fork_observer_entries")
                 or thread.GetStopReason() != lldb.eStopReasonBreakpoint):
             return False
         ids = [thread.GetStopReasonDataAtIndex(i)
                for i in range(0, thread.GetStopReasonDataCount(), 2)]
-        hit = next((i for i in ids if i in self.mac_child_entries
-                    or i in self.mac_child_returns), None)
+        hit = next((i for i in ids if i in self.fork_observer_entries
+                    or i in self.fork_observer_returns), None)
         if hit is None:
             return False
-        private_only = all(i in self.mac_child_internal_ids for i in ids)
-        kind = self.mac_child_entries.get(hit)
+        private_only = all(i in self.fork_observer_internal_ids for i in ids)
+        kind = self.fork_observer_entries.get(hit)
         frame = thread.GetFrameAtIndex(0)
         if kind is not None:
             pid_pointer = None
@@ -75,36 +78,52 @@ class SessionMixin:
                     or (f.GetModule().GetFileSpec().GetFilename() or "").startswith(
                         "_posixsubprocess") for f in thread):
                 kind = "fork_exec"
-            address = frame.FindRegister("lr").GetValueAsUnsigned()
+            arm = (self.target.GetTriple() or "").startswith(("arm64", "aarch64"))
+            address = (frame.FindRegister("lr").GetValueAsUnsigned() if arm else
+                       struct.unpack("<Q", self._read(
+                           frame.FindRegister("rsp").GetValueAsUnsigned(), 8))[0])
             bp = self.target.BreakpointCreateByAddress(address)
             bp.SetThreadID(thread.GetThreadID())
-            self.mac_child_returns[bp.GetID()] = (kind, pid_pointer)
-            self.mac_child_internal_ids.add(bp.GetID())
+            self.fork_observer_returns[bp.GetID()] = (kind, pid_pointer)
+            self.fork_observer_internal_ids.add(bp.GetID())
             return private_only
-        returned = self.mac_child_returns.pop(hit, None)
+        returned = self.fork_observer_returns.pop(hit, None)
         if returned is None:
             return False
         self.target.BreakpointDelete(hit)
         kind, pointer = returned
-        value = self._entry_argument(frame, 0)
+        arm = (self.target.GetTriple() or "").startswith(("arm64", "aarch64"))
+        value = frame.FindRegister("x0" if arm else "rax").GetValueAsUnsigned()
         pid = struct.unpack("<i", self._read(pointer, 4))[0] if pointer and value == 0 else value
         if pid <= 0 or pid >= 1 << 31:
             return private_only
         if kind in ("vfork", "fork_exec"):
-            from seam._mac_processes import process_executable
             # fork_exec returns before the child execs. The child runs independently;
             # wait briefly for its executable to settle before identifying it.
             if kind == "fork_exec":
                 time.sleep(0.05)
-            executable = process_executable(pid)
+            if sys.platform == "darwin":
+                from seam._mac_processes import process_executable
+                executable = process_executable(pid)
+            else:
+                try:
+                    executable = os.readlink("/proc/%d/exe" % pid)
+                except OSError:
+                    executable = ""
             if not os.path.basename(executable).lower().startswith("python"):
                 return private_only
         self._notice_child(pid)
-        for bp_id in list(self.mac_child_entries) + list(self.mac_child_returns):
-            self.target.BreakpointDelete(bp_id)
-        self.mac_child_entries.clear()
-        self.mac_child_returns.clear()
         return private_only
+
+    def _stop_linux_fork_watch(self):
+        if sys.platform == "darwin" or not getattr(self, "fork_observer_entries", None):
+            return
+        for bp_id in list(self.fork_observer_entries) + list(self.fork_observer_returns):
+            self.target.BreakpointDelete(bp_id)
+        self.fork_observer_entries.clear()
+        self.fork_observer_returns.clear()
+        if not self.traps.armed:
+            self._write(self.sym["seam_fork_count"], struct.pack("<q", 0))
 
     def _notice_child(self, pid):
         if self.child_noticed:
@@ -115,13 +134,24 @@ class SessionMixin:
                    "program itself: child processes run freely, and breakpoints in them do "
                    "not stop.\n" % pid})
 
-    def _sync_macos_fork_table(self):
-        """Let forked children remove Apple's inherited ARM64 software breakpoints."""
-        if sys.platform != "darwin" or not self.sym.get("seam_fork_table"):
+    def _sync_fork_cleanup(self):
+        """Let children remove user and LLDB stepping breakpoints inherited at fork."""
+        if (not self.sym.get("seam_fork_table") or (sys.platform != "darwin"
+                and not getattr(self, "fork_observer_entries", None))):
             return
         addresses = set()
-        for index in range(self.target.GetNumBreakpoints()):
-            bp = self.target.GetBreakpointAtIndex(index)
+        breakpoints = [self.target.GetBreakpointAtIndex(i)
+                       for i in range(self.target.GetNumBreakpoints())]
+        # GetNumBreakpoints excludes LLDB's temporary stepping breakpoints. They
+        # exist by the time the fork entry observer stops, and are just as dangerous
+        # in a child as a user breakpoint. Find them through the diagnostic list.
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand("breakpoint list --internal", result)
+        for bp_id in re.findall(r"(?m)^\s*(-\d+):", result.GetOutput() or ""):
+            bp = self.target.FindBreakpointByID(int(bp_id))
+            if bp.IsValid():
+                breakpoints.append(bp)
+        for bp in breakpoints:
             if not bp.IsEnabled():
                 continue
             for location in bp:
@@ -129,31 +159,35 @@ class SessionMixin:
                 if location.IsEnabled() and address != lldb.LLDB_INVALID_ADDRESS:
                     addresses.add(address)
         addresses = tuple(sorted(addresses))
-        if addresses == getattr(self, "mac_fork_addresses", None):
+        if addresses == getattr(self, "fork_cleanup_addresses", None):
+            self._write(self.sym["seam_fork_table"],
+                        struct.pack("<Q", self.fork_cleanup_allocation))
+            self._write(self.sym["seam_fork_count"], struct.pack("<q", len(addresses)))
             return
         # ReadMemory returns original code under LLDB's software breakpoints.
+        width = 4 if (self.target.GetTriple() or "").startswith(("arm64", "aarch64")) else 1
         data = b"".join(struct.pack("<QQ", address,
-                                   struct.unpack("<I", self._read(address, 4))[0])
+                                   int.from_bytes(self._read(address, width), "little"))
                         for address in addresses)
-        self.log("macOS fork cleanup:", len(addresses), "sites; first records", data[:48].hex())
-        capacity = getattr(self, "mac_fork_capacity", 0)
+        self.log("fork cleanup:", len(addresses), "sites; first records", data[:48].hex())
+        capacity = getattr(self, "fork_cleanup_capacity", 0)
         if len(data) > capacity:
             error = lldb.SBError()
             capacity = max(32768, len(data))
             allocation = self.process.AllocateMemory(
                 capacity, lldb.ePermissionsReadable | lldb.ePermissionsWritable, error)
             if not error.Success():
-                raise DapError("cannot allocate the macOS fork cleanup table: %s"
+                raise DapError("cannot allocate the fork cleanup table: %s"
                                % error.GetCString())
-            old = getattr(self, "mac_fork_allocation", None)
-            self.mac_fork_allocation, self.mac_fork_capacity = allocation, capacity
+            old = getattr(self, "fork_cleanup_allocation", None)
+            self.fork_cleanup_allocation, self.fork_cleanup_capacity = allocation, capacity
             self._write(self.sym["seam_fork_table"], struct.pack("<Q", allocation))
             if old is not None:
                 self.process.DeallocateMemory(old)
         if data:
-            self._write(self.mac_fork_allocation, data)
+            self._write(self.fork_cleanup_allocation, data)
         self._write(self.sym["seam_fork_count"], struct.pack("<q", len(addresses)))
-        self.mac_fork_addresses = addresses
+        self.fork_cleanup_addresses = addresses
 
     def _watch_exit_packets(self):
         """Learn whether the program exited or was killed by a signal.
@@ -644,7 +678,7 @@ class SessionMixin:
             # was set by name before the helper loaded and the thread is stopped at it
             # right now, so it is left alone.
             self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
-        self._watch_macos_children()
+        self._watch_fork_calls()
 
     def _inject(self, thread):
         """Load the agent. The caller guarantees `thread` is at a safe point."""

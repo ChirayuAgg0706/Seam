@@ -25,7 +25,7 @@ jobs:
           SEAM_EXPERIMENTAL_MACOS: '1'
         run: |
           cd "$GITHUB_WORKSPACE"
-          python -m pytest tests/test_children.py::test_fork tests/test_children.py::test_fork_made_by_native_code tests/test_children.py::test_subprocess_system_and_posix_spawn tests/test_crash.py::test_segfault_in_native_code_stops_with_the_merged_stack --target-python "$(which python)" --basetemp="$RUNNER_TEMP/seam-focused" --junitxml=mac-focused.xml -vv
+          python -m pytest tests/test_children.py::test_fork tests/test_children.py::test_fork_made_by_native_code tests/test_children.py::test_subprocess_system_and_posix_spawn tests/test_children.py::test_native_step_over_fork_preserves_the_child tests/test_children.py::test_user_function_breakpoint_on_fork_is_not_hidden tests/test_crash.py::test_segfault_in_native_code_stops_with_the_merged_stack --target-python "$(which python)" --basetemp="$RUNNER_TEMP/seam-focused" --junitxml=mac-focused.xml -vv
       - uses: actions/upload-artifact@v4
         if: always()
         with:

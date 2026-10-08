@@ -162,7 +162,7 @@ class SteppingMixin:
         bp.SetThreadID(thread.GetThreadID())
         self.stepout = {"bp": bp, "sp": target.GetSP()}
         self.log("running until return to", target.GetFunctionName(), hex(address))
-        self._sync_macos_fork_table()
+        self._sync_fork_cleanup()
         err = self.process.Continue()
         if not err.Success():
             self._clear_stepout()
@@ -221,7 +221,7 @@ class SteppingMixin:
         # "stop in the caller" over it would run straight through the callback.
         self._finish_steps(thread, cancel_py=False)
         self.py_step_armed = True
-        self._sync_macos_fork_table()
+        self._sync_fork_cleanup()
         err = self.process.Continue()
         if not err.Success():
             raise DapError("could not resume: %s" % err.GetCString())
@@ -250,6 +250,7 @@ class SteppingMixin:
         if self.native_stepping:
             self._discard_plans(thread)
             self.native_stepping = None
+            self._stop_linux_fork_watch()
         if cancel_py and self.py_step_armed:
             self._cancel_py_step()
         self.py_step_armed = False
@@ -366,6 +367,8 @@ class SteppingMixin:
             except DapError as exc:
                 self.log("cannot arm a Python step from native code:", exc)
         self.native_stepping = {"tid": tid, "hops": 0}
+        self._watch_fork_calls()
+        self._sync_fork_cleanup()
         if start == 0 and mode != "out":
             # What the step is repeated with if it only gets through inlined glue, and
             # where the user is now (see the end of _on_stop).

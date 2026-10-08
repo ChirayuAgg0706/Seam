@@ -16,13 +16,21 @@ FORK_STOPS = tuple(getattr(lldb, name) for name in
 
 
 class StopsMixin:
+    @staticmethod
+    def _breakpoint_id(value):
+        # Stop data is unsigned 64-bit, but LLDB's internal breakpoint IDs are
+        # signed 32-bit. SWIG rejects the unconverted value at FindBreakpointByID.
+        value &= 0xffffffff
+        return value - (1 << 32) if value >= 1 << 31 else value
+
     def _visible_breakpoint_data(self, thread):
-        private = getattr(self, "mac_child_internal_ids", ())
+        private = getattr(self, "fork_observer_internal_ids", ())
         for index in range(0, thread.GetStopReasonDataCount(), 2):
             bp_id = thread.GetStopReasonDataAtIndex(index)
             if bp_id not in private:
-                return bp_id, thread.GetStopReasonDataAtIndex(index + 1)
-        return thread.GetStopReasonDataAtIndex(0), thread.GetStopReasonDataAtIndex(1)
+                return self._breakpoint_id(bp_id), thread.GetStopReasonDataAtIndex(index + 1)
+        return (self._breakpoint_id(thread.GetStopReasonDataAtIndex(0)),
+                thread.GetStopReasonDataAtIndex(1))
 
     def _entry_argument(self, frame, index):
         """Integer/pointer argument at a function's entry, before its prologue runs."""
@@ -149,7 +157,8 @@ class StopsMixin:
             return False
         pc = self._pc(thread)
         for i in range(0, thread.GetStopReasonDataCount(), 2):
-            bp = self.target.FindBreakpointByID(thread.GetStopReasonDataAtIndex(i))
+            bp = self.target.FindBreakpointByID(
+                self._breakpoint_id(thread.GetStopReasonDataAtIndex(i)))
             if bp.IsValid() and bp.FindLocationByAddress(pc).IsValid():
                 return False
         self.log("thread", thread.GetThreadID(), "reports a breakpoint it is no longer at",
@@ -277,7 +286,7 @@ class StopsMixin:
         # Then make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
         for candidate in self.process:
-            if self._macos_child_stop(candidate):
+            if self._fork_observer_stop(candidate):
                 self._continue()
                 return
         if (not self.pause_requested and landed is None
@@ -324,6 +333,10 @@ class StopsMixin:
         bp_id, location_id = self._visible_breakpoint_data(thread)
         self.log("stop: thread", thread.GetThreadID(), "reason", reason,
                  thread.GetStopDescription(80), "pc %#x" % self._pc(thread))
+        internal_step_stop = (reason == lldb.eStopReasonBreakpoint and bp_id < 0
+                              and self.native_stepping is not None)
+        if internal_step_stop:
+            reason = lldb.eStopReasonPlanComplete
 
         if (reason == lldb.eStopReasonBreakpoint and bp_id
                 in [bp.GetID() for bp in self.user_bps.values()] + self.traps.breakpoint_ids()):
@@ -410,7 +423,8 @@ class StopsMixin:
             again = self.native_stepping.get("again")
             hops = self.native_stepping["hops"]
             if (kind == "user" and again and not self.pause_requested and hops < 64
-                    and (hops or self._classify_frame(thread.GetFrameAtIndex(0)) in GLUE)
+                    and (hops or internal_step_stop
+                         or self._classify_frame(thread.GetFrameAtIndex(0)) in GLUE)
                     and self._visible_position(thread) == self.native_stepping["from"]):
                 # The step went into a piece of glue inlined into the user's function, or
                 # through one and back, and the user's own line has not changed. Optimised
@@ -556,7 +570,7 @@ class StopsMixin:
     def _continue(self):
         if self.user_bps_on:
             self.traps.arm()  # they are out at every stop; in again while the step lasts
-        self._sync_macos_fork_table()
+        self._sync_fork_cleanup()
         err = self.process.Continue()
         if not err.Success():
             self.traps.disarm()

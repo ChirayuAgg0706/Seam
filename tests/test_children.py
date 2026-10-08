@@ -138,7 +138,9 @@ def test_native_step_over_fork_preserves_the_child(dap, capi, tmp_path):
     script.write_text("import os, seamtest\n"
                       "pid = seamtest.fork_child()\n"
                       "assert pid > 0\n"
-                      "assert os.waitpid(pid, 0)[1] == 7 << 8\n"
+                      "status = os.waitpid(pid, 0)[1]\n"
+                      "print('native child status', status, flush=True)\n"
+                      "assert status == 7 << 8, status\n"
                       "print('native child exited normally', flush=True)\n")
     dap.launch(str(script), dap.python, env=capi.env,
                breakpoints={CAPI_SRC: [marker_line(CAPI_SRC, "native-fork-call")]})

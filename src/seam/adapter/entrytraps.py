@@ -170,6 +170,8 @@ class EntryTraps:
         """Leave the list of patched addresses where the helper finds it after a fork."""
         key = tuple(id(region) for region in regions)
         if self.table_for == key:
+            # Native fork cleanup can temporarily use the same exported pointer.
+            os.pwrite(self.fd, struct.pack("<Q", self.table_address), self.fork_table)
             return
         a = self.a
         table = array.array("Q")
@@ -185,6 +187,7 @@ class EntryTraps:
             raise OSError("cannot allocate the fork table: %s" % error.GetCString())
         os.pwrite(self.fd, data, address)
         os.pwrite(self.fd, struct.pack("<Q", address), self.fork_table)
+        self.table_address = address
         self.table_for = key
         self.table_entries = len(table) // 2
 
