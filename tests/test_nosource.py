@@ -78,9 +78,10 @@ def test_stripped_library_explains_unbound_source_breakpoint(dap, stripped):
 def test_attach_notices_already_loaded_stripped_library(dap, stripped, python, tmp_path):
     script = tmp_path / "attach_stripped.py"
     script.write_text(
-        "import ctypes, os, time\n"
+        "import ctypes, os, sys, time\n"
         "import seam_nosource\n"
-        "ctypes.CDLL(None).prctl(0x59616d61, -1, 0, 0, 0)\n"
+        "if sys.platform.startswith('linux'):\n"
+        "    ctypes.CDLL(None).prctl(0x59616d61, -1, 0, 0, 0)\n"
         "print('ready', flush=True)\n"
         "while True:\n"
         "    time.sleep(0.02)\n")

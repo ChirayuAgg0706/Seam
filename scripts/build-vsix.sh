@@ -9,11 +9,19 @@
 #                                            DIR/__main__.py, as the extension carries
 #                                            it; no Node.js needed (used by the tests)
 #
-# Output: vscode/seam-debugger-linux-x64-<version>.vsix. Packaging needs Node.js (npx).
-# The helper is a compiled Linux x86-64 library, so the package is for that platform only.
+# Output: vscode/seam-debugger-<platform>-<version>.vsix. Packaging needs Node.js (npx).
+# The package target must match the helper's architecture and operating system.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER=seam/_target/_seam_trap.abi3.so
+target="${SEAM_VSIX_TARGET:-}"
+if [ -z "$target" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) target=linux-x64 ;;
+    Darwin-arm64) target=darwin-arm64 ;;
+    *) echo "build-vsix: unsupported build host; set SEAM_VSIX_TARGET for a built wheel" >&2; exit 1 ;;
+  esac
+fi
 
 stage_only=""
 if [ "${1:-}" = "--stage" ]; then
@@ -48,7 +56,11 @@ else
   [ -f "$include/Python.h" ] ||
     fail "the Python headers are missing ($include/Python.h). Install them (Debian/Ubuntu: apt install python3-dev) or pass a built wheel."
   # As setup.py builds it. The helper uses the limited API, so headers of any 3.12+ do.
-  "${CC:-gcc}" -shared -fPIC -O2 -g -Wall -I "$include" \
+  shared=(-shared -fPIC)
+  if [ "$target" = darwin-arm64 ]; then
+    shared=(-bundle -undefined dynamic_lookup)
+  fi
+  "${CC:-gcc}" "${shared[@]}" -O2 -g -Wall -I "$include" \
     "$ROOT/src/seam/_target/_seam_trap.c" -o "$dest/$HELPER"
 fi
 [ "$dest" -ef "$ROOT/vscode/bundled" ] || cp "$ROOT/vscode/bundled/__main__.py" "$dest/__main__.py"
@@ -69,7 +81,10 @@ if bundled != expected:
 EOF
 
 # What the helper asks of the machine it will run on.
-if command -v objdump >/dev/null; then
+if [ "$target" = darwin-arm64 ]; then
+  file "$dest/$HELPER" | grep -q 'Mach-O' || fail "the helper is not a Mach-O library"
+  lipo -verify_arch arm64 "$dest/$HELPER" || fail "the helper has no Apple Silicon code"
+elif [ "$target" = linux-x64 ] && command -v objdump >/dev/null; then
   objdump -f "$dest/$HELPER" | grep -q 'elf64-x86-64' ||
     fail "the helper is not a Linux x86-64 library: $(objdump -f "$dest/$HELPER" | grep 'file format')"
   glibc="$(objdump -T "$dest/$HELPER" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
@@ -84,7 +99,7 @@ fi
 cd "$ROOT/vscode"
 cp ../LICENSE LICENSE.txt
 rm -f ./*.vsix
-npx --yes @vscode/vsce package --target linux-x64 --allow-missing-repository \
+npx --yes @vscode/vsce package --target "$target" --allow-missing-repository \
   --baseContentUrl https://github.com/ChirayuAgg0706/Seam/blob/main/vscode/ \
   --baseImagesUrl https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/
 vsix="$(ls -1 ./*.vsix)"

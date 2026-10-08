@@ -52,6 +52,10 @@ def _check_platform(report):
     if sys.platform.startswith("linux") and machine in ("x86_64", "AMD64"):
         report.ok("platform: Linux x86-64")
         return True
+    if (sys.platform == "darwin" and machine == "arm64"
+            and os.environ.get("SEAM_EXPERIMENTAL_MACOS") == "1"):
+        report.ok("platform: macOS Apple Silicon (experimental)")
+        return True
     report.problem("platform: %s %s" % (sys.platform, machine),
                    "Seam supports Linux on x86-64 only.")
     return False
@@ -64,16 +68,19 @@ def _check_lldb(report):
         return False
     status, text = _run([lldb, "--version"])
     version = re.search(r"version (\d+)\.(\d+)(\.\d+)?", text or "")
-    if status != 0 or not version:
+    # Apple's LLDB uses an Xcode build number, not LLVM's major version.
+    apple = re.search(r"^lldb-(\d+)(?:\.[\d.]+)?", text or "", re.MULTILINE)
+    if status != 0 or not (version or apple):
         report.problem("LLDB: `%s --version` failed: %s" % (lldb, (text or "").strip()[:200]),
                        "Install LLDB 18 or newer, or point SEAM_LLDB at a working one.")
         return False
-    if int(version.group(1)) < 18:
+    if not apple and int(version.group(1)) < 18:
         report.problem("LLDB: %s is version %s" % (lldb, version.group(0)[8:]),
                        "Seam needs LLDB 18 or newer (Debian/Ubuntu: apt install lldb-18).")
         return False
-    report.ok("LLDB: %s, version %s" % (lldb, version.group(0)[8:]))
-    if int(version.group(1)) == 18:
+    label = apple.group(0) if apple else "version " + version.group(0)[8:]
+    report.ok("LLDB: %s, %s" % (lldb, label))
+    if not apple and int(version.group(1)) == 18:
         report.note("LLDB 18 has one known weakness: in a program with several threads "
                     "that starts child processes (subprocess, os.system), it can lose "
                     "track of the program if another thread reaches a breakpoint at the "
@@ -88,7 +95,8 @@ def _check_lldb(report):
     if not scripting:
         report.problem("LLDB: its Python scripting does not work",
                        "Install the Python bindings that match this LLDB (Debian/Ubuntu: "
-                       "python3-lldb-%s)." % version.group(1))
+                       "python3-lldb-%s). On macOS install the Xcode command-line tools."
+                       % (version.group(1) if version else "<version>"))
         return False
     report.ok("LLDB: Python scripting works (Python %s.%s inside LLDB)" % scripting.groups())
     return True
@@ -105,6 +113,10 @@ def _check_helper(report):
 
 
 def _check_ptrace(report):
+    if sys.platform == "darwin":
+        report.note("debug permissions: the live session below checks macOS launch permissions; "
+                    "attaching also requires the target to allow debugging.")
+        return
     try:
         with open("/proc/sys/kernel/yama/ptrace_scope") as fh:
             scope = int(fh.read().strip())

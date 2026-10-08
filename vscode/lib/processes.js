@@ -1,5 +1,6 @@
 // The running Python processes of this user, for the attach picker. Read straight from
-// /proc: the extension only ever runs on Linux (on the WSL side of a Windows machine).
+// /proc on Linux/WSL, and libproc on macOS.
+const cp = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -49,6 +50,14 @@ function describe(procRoot, pid, uid) {
 
 // Options: procRoot and uid (for tests), and ignore(process) to leave some out.
 function listPythonProcesses(options = {}) {
+  if (process.platform === "darwin" && !options.procRoot) {
+    const script = path.join(__dirname, "..", "bundled", "seam", "_mac_processes.py");
+    const found = JSON.parse(cp.execFileSync("/usr/bin/python3", ["-I", script],
+      { encoding: "utf8", timeout: 15000 }));
+    return found.filter((entry) => entry.pid !== process.pid
+      && !(options.ignore && options.ignore(entry)))
+      .sort((a, b) => b.startTime - a.startTime || b.pid - a.pid);
+  }
   const procRoot = options.procRoot || "/proc";
   const uid = options.uid !== undefined ? options.uid : process.getuid();
   const found = [];

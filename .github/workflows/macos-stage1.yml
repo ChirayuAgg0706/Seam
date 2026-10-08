@@ -9,6 +9,44 @@ permissions:
   contents: read
 
 jobs:
+  packaged-editor:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Mac wheel and VSIX
+        run: |
+          python -m pip install build
+          python -m build --wheel
+          bash scripts/build-vsix.sh dist/*.whl
+          cargo build --manifest-path examples/pyo3-demo/Cargo.toml
+          cp examples/pyo3-demo/target/debug/libseam_demo.dylib examples/pyo3-demo/seam_demo.so
+          npm install --prefix vscode/test --no-save @vscode/test-electron
+      - name: Packaged adapter and real VS Code sessions
+        env:
+          SEAM_LLDB: /usr/bin/lldb
+          SEAM_EXPERIMENTAL_MACOS: '1'
+        run: |
+          node vscode/test/unit.js --adapter
+          export SEAM_VSIX="$(find "$GITHUB_WORKSPACE/vscode" -maxdepth 1 -name '*.vsix')"
+          export SEAM_DEMO_DIR="$GITHUB_WORKSPACE/examples/pyo3-demo"
+          node vscode/test/run.js
+          node vscode/test/run.js python-extension
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-packaged-editor
+          path: |
+            vscode/*.vsix
+            dist/*.whl
+            vscode/test/.vscode-test/**/logs/
   native-features:
     runs-on: macos-15
     timeout-minutes: 25

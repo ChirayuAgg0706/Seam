@@ -548,6 +548,11 @@ class SessionMixin:
         self.process = self.target.AttachToProcessWithID(self.listener, pid, err)
         if not err.Success() or not self.process or not self.process.IsValid():
             self.process = None
+            if sys.platform == "darwin":
+                raise DapError("cannot attach to pid %d: %s. macOS requires debugging "
+                               "permission and a target that permits debugger attachment; "
+                               "protected system executables cannot be attached to."
+                               % (pid, err.GetCString()))
             raise DapError("cannot attach to pid %d: %s (is ptrace allowed? see "
                            "/proc/sys/kernel/yama/ptrace_scope)" % (pid, err.GetCString()))
         self.attached = True
@@ -555,6 +560,9 @@ class SessionMixin:
             self._wait_attached(pid)
             self._require_x86_64()
             self._apply_signal_policy(args)
+            if sys.platform == "darwin":
+                from seam._mac_processes import process_cwd
+                self.cwd = process_cwd(pid) or self.cwd
             try:
                 self.cwd = os.readlink("/proc/%d/cwd" % pid)
             except OSError:
