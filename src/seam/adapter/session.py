@@ -62,8 +62,10 @@ class SessionMixin:
                 if not error.Success() or not os.path.basename(path).lower().startswith("python"):
                     return True
                 pid_pointer = self._entry_argument(frame, 0)
-            elif kind == "fork" and any("fork_exec" in (f.GetFunctionName() or "")
-                                        for f in thread):
+            elif kind == "fork" and any(
+                    "fork_exec" in (f.GetFunctionName() or "")
+                    or (f.GetModule().GetFileSpec().GetFilename() or "").startswith(
+                        "_posixsubprocess") for f in thread):
                 kind = "fork_exec"
             address = frame.FindRegister("lr").GetValueAsUnsigned()
             bp = self.target.BreakpointCreateByAddress(address)
