@@ -161,10 +161,14 @@ def test_optimized_locals_have_an_explanation(dap, inspection):
                breakpoints={SOURCE: [marker_line(SOURCE, "inspection-return")]})
     frame = dap.stack(dap.wait_stopped()["threadId"])[0]["id"]
     variables = dap.scope(frame)
-    assert variables["unused"]["value"].startswith(("<optimized out>", "<unavailable:")), variables
-    assert variables["unused"]["variablesReference"] == 0
-    assert variables["name"]["value"] == "<optimized out>", variables
-    assert variables["name"]["variablesReference"] == 0
+    # GCC and Clang retain different optimized variables. A retained value must be
+    # correct; an unavailable value must have an explanation and no expandable ref.
+    for name, retained in (("unused", "100"), ("name", '"wrong"')):
+        variable = variables[name]
+        if variable["value"].startswith(("<optimized out>", "<unavailable:")):
+            assert variable["variablesReference"] == 0, variable
+        else:
+            assert variable["value"] == retained, variable
     dap.set_breakpoints(SOURCE, [])
     dap.cont()
     assert dap.wait_exit() == 0

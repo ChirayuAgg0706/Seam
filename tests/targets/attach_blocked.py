@@ -4,6 +4,8 @@ import sys
 import threading
 import time
 
+import seamtest
+
 # Let a non-ancestor debugger attach even where Yama restricts ptrace (e.g. CI runners).
 PR_SET_PTRACER = 0x59616D61
 if sys.platform.startswith("linux"):
@@ -30,7 +32,9 @@ def busy(rounds):
 def main():
     threading.Thread(target=background, daemon=True).start()
     print("ready", flush=True)
-    sys.stdin.readline()            # blocked here until the test writes a line
+    # Retry EINTR entirely in C. Python's readline can service a debugger request
+    # during its signal checks on macOS, so it is not an inevitably blocked target.
+    seamtest.blocked_read()
     print("woke", busy(200000), flush=True)
     sys.stdin.readline()
     print("stopped", "helper loaded" if "seam_agent" in sys.modules else "clean", flush=True)

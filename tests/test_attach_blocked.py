@@ -1,4 +1,5 @@
 """Attaching to a process whose main thread is blocked in a system call."""
+import os
 import subprocess
 
 import pytest
@@ -11,9 +12,9 @@ BLOCKED = target("attach_blocked.py")
 
 
 @pytest.fixture
-def blocked(python):
+def blocked(python, capi):
     proc = subprocess.Popen([python, BLOCKED], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+                            stderr=subprocess.PIPE, text=True, env=dict(os.environ, **capi.env))
     assert proc.stdout.readline().strip() == "ready"
     yield proc
     if proc.poll() is None:

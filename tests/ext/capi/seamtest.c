@@ -6,6 +6,7 @@
 #include <Python.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 
 __attribute__((noinline)) static long
 add_impl(long a, long b)
@@ -98,7 +99,23 @@ st_fork_child(PyObject *self, PyObject *noargs)
     return PyLong_FromLong(result);
 }
 
+static PyObject *
+st_blocked_read(PyObject *self, PyObject *noargs)
+{
+    char byte = 0;
+    ssize_t received;
+    Py_BEGIN_ALLOW_THREADS
+    do {
+        do {
+            received = read(STDIN_FILENO, &byte, 1);
+        } while (received < 0 && errno == EINTR);
+    } while (received > 0 && byte != '\n');
+    Py_END_ALLOW_THREADS
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"blocked_read", st_blocked_read, METH_NOARGS, NULL},
     {"fork_child", st_fork_child, METH_NOARGS, NULL},
     {"bump", st_bump, METH_NOARGS, NULL},
     {"add", st_add, METH_VARARGS, NULL},
