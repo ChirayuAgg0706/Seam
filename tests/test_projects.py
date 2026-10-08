@@ -290,7 +290,15 @@ def test_contourpy_step_in_and_cpp_throw(dap):
     assert s.top() == ("main", s.program, s.line("lines"))
     dap.set_breakpoints(s.program, [])
     stop = s.cont("continue to the C++ throw")
-    assert stop["reason"] == "exception" and "std::invalid_argument" in stop["description"]
-    assert any("check_levels" in name for name in s.names()), s.names()
+    assert stop["reason"] == "exception", stop
+    info = dap.request("exceptionInfo", {"threadId": s.tid})
+    assert "invalid_argument" in info["exceptionId"], info
+    if stop["description"] != "C++ exception thrown":
+        assert "upper_level must be larger than lower_level" in stop["description"], stop
+    # Clang folds the level check into filled and reports its callsite.
+    if not any("check_levels" in name for name in s.names()):
+        call = line_of(path, "check_levels(lower_level, upper_level);")
+        assert any("::filled(" in frame["name"] and frame.get("source", {}).get("path") == path
+                   and frame["line"] == call for frame in s.stack), s.stack
     assert s.names()[-2:] == ["main", "<module>"]
     s.finish(code=1)
