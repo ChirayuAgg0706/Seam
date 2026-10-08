@@ -22,8 +22,9 @@ from seam import __version__
 # Prefer validated versions without LLDB 18's threaded-child-process bug, even
 # when the distro's unversioned `lldb` still points to 18. Explicit overrides win.
 LLDB_CANDIDATES = ("lldb-20", "lldb-19", "lldb", "lldb-21", "lldb-18")
-NO_LLDB = ("LLDB 18 or newer is required but no `lldb` was found on PATH. Install it "
-           "(Debian/Ubuntu: apt install lldb-19) or set SEAM_LLDB to its location.")
+NO_LLDB = ("No `lldb` was found on PATH. Install Apple's command-line tools on macOS "
+           "(xcode-select --install), or LLDB 19+ on Linux (apt install lldb-19). "
+           "Set SEAM_LLDB to override its location.")
 ADAPTER_ENTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adapter",
                              "lldb_entry.py")
 
@@ -188,7 +189,7 @@ def _relay(proc, ours, notes_read, log_path, lldb_output):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="seam", description="Debug Python and native code in one session.",
-        epilog=("Requires CPython 3.12+ and LLDB 18+ with Python scripting support. "
+        epilog=("Requires CPython 3.12+ and LLDB with Python scripting support. "
                 "Use the Seam extension in VS Code (a WSL window on Windows), or configure "
                 "Neovim's nvim-dap with `seam dap`. "
                 "Docs: https://github.com/ChirayuAgg0706/Seam#readme"))

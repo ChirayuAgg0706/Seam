@@ -145,7 +145,7 @@ The [main README](https://github.com/ChirayuAgg0706/Seam#readme) lists every lau
   Restart the session before evaluating again.
 - Attach needs ptrace permission and a responsive interpreter; blocked-process
   attach and remote debugging are outside the supported scope.
-- Disassembly breakpoints are not supported. Thread-heavy workloads can run about
+- Disassembly breakpoints are not supported. Linux thread-heavy workloads measured about
   twice as slowly; there is no universal low-overhead guarantee.
 - On macOS, Step Into from Python excludes native modules with more than 20,000
   functions. Set a source or function breakpoint to enter them. LLDB can omit the

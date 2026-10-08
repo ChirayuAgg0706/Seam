@@ -17,7 +17,7 @@ receives `30`. The recording starts at a Python breakpoint.
 ## Requirements
 
 - Apple Silicon macOS 14 or newer, or Linux x86-64 with glibc. On Windows, run Seam in WSL.
-- CPython 3.12, 3.13 or 3.14 for your program. Python 3.15.0rc3 passed the release
+- CPython 3.12, 3.13 or 3.14 for your program. Python 3.15.0rc3 passed the Linux release
   tests; later 3.15 builds have not been validated for this release. Virtual
   environments and interpreters without debug information are supported.
 - LLDB with Python scripting support. On macOS, use the LLDB supplied with Xcode's
@@ -240,7 +240,8 @@ entries are tried in order, and the first one under which the file exists is use
 When a breakpoint cannot bind for this reason, or Seam stops in your native code and
 cannot find its source, the debug console names the path in the debug info and, where it
 can, the exact entry to add. `readelf --debug-dump=info lib.so | grep -m3 DW_AT_name`
-shows the paths a library was built with.
+shows the paths a Linux library was built with. On macOS, use
+`dwarfdump --debug-info /path/to/module.so.dSYM` for its debug symbols.
 
 A project opened through a symbolic link needs no setting: Seam reports files under the
 path your editor uses.
@@ -462,7 +463,8 @@ The supported workflows have these limits:
   when the terminal is resized and Ctrl-Z does nothing. With `internalConsole` the
   program's stdout and stderr arrive in the debug console as one stream and its standard
   input is empty: `input()` raises `EOFError`.
-- **Thread-heavy programs** run about twice as slowly under Seam even with no breakpoints,
+- **Thread-heavy programs** measured on Linux run about twice as slowly under Seam
+  even with no breakpoints,
   because LLDB handles every thread start and exit. CPU-bound work is unaffected.
 - **Initial library loading** pauses while LLDB processes the new module. The no-breakpoint
   throughput checks exclude interpreter startup and this one-time import cost.
