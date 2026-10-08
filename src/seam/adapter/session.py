@@ -23,6 +23,71 @@ from .common import (
 
 
 class SessionMixin:
+    def _watch_macos_children(self):
+        """Apple debugserver lacks fork packets; observe the native spawn calls instead."""
+        if sys.platform != "darwin" or hasattr(self, "mac_child_entries"):
+            return
+        self.mac_child_entries, self.mac_child_returns = {}, {}
+        for name in ("fork", "vfork", "posix_spawn"):
+            bp = self._entry_breakpoint(name)
+            self.mac_child_entries[bp.GetID()] = name
+
+    def _macos_child_stop(self, thread):
+        if not hasattr(self, "mac_child_entries") or thread.GetStopReason() != lldb.eStopReasonBreakpoint:
+            return False
+        hit = thread.GetStopReasonDataAtIndex(0)
+        kind = self.mac_child_entries.get(hit)
+        frame = thread.GetFrameAtIndex(0)
+        if kind is not None:
+            pid_pointer = None
+            if kind == "posix_spawn":
+                error = lldb.SBError()
+                path = self.process.ReadCStringFromMemory(self._entry_argument(frame, 1), 4096, error)
+                if not error.Success() or not os.path.basename(path).lower().startswith("python"):
+                    return True
+                pid_pointer = self._entry_argument(frame, 0)
+            elif kind == "fork" and any("fork_exec" in (f.GetFunctionName() or "")
+                                        for f in thread):
+                kind = "fork_exec"
+            address = frame.FindRegister("lr").GetValueAsUnsigned()
+            bp = self.target.BreakpointCreateByAddress(address)
+            bp.SetThreadID(thread.GetThreadID())
+            self.mac_child_returns[bp.GetID()] = (kind, pid_pointer)
+            return True
+        returned = self.mac_child_returns.pop(hit, None)
+        if returned is None:
+            return False
+        self.target.BreakpointDelete(hit)
+        kind, pointer = returned
+        value = self._entry_argument(frame, 0)
+        pid = struct.unpack("<i", self._read(pointer, 4))[0] if pointer and value == 0 else value
+        if pid <= 0 or pid >= 1 << 31:
+            return True
+        if kind in ("vfork", "fork_exec"):
+            from seam._mac_processes import process_executable
+            # fork_exec returns before the child execs. The child runs independently;
+            # wait briefly for its executable to settle before identifying it.
+            if kind == "fork_exec":
+                time.sleep(0.05)
+            executable = process_executable(pid)
+            if not os.path.basename(executable).lower().startswith("python"):
+                return True
+        self._notice_child(pid)
+        for bp_id in list(self.mac_child_entries) + list(self.mac_child_returns):
+            self.target.BreakpointDelete(bp_id)
+        self.mac_child_entries.clear()
+        self.mac_child_returns.clear()
+        return True
+
+    def _notice_child(self, pid):
+        if self.child_noticed:
+            return
+        self.child_noticed = True
+        self.event("output", {"category": "console", "output":
+                   "Seam: the program started a child process (pid %d). Seam debugs only the "
+                   "program itself: child processes run freely, and breakpoints in them do "
+                   "not stop.\n" % pid})
+
     def _sync_macos_fork_table(self):
         """Let forked children remove Apple's inherited ARM64 software breakpoints."""
         if sys.platform != "darwin" or not self.sym.get("seam_fork_table"):
@@ -109,11 +174,7 @@ class SessionMixin:
                 return
         else:
             pid = int(child, 16)
-        self.child_noticed = True
-        self.event("output", {"category": "console", "output":
-                   "Seam: the program started a child process (pid %d). Seam debugs only the "
-                   "program itself: child processes run freely, and breakpoints in them do "
-                   "not stop.\n" % pid})
+        self._notice_child(pid)
 
     def _drain_output(self):
         for getter, category in ((self.process.GetSTDOUT, "stdout"),
@@ -546,6 +607,7 @@ class SessionMixin:
             # was set by name before the helper loaded and the thread is stopped at it
             # right now, so it is left alone.
             self.bp_trap = self.target.BreakpointCreateByAddress(self.sym["seam_trap"])
+        self._watch_macos_children()
 
     def _inject(self, thread):
         """Load the agent. The caller guarantees `thread` is at a safe point."""

@@ -262,6 +262,10 @@ class StopsMixin:
         landed, self.traps.landed = self.traps.landed, None
         # Then make LLDB's picture of the threads current: the checks below read it.
         self._fix_stale_frames()
+        for candidate in self.process:
+            if self._macos_child_stop(candidate):
+                self._continue()
+                return
         if (not self.pause_requested and landed is None
                 and not any(self._interesting(t) for t in self.process)):
             if any(t.GetStopReason() in FORK_STOPS for t in self.process):

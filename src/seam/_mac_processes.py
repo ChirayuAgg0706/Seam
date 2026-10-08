@@ -35,6 +35,15 @@ def process_cwd(pid):
     return ""
 
 
+def process_executable(pid):
+    lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    lib.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    path = ctypes.create_string_buffer(4096)
+    if lib.proc_pidpath(int(pid), path, len(path)) > 0:
+        return os.fsdecode(path.value)
+    return ""
+
+
 def list_python_processes():
     lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     libc = ctypes.CDLL(None, use_errno=True)
