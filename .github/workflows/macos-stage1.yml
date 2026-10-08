@@ -132,6 +132,7 @@ jobs:
       - name: Install test toolchains
         run: |
           python -m pip install pytest pybind11 nanobind cython uv
+          uv python install 3.11 3.13t
           rustc --version
       - name: Existing smoke scenarios on Apple Silicon
         env:

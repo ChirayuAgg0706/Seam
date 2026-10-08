@@ -8,6 +8,7 @@ of a .vsix if SEAM_VSIX names one, otherwise laid out from this source tree.
 import ast
 import os
 import subprocess
+import sys
 import zipfile
 
 import pytest
@@ -54,6 +55,12 @@ def bundled(bundle, tmp_path, python, monkeypatch):
 
 
 def environment(pid):
+    if sys.platform == "darwin":
+        # The fixture only checks that PYTHONPATH is absent from every process.
+        # macOS has no /proc; ps can expose the environment of our own children.
+        text = subprocess.check_output(["/bin/ps", "eww", "-p", str(pid), "-o", "command="],
+                                       text=True)
+        return {"PYTHONPATH": "present"} if "PYTHONPATH=" in text else {}
     with open("/proc/%d/environ" % pid, "rb") as fh:
         return dict(entry.split("=", 1) for entry in fh.read().decode(errors="replace").split("\0")
                     if "=" in entry)
@@ -98,7 +105,11 @@ def test_bundle_runs_the_program_in_a_terminal(bundled, bundle, python):
     client.terminal.read_until("name? ")
     # What the editor was asked to run in its terminal: the holder inside the extension,
     # with the interpreter that runs the adapter.
-    assert client.terminal.proc.args[:2] == [python, os.path.join(bundle, "seam", "terminal.py")]
+    # Framework Python replaces its launcher with Python.app; both paths identify
+    # the same installed interpreter but sys.executable can name the application.
+    launcher = subprocess.check_output([python, "-c", "import sys; print(sys.executable)"],
+                                       text=True).strip()
+    assert client.terminal.proc.args[:2] == [launcher, os.path.join(bundle, "seam", "terminal.py")]
     client.terminal.type("seam\n")
     assert client.wait_exit() == 0
     client.terminal.read_until("hello seam")

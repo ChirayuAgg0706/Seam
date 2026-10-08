@@ -160,7 +160,7 @@ def test_bad_requests_get_an_error_and_the_session_carries_on(dap):
 def test_launch_problems_are_reported_clearly(make_client, tmp_path):
     cases = [
         ({"program": BASIC, "python": "/no/such/python"}, "/no/such/python"),
-        ({"program": BASIC, "python": "/bin/true"}, "CPython"),
+        ({"program": BASIC, "python": "/usr/bin/true"}, "CPython"),
         ({"python": "python3"}, "'program' or 'module'"),
         ({"program": BASIC, "python": "python3", "stopOnSignals": ["SIGNOPE"]}, "SIGNOPE"),
         ({"program": BASIC, "python": "python3", "cwd": str(tmp_path / "missing")}, "missing"),
