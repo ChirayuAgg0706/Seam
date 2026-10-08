@@ -45,6 +45,7 @@ HELPER_SYMBOLS = (
     "seam_trap", "seam_dispatch", "seam_pending", "seam_req_buf", "seam_req_len",
     "seam_resp_ptr", "seam_resp_len", "seam_req_cap", "seam_pend_buf", "seam_pend_len",
     "seam_step_gen",
+    "seam_fork_table", "seam_fork_count",
 )
 
 # Source paths that mark a native frame as binding-layer glue rather than user code.

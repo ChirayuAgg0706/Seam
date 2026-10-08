@@ -89,14 +89,14 @@ PYTHON_CHILD = (
 
 def spawning():
     before = work(1)
-    done = subprocess.run(["/bin/true"])  # spawn-first
+    done = subprocess.run(["/usr/bin/true"])  # spawn-first
     print("subprocess true:", exit_code(done.returncode), flush=True)
     done = subprocess.run(["ls", os.path.dirname(os.path.abspath(__file__))],
                           capture_output=True, text=True)
     print("subprocess ls:", exit_code(done.returncode), "children.py" in done.stdout,
           flush=True)
     print("system:", describe(os.system("exit 3")), flush=True)
-    pid = os.posix_spawn("/bin/true", ["true"], os.environ)
+    pid = os.posix_spawn("/usr/bin/true", ["true"], os.environ)
     print("posix_spawn:", describe(os.waitpid(pid, 0)[1]), flush=True)
     command = [sys.executable, "-c", "print(input().upper())"]  # spawn-python
     proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -199,7 +199,7 @@ def fork_with_threads():
         if pid == 0:
             child_main("threads %d" % round_number)
         reap("threads %d" % round_number, pid)
-        done = subprocess.run(["/bin/true"])
+        done = subprocess.run(["/usr/bin/true"])
         print("threads %d subprocess: %s" % (round_number, exit_code(done.returncode)),
               flush=True)
     stop.set()  # threads-stop
@@ -214,7 +214,7 @@ def stepping():
     if pid == 0:  # step-if
         child_main("step")
     reap("step", pid)  # step-reap
-    done = subprocess.run(["/bin/true"])  # step-subprocess
+    done = subprocess.run(["/usr/bin/true"])  # step-subprocess
     code = os.system("exit 3")  # step-system
     print("parent: stepped %s %s" % (exit_code(done.returncode), describe(code)),  # step-print
           flush=True)

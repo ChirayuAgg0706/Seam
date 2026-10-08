@@ -165,7 +165,7 @@ def test_expressions_that_start_children(dap, capi):
     frame = dap.stack(tid)[0]
     # Typed into the debug console at a Python stop. (A fork would end LLDB's evaluation
     # of the call and leave the child stopped for ever, if Seam let LLDB unwind.)
-    for expression, result in (("subprocess.run(['/bin/true']).returncode", "0"),
+    for expression, result in (("subprocess.run(['/usr/bin/true']).returncode", "0"),
                                ("os.system('exit 4') >> 8", "4"),
                                ("subprocess.check_output(['echo', 'hi'])", "b'hi\\n'")):
         assert dap.evaluate(expression, frame["id"])["result"] == result, dap.tail_log()
@@ -214,7 +214,10 @@ def test_process_pool_executor(dap, capi):
 
 def lldb_major(dap):
     """LLDB's major version (the process must be stopped)."""
-    return int(re.search(r"version (\d+)", dap.request("seam/status")["lldb"]).group(1))
+    version = dap.request("seam/status")["lldb"]
+    if version.startswith("lldb-"):
+        return 19  # Apple uses Xcode build numbers; run the concurrent-breakpoint test.
+    return int(re.search(r"version (\d+)", version).group(1))
 
 
 def test_fork_while_other_threads_run(dap, capi):

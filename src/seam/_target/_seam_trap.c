@@ -18,6 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 #define SEAM_REQ_CAP (1 << 20)
 #define EXPORT __attribute__((visibility("default"), used))
@@ -423,6 +427,27 @@ fork_child(void)
     if (count <= 0 || table == NULL) {
         return;
     }
+#ifdef __APPLE__
+    /* Apple's debugserver leaves software breakpoints in a forked child. Restore
+     * their ARM64 instructions in the child's private mapping before user code runs.
+     * VM_PROT_COPY requests copy-on-write when the original code mapping is read-only.
+     */
+    for (long i = 0; i < count; i++) {
+        mach_vm_address_t address = table[i].address;
+        mach_vm_address_t page = address & ~((mach_vm_address_t)vm_page_size - 1);
+        if (mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
+                            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE | VM_PROT_COPY)
+                != KERN_SUCCESS) {
+            return;
+        }
+        uint32_t instruction = (uint32_t)table[i].original;
+        memcpy((void *)(uintptr_t)address, &instruction, sizeof(instruction));
+        __builtin___clear_cache((char *)(uintptr_t)address,
+                                (char *)(uintptr_t)(address + sizeof(instruction)));
+        mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
+                        VM_PROT_READ | VM_PROT_EXECUTE);
+    }
+#else
     /* The code is mapped read-only; a process may still write to it through this file. */
     int fd = open("/proc/self/mem", O_WRONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -435,6 +460,7 @@ fork_child(void)
         }
     }
     close(fd);
+#endif
 }
 
 PyMODINIT_FUNC

@@ -23,6 +23,45 @@ from .common import (
 
 
 class SessionMixin:
+    def _sync_macos_fork_table(self):
+        """Let forked children remove Apple's inherited ARM64 software breakpoints."""
+        if sys.platform != "darwin" or not self.sym.get("seam_fork_table"):
+            return
+        addresses = set()
+        for index in range(self.target.GetNumBreakpoints()):
+            bp = self.target.GetBreakpointAtIndex(index)
+            if not bp.IsEnabled():
+                continue
+            for location in bp:
+                address = location.GetAddress().GetLoadAddress(self.target)
+                if location.IsEnabled() and address != lldb.LLDB_INVALID_ADDRESS:
+                    addresses.add(address)
+        addresses = tuple(sorted(addresses))
+        if addresses == getattr(self, "mac_fork_addresses", None):
+            return
+        # ReadMemory returns original code under LLDB's software breakpoints.
+        data = b"".join(struct.pack("<QQ", address,
+                                   struct.unpack("<I", self._read(address, 4))[0])
+                        for address in addresses)
+        capacity = getattr(self, "mac_fork_capacity", 0)
+        if len(data) > capacity:
+            error = lldb.SBError()
+            capacity = max(32768, len(data))
+            allocation = self.process.AllocateMemory(
+                capacity, lldb.ePermissionsReadable | lldb.ePermissionsWritable, error)
+            if not error.Success():
+                raise DapError("cannot allocate the macOS fork cleanup table: %s"
+                               % error.GetCString())
+            old = getattr(self, "mac_fork_allocation", None)
+            self.mac_fork_allocation, self.mac_fork_capacity = allocation, capacity
+            self._write(self.sym["seam_fork_table"], struct.pack("<Q", allocation))
+            if old is not None:
+                self.process.DeallocateMemory(old)
+        if data:
+            self._write(self.mac_fork_allocation, data)
+        self._write(self.sym["seam_fork_count"], struct.pack("<q", len(addresses)))
+        self.mac_fork_addresses = addresses
+
     def _watch_exit_packets(self):
         """Learn whether the program exited or was killed by a signal.
 

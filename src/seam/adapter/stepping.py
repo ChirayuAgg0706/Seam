@@ -162,6 +162,7 @@ class SteppingMixin:
         bp.SetThreadID(thread.GetThreadID())
         self.stepout = {"bp": bp, "sp": target.GetSP()}
         self.log("running until return to", target.GetFunctionName(), hex(address))
+        self._sync_macos_fork_table()
         err = self.process.Continue()
         if not err.Success():
             self._clear_stepout()
@@ -220,6 +221,7 @@ class SteppingMixin:
         # "stop in the caller" over it would run straight through the callback.
         self._finish_steps(thread, cancel_py=False)
         self.py_step_armed = True
+        self._sync_macos_fork_table()
         err = self.process.Continue()
         if not err.Success():
             raise DapError("could not resume: %s" % err.GetCString())

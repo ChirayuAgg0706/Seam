@@ -420,6 +420,15 @@ class StopsMixin:
             name = "exception"
             if reason == lldb.eStopReasonSignal:
                 name = self._signal_name(thread.GetStopReasonDataAtIndex(0))
+            else:
+                for mach, unix in (("EXC_BAD_ACCESS", "SIGSEGV"),
+                                   ("EXC_BAD_INSTRUCTION", "SIGILL"),
+                                   ("EXC_ARITHMETIC", "SIGFPE")):
+                    if body["description"].startswith(mach):
+                        name = unix
+                        body["description"] = unix + ": " + body["description"]
+                        body["text"] = body["description"]
+                        break
             self.fault_stop = name in FAULT_SIGNALS or reason == lldb.eStopReasonException
             self.exception_info[thread.GetThreadID()] = {
                 "exceptionId": name, "description": body["description"],
@@ -528,6 +537,7 @@ class StopsMixin:
     def _continue(self):
         if self.user_bps_on:
             self.traps.arm()  # they are out at every stop; in again while the step lasts
+        self._sync_macos_fork_table()
         err = self.process.Continue()
         if not err.Success():
             self.traps.disarm()

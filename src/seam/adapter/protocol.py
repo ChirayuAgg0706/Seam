@@ -180,6 +180,7 @@ class ProtocolMixin:
         `alone_s`: if the call has not returned after that long, the other threads are let
         run until it has. For calls that can need a lock a stopped thread is holding.
         """
+        self._sync_macos_fork_table()
         frame = thread.GetFrameAtIndex(0)
         started = time.monotonic()
         if user_code:
