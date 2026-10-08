@@ -32,10 +32,10 @@ class SessionMixin:
         if thread.GetStopReason() != lldb.eStopReasonSignal:
             return False
         number = thread.GetStopReasonDataAtIndex(0)
-        signals = self.process.GetUnixSignals()
-        signals.SetShouldStop(number, False)
-        signals.SetShouldNotify(number, False)
-        self.macos_passed_fault = number
+        error = self.process.Signal(number)
+        self.log("macOS resume fault signal", number, error.Success(), error.GetCString())
+        if not error.Success():
+            raise DapError("could not deliver the stopped signal: %s" % error.GetCString())
         return True
 
     def _watch_fork_calls(self):

@@ -453,8 +453,13 @@ def test_cpp_throw_in_a_mapped_file(dap, built):
         assert "thrower" in thrower[0]["name"]
         assert thrower[0]["line"] == marker_line(THROWING, "throw-here")
     # Above it, the C++ runtime's own frame: no source, and it says which library.
-    assert stack[0]["name"].startswith("libstdc++") and "__cxa_throw" in stack[0]["name"]
-    assert "path" not in stack[0].get("source", {})
+    if sys.platform == "darwin":
+        # libc++abi's __cxa_throw can tail-call the unwinder. The first physical
+        # frame is then the throw site, still mapped to the user's source correctly.
+        assert (stack[0] in thrower or "__cxa_throw" in stack[0]["name"]), stack
+    else:
+        assert stack[0]["name"].startswith("libstdc++") and "__cxa_throw" in stack[0]["name"]
+        assert "path" not in stack[0].get("source", {})
     position = names(stack).index("throw")
     assert stack[position]["line"] == marker_line(TARGET, "throw-call")
     finish(dap)
