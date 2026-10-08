@@ -57,7 +57,8 @@ def test_doctor_passes_on_a_working_setup(python):
     done = seam("doctor", "--python", python)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "PROBLEM" not in done.stdout
-    for expected in ("platform: Linux x86-64", "LLDB: Python scripting works",
+    platform_name = "macOS Apple Silicon" if sys.platform == "darwin" else "Linux x86-64"
+    for expected in ("platform: " + platform_name, "LLDB: Python scripting works",
                      "helper: built", "debug session: launched a program",
                      "Seam is ready to use."):
         assert expected in done.stdout, done.stdout

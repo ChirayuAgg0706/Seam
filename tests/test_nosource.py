@@ -183,7 +183,7 @@ def test_stepping_by_instruction_in_a_stripped_library(dap, stripped):
     # Step over, one instruction at a time, until the next one is a call.
     stepped = 0
     top, (this, following) = here()
-    while not this["instruction"].startswith("call"):
+    while this["instruction"].split()[0] not in ("call", "callq", "bl", "blr"):
         assert not this["instruction"].startswith(("j", "ret")), this
         dap.request("next", {"threadId": tid, "granularity": "instruction"})
         assert dap.wait_stopped()["reason"] == "step"
@@ -225,7 +225,8 @@ def test_crash_in_a_stripped_library(dap, stripped):
     assert stack[position]["line"] == marker_line(NOSOURCE, "crash-call")
     assert names(stack)[position:] == ["main", "<module>"]
     listing = disassemble(dap, stack[0]["instructionPointerReference"], 1)
-    assert listing[0]["instruction"].startswith("mov"), listing  # the faulting store
+    stores = ("str", "stur") if sys.platform == "darwin" else ("mov",)
+    assert listing[0]["instruction"].startswith(stores), listing  # the faulting store
     dap.cont()
     assert dap.wait_exit() == 128 + signal.SIGSEGV
 
@@ -240,7 +241,7 @@ def test_crash_inside_the_interpreter_called_from_a_library(dap, stripped):
     # (With the interpreter's debug info installed the name is that of the inlined
     # accessor the fault is in.)
     library, _, function = stack[0]["name"].partition("!")
-    assert library.startswith(("python", "libpython")), names(stack)
+    assert library.lower().startswith(("python", "libpython")), names(stack)
     assert function in ("PyObject_Repr", "Py_TYPE"), names(stack)
     assert_no_source(stack[0])
     assert stack[1]["name"] == LIBRARY + "!nosource_bad_object", names(stack)
@@ -263,8 +264,9 @@ def test_crash_raised_by_the_interpreter_itself(dap, stripped):
     for frame in stack[:position]:
         assert_no_source(frame)
     libraries = [f["name"].split("!")[0].split("+")[0] for f in stack[:position]]
-    assert libraries[0].startswith("libc."), names(stack)
-    assert libraries[-1].startswith(("python", "libpython")), names(stack)
+    prefix = "libsystem_" if sys.platform == "darwin" else "libc."
+    assert libraries[0].startswith(prefix), names(stack)
+    assert libraries[-1].lower().startswith(("python", "libpython")), names(stack)
     dap.cont()
     assert dap.wait_exit() == 128 + signal.SIGSEGV
 
@@ -277,7 +279,11 @@ def test_libc_frames_carry_no_source_that_is_not_there(dap, capi):
     position = names(stack).index("st_do_abort")
     assert position >= 1
     for frame in stack[:position]:
-        assert_no_source(frame, "libc.so.6")
+        if sys.platform == "darwin":
+            assert_no_source(frame)
+            assert frame["name"].startswith("libsystem_"), frame
+        else:
+            assert_no_source(frame, "libc.so.6")
     # A frame that has source keeps its plain name and its path.
     assert stack[position]["source"]["path"] == CAPI_SRC
     assert "presentationHint" not in stack[position]
