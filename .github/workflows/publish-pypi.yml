@@ -62,9 +62,12 @@ jobs:
               if hashlib.sha256(path.read_bytes()).hexdigest() != sums.get(path.name):
                   raise SystemExit("Checksum mismatch: " + path.name)
           wheel_metadata = []
+          linux_tag = r"manylinux(?:2014|_[0-9]+_[0-9]+)_x86_64"
+          linux_platform = linux_tag + r"(?:\." + linux_tag + r")*"
           for wheel in wheels:
               if not re.fullmatch(r"seam_debugger-" + re.escape(version)
-                                  + r"-cp312-abi3-(manylinux_[a-zA-Z0-9_.]+_x86_64|macosx_14_0_arm64)\.whl",
+                                  + r"-cp312-abi3-(" + linux_platform
+                                  + r"|macosx_14_0_arm64)\.whl",
                                   wheel.name):
                   raise SystemExit("Unexpected wheel platform: " + wheel.name)
               with zipfile.ZipFile(wheel) as archive:
