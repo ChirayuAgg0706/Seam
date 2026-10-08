@@ -26,7 +26,6 @@ jobs:
       - name: Update breakpoints while an attached process runs
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
           SEAM_TEST_REPEAT: '5'
         run: |
           cd "$GITHUB_WORKSPACE"
@@ -51,7 +50,6 @@ jobs:
       - name: Optimized native stack, globals and inline stepping
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
           SEAM_TEST_LAYERS: capi
         run: |
           cd "$GITHUB_WORKSPACE"
@@ -76,7 +74,6 @@ jobs:
       - name: Fork cleanup and crash delivery
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
         run: |
           cd "$GITHUB_WORKSPACE"
           python -m pytest tests/test_children.py::test_fork tests/test_children.py::test_fork_made_by_native_code tests/test_children.py::test_subprocess_system_and_posix_spawn tests/test_children.py::test_native_step_over_fork_preserves_the_child tests/test_children.py::test_user_function_breakpoint_on_fork_is_not_hidden tests/test_crash.py::test_segfault_in_native_code_stops_with_the_merged_stack tests/test_pytest.py::test_segfault_in_an_extension_during_a_test --target-python "$(which python)" --basetemp="$RUNNER_TEMP/seam-focused" --junitxml=mac-focused.xml -vv
@@ -110,7 +107,6 @@ jobs:
       - name: Packaged adapter and real VS Code sessions
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
           SEAM_LOG: ${{ runner.temp }}/mac-editor.log
         run: |
           node vscode/test/unit.js --adapter
@@ -121,7 +117,6 @@ jobs:
       - name: Installed wheel through Neovim's documented configuration
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
           SEAM_LOG: ${{ runner.temp }}/mac-neovim.log
         run: |
           command -v nvim || brew install neovim
@@ -166,14 +161,13 @@ jobs:
       - name: Existing smoke scenarios on Apple Silicon
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
           SEAM_TEST_STRICT: '1'
           SEAM_TEST_BUILD: ${{ runner.temp }}/native-build
         run: |
           cd "$GITHUB_WORKSPACE"
           selection=()
           if [ '${{ matrix.suite }}' = smoke ]; then selection=(-m smoke); fi
-          python -m pytest tests "${selection[@]}" --target-python "$(which python)" --opt '${{ matrix.opt }}' --maxfail=12 --basetemp="$RUNNER_TEMP/seam-pytest" --junitxml=mac-smoke.xml -ra
+          python -m pytest tests "${selection[@]}" --target-python "$(which python)" --opt '${{ matrix.opt }}' --maxfail=12 -o faulthandler_timeout=90 -vv --basetemp="$RUNNER_TEMP/seam-pytest" --junitxml=mac-smoke.xml -ra
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -211,7 +205,6 @@ jobs:
       - name: Exercise installed adapter
         env:
           SEAM_LLDB: /usr/bin/lldb
-          SEAM_EXPERIMENTAL_MACOS: '1'
         run: |
           "$RUNNER_TEMP/seam-venv/bin/python" scripts/macos-stage1-check.py --output stage1-results --repeat 5
       - uses: actions/upload-artifact@v4
@@ -221,3 +214,24 @@ jobs:
           path: |
             stage1-results/
             dist/*.whl
+
+  debugger-exit-regressions:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          architecture: arm64
+      - run: python -m pip install pytest pybind11 nanobind cython
+      - name: Stop sessions with living child processes
+        env:
+          SEAM_LLDB: /usr/bin/lldb
+          SEAM_TEST_REPEAT: '5'
+        run: python -m pytest tests/test_children.py::test_stopping_the_session_ends_the_children_in_the_programs_group --opt O2 --target-python "$(which python)" --basetemp="$RUNNER_TEMP/exit-checks" -o faulthandler_timeout=90 -vv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debugger-exit-checks
+          path: ${{ runner.temp }}/exit-checks/

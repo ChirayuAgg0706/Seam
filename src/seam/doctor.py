@@ -52,12 +52,11 @@ def _check_platform(report):
     if sys.platform.startswith("linux") and machine in ("x86_64", "AMD64"):
         report.ok("platform: Linux x86-64")
         return True
-    if (sys.platform == "darwin" and machine == "arm64"
-            and os.environ.get("SEAM_EXPERIMENTAL_MACOS") == "1"):
-        report.ok("platform: macOS Apple Silicon (experimental)")
+    if sys.platform == "darwin" and machine == "arm64":
+        report.ok("platform: macOS Apple Silicon")
         return True
     report.problem("platform: %s %s" % (sys.platform, machine),
-                   "Seam supports Linux on x86-64 only.")
+                   "Use Linux on x86-64, Apple Silicon macOS 14 or newer, or WSL on Windows.")
     return False
 
 

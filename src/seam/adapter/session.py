@@ -430,18 +430,16 @@ class SessionMixin:
         if self.target is not None:
             raise DapError("this session is already debugging a program")
 
-    def _require_x86_64(self):
+    def _require_supported_architecture(self):
         triple = self.target.GetTriple() or ""
         if sys.platform == "darwin" and not triple.startswith(("arm64", "aarch64")):
             raise DapError("The macOS build needs an Apple Silicon ARM64 interpreter; "
                            "Intel and Rosetta targets are unsupported: %s" % triple)
-        # Stage 1 is an explicitly opted-in feasibility experiment, not released support.
-        if (sys.platform == "darwin" and triple.startswith(("arm64", "aarch64"))
-                and os.environ.get("SEAM_EXPERIMENTAL_MACOS") == "1"):
-            self.log("experimental Apple Silicon target:", triple)
+        if sys.platform == "darwin" and triple.startswith(("arm64", "aarch64")):
+            self.log("Apple Silicon target:", triple)
             return
         if triple and not triple.startswith("x86_64"):
-            raise DapError("Seam supports x86-64 Linux programs only; this one is %s" % triple)
+            raise DapError("Seam needs an x86-64 Linux or Apple Silicon macOS interpreter; this one is %s" % triple)
 
     def req_launch(self, args):
         self._require_no_session()
@@ -472,7 +470,7 @@ class SessionMixin:
         self.log("launch: target created in %.3f s" % (time.monotonic() - phase))
         if not self.target or not self.target.IsValid():
             raise DapError("cannot create a target for %s: %s" % (python, err.GetCString()))
-        self._require_x86_64()
+        self._require_supported_architecture()
         bp_main = self._entry_breakpoint("Py_RunMain")
         self.log("launch: entry breakpoint", bp_main.GetID(), "locations",
                  bp_main.GetNumLocations())
@@ -536,7 +534,7 @@ class SessionMixin:
         while (sys.platform == "darwin" and state == lldb.eStateStopped
                and self.process.GetSelectedThread().GetStopReason() == lldb.eStopReasonExec):
             self.log("launch: framework interpreter exec; waiting for Py_RunMain")
-            self._require_x86_64()
+            self._require_supported_architecture()
             if time.monotonic() >= bootstrap_deadline:
                 raise DapError("timed out waiting for the macOS interpreter launcher")
             resumed = self.process.Continue()
@@ -745,7 +743,7 @@ class SessionMixin:
         self.attached = True
         try:
             self._wait_attached(pid)
-            self._require_x86_64()
+            self._require_supported_architecture()
             self._apply_signal_policy(args)
             if sys.platform == "darwin":
                 from seam._mac_processes import process_cwd
