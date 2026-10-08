@@ -273,8 +273,11 @@ class BreakpointsMixin:
                 python_side.append({"name": b["name"], "condition": b.get("condition"),
                                     "hit": hit})
                 answers.append({"verified": True})
-        self.py_function_bps = python_side
-        self._sync_py_bps()
+            # Keep native and Python updates in the same pause. Resuming between
+            # them immediately requests a second interrupt, which old Apple LLDB
+            # can lose while its first resume is still being delivered.
+            self.py_function_bps = python_side
+            self._sync_py_bps()
         return {"breakpoints": answers}
 
     def _set_native_hit_condition(self, bp, hit, log):
