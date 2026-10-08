@@ -14,7 +14,9 @@ import sysconfig
 
 import pytest
 
-from conftest import BUILD, EXT, LAYERS, SHARED_FLAGS, _run, _unavailable, marker_line, pid_alive, target
+from conftest import (
+    BUILD, EXT, LAYERS, SHARED_FLAGS, _run, _unavailable, marker_line, pid_alive, target,
+)
 
 pytestmark = pytest.mark.smoke
 

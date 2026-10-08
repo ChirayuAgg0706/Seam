@@ -65,7 +65,8 @@ def list_python_processes():
         if pid <= 0 or pid == os.getpid():
             continue
         info = BsdInfo()
-        if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+        read = lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if read != ctypes.sizeof(info):
             continue
         if info.uid != os.getuid() or info.status == 5:
             continue

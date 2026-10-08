@@ -33,7 +33,8 @@ class SessionMixin:
             self.mac_child_entries[bp.GetID()] = name
 
     def _macos_child_stop(self, thread):
-        if not hasattr(self, "mac_child_entries") or thread.GetStopReason() != lldb.eStopReasonBreakpoint:
+        if (not hasattr(self, "mac_child_entries")
+                or thread.GetStopReason() != lldb.eStopReasonBreakpoint):
             return False
         hit = thread.GetStopReasonDataAtIndex(0)
         kind = self.mac_child_entries.get(hit)
@@ -42,7 +43,8 @@ class SessionMixin:
             pid_pointer = None
             if kind == "posix_spawn":
                 error = lldb.SBError()
-                path = self.process.ReadCStringFromMemory(self._entry_argument(frame, 1), 4096, error)
+                path = self.process.ReadCStringFromMemory(
+                    self._entry_argument(frame, 1), 4096, error)
                 if not error.Success() or not os.path.basename(path).lower().startswith("python"):
                     return True
                 pid_pointer = self._entry_argument(frame, 0)

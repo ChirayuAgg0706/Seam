@@ -3,6 +3,7 @@
 const cp = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const processes = require("./processes");
 
 // The seam package declares requires-python >= 3.12, and its launcher is part of it.
 const MINIMUM = [3, 12];
@@ -37,7 +38,15 @@ function launcherCandidates(configuration, readlink = fs.readlinkSync) {
   }
   if (configuration.request === "attach" && Number(configuration.pid) > 0) {
     try {
-      candidates.push(readlink(`/proc/${Number(configuration.pid)}/exe`));
+      if (process.platform === "darwin" && readlink === fs.readlinkSync) {
+        const target = processes.listPythonProcesses().find(
+          (entry) => entry.pid === Number(configuration.pid));
+        if (target) {
+          candidates.push(target.exe);
+        }
+      } else {
+        candidates.push(readlink(`/proc/${Number(configuration.pid)}/exe`));
+      }
     } catch (err) {
       // Not ours to read, or gone: the adapter will say so.
     }

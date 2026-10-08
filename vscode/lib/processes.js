@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 // python, python3, python3.13, python3.13t (free-threaded), python3.14d (debug build).
-const PYTHON_NAME = /^python(\d+(\.\d+)?)?[dt]?$/;
+const PYTHON_NAME = /^python(\d+(\.\d+)?)?[dt]?$/i;
 
 function isPython(file) {
   return Boolean(file) && PYTHON_NAME.test(path.basename(file));
