@@ -32,6 +32,7 @@ class DisassemblyMixin:
             raise DapError("disassemble: at most %d instructions at a time" % MAX_INSTRUCTIONS)
         if not 0 <= base < 1 << 64:
             raise DapError("disassemble: %#x is not an address" % base)
+        stride = 4 if (self.target.GetTriple() or "").startswith(("arm64", "aarch64")) else 1
         before = self._instructions_before(base, -first) if first < 0 else []
         after = []
         if first + count > 0:
@@ -44,13 +45,13 @@ class DisassemblyMixin:
         out = []
         for position in range(first, first + count):
             if position >= len(after):
-                out.append(self._no_instruction(high + position - len(after)))
+                out.append(self._no_instruction(high + (position - len(after)) * stride))
             elif position >= 0:
                 out.append(self._instruction(after[position], symbols))
             elif len(before) + position >= 0:
                 out.append(self._instruction(before[len(before) + position], symbols))
             else:
-                out.append(self._no_instruction(low + len(before) + position))
+                out.append(self._no_instruction(low + (len(before) + position) * stride))
         return {"instructions": out}
 
     def _span(self, instruction):
@@ -67,6 +68,23 @@ class DisassemblyMixin:
         function until there are enough. A stripped library still has function starts:
         LLDB takes them from the unwind tables.
         """
+        if (self.target.GetTriple() or "").startswith(("arm64", "aarch64")):
+            # AArch64 instructions are four bytes. Stripped Mach-O symbol ranges do
+            # not reliably identify an aligned function start, but no such start is
+            # needed to decode this architecture backwards.
+            out = []
+            for back in range(1, wanted + 1):
+                if address < back * 4:
+                    break
+                where = self.target.ResolveLoadAddress(address - back * 4)
+                section = where.GetSection()
+                if not section.IsValid() or not section.GetPermissions() & lldb.ePermissionsExecutable:
+                    break
+                found = self.target.ReadInstructions(where, 1)
+                if found.GetSize() != 1 or found.GetInstructionAtIndex(0).GetByteSize() != 4:
+                    break
+                out.append(found.GetInstructionAtIndex(0))
+            return list(reversed(out))
         out = []
         while len(out) < wanted:
             start = lldb.LLDB_INVALID_ADDRESS

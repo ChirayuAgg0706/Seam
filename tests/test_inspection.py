@@ -51,7 +51,7 @@ def test_invalid_python_condition_is_reported_once(dap, function):
 def test_invalid_cpp_string_condition_is_reported_once(dap, inspection):
     # At -O2 name is optimised out; either failure still needs an explanation.
     dap.launch(SCRIPT, dap.python, env=inspection.env, breakpoints={SOURCE: [
-        {"line": marker_line(SOURCE, "inspection-return"), "condition": 'name == "right"'}]})
+        {"line": marker_line(SOURCE, "inspection-return"), "condition": 'name == 42'}]})
     lines = []
     for _ in range(2):
         stop = dap.wait_stopped()
