@@ -42,15 +42,23 @@ class SessionMixin:
         if sys.platform != "darwin" or hasattr(self, "mac_child_entries"):
             return
         self.mac_child_entries, self.mac_child_returns = {}, {}
+        self.mac_child_internal_ids = set()
         for name in ("fork", "vfork", "posix_spawn"):
             bp = self._entry_breakpoint(name)
             self.mac_child_entries[bp.GetID()] = name
+            self.mac_child_internal_ids.add(bp.GetID())
 
     def _macos_child_stop(self, thread):
         if (not hasattr(self, "mac_child_entries")
                 or thread.GetStopReason() != lldb.eStopReasonBreakpoint):
             return False
-        hit = thread.GetStopReasonDataAtIndex(0)
+        ids = [thread.GetStopReasonDataAtIndex(i)
+               for i in range(0, thread.GetStopReasonDataCount(), 2)]
+        hit = next((i for i in ids if i in self.mac_child_entries
+                    or i in self.mac_child_returns), None)
+        if hit is None:
+            return False
+        private_only = all(i in self.mac_child_internal_ids for i in ids)
         kind = self.mac_child_entries.get(hit)
         frame = thread.GetFrameAtIndex(0)
         if kind is not None:
@@ -60,7 +68,7 @@ class SessionMixin:
                 path = self.process.ReadCStringFromMemory(
                     self._entry_argument(frame, 1), 4096, error)
                 if not error.Success() or not os.path.basename(path).lower().startswith("python"):
-                    return True
+                    return private_only
                 pid_pointer = self._entry_argument(frame, 0)
             elif kind == "fork" and any(
                     "fork_exec" in (f.GetFunctionName() or "")
@@ -71,7 +79,8 @@ class SessionMixin:
             bp = self.target.BreakpointCreateByAddress(address)
             bp.SetThreadID(thread.GetThreadID())
             self.mac_child_returns[bp.GetID()] = (kind, pid_pointer)
-            return True
+            self.mac_child_internal_ids.add(bp.GetID())
+            return private_only
         returned = self.mac_child_returns.pop(hit, None)
         if returned is None:
             return False
@@ -80,7 +89,7 @@ class SessionMixin:
         value = self._entry_argument(frame, 0)
         pid = struct.unpack("<i", self._read(pointer, 4))[0] if pointer and value == 0 else value
         if pid <= 0 or pid >= 1 << 31:
-            return True
+            return private_only
         if kind in ("vfork", "fork_exec"):
             from seam._mac_processes import process_executable
             # fork_exec returns before the child execs. The child runs independently;
@@ -89,13 +98,13 @@ class SessionMixin:
                 time.sleep(0.05)
             executable = process_executable(pid)
             if not os.path.basename(executable).lower().startswith("python"):
-                return True
+                return private_only
         self._notice_child(pid)
         for bp_id in list(self.mac_child_entries) + list(self.mac_child_returns):
             self.target.BreakpointDelete(bp_id)
         self.mac_child_entries.clear()
         self.mac_child_returns.clear()
-        return True
+        return private_only
 
     def _notice_child(self, pid):
         if self.child_noticed:

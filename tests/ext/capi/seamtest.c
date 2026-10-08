@@ -87,7 +87,19 @@ st_bump(PyObject *self, PyObject *noargs)
     return PyLong_FromLong(bump_count);
 }
 
+static PyObject *
+st_fork_child(PyObject *self, PyObject *noargs)
+{
+    pid_t pid = fork(); /* native-fork-call */
+    long result = (long)pid; /* native-fork-after */
+    if (pid == 0) {
+        _exit(7);
+    }
+    return PyLong_FromLong(result);
+}
+
 static PyMethodDef methods[] = {
+    {"fork_child", st_fork_child, METH_NOARGS, NULL},
     {"bump", st_bump, METH_NOARGS, NULL},
     {"add", st_add, METH_VARARGS, NULL},
     {"call_back", st_call_back, METH_VARARGS, NULL},

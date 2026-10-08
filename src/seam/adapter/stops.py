@@ -16,6 +16,14 @@ FORK_STOPS = tuple(getattr(lldb, name) for name in
 
 
 class StopsMixin:
+    def _visible_breakpoint_data(self, thread):
+        private = getattr(self, "mac_child_internal_ids", ())
+        for index in range(0, thread.GetStopReasonDataCount(), 2):
+            bp_id = thread.GetStopReasonDataAtIndex(index)
+            if bp_id not in private:
+                return bp_id, thread.GetStopReasonDataAtIndex(index + 1)
+        return thread.GetStopReasonDataAtIndex(0), thread.GetStopReasonDataAtIndex(1)
+
     def _entry_argument(self, frame, index):
         """Integer/pointer argument at a function's entry, before its prologue runs."""
         triple = self.target.GetTriple() or ""
@@ -313,10 +321,11 @@ class StopsMixin:
         self.process.SetSelectedThread(thread)
         reason = thread.GetStopReason()
         body = {"threadId": thread.GetThreadID(), "allThreadsStopped": True}
+        bp_id, location_id = self._visible_breakpoint_data(thread)
         self.log("stop: thread", thread.GetThreadID(), "reason", reason,
                  thread.GetStopDescription(80), "pc %#x" % self._pc(thread))
 
-        if (reason == lldb.eStopReasonBreakpoint and thread.GetStopReasonDataAtIndex(0)
+        if (reason == lldb.eStopReasonBreakpoint and bp_id
                 in [bp.GetID() for bp in self.user_bps.values()] + self.traps.breakpoint_ids()):
             # Step-in from Python reached the first user native function.
             self._finish_steps(thread)
@@ -324,7 +333,7 @@ class StopsMixin:
             self._report_native_stop(thread, body)
             return
         if reason == lldb.eStopReasonBreakpoint and not self.pause_requested:
-            hit = thread.GetStopReasonDataAtIndex(0)
+            hit = bp_id
             for name, bp in self.native_exc_bps.items():
                 if bp.GetID() == hit:
                     self._finish_steps(thread)
@@ -335,12 +344,12 @@ class StopsMixin:
             # the user's line numbers (Cython's module-init code does). Never stop there.
             # Locations are resolved lazily (the module may load after the breakpoint was
             # set), so the clean-up happens here too.
-            bp = self.target.FindBreakpointByID(thread.GetStopReasonDataAtIndex(0))
+            bp = self.target.FindBreakpointByID(bp_id)
             if bp.IsValid() and any(bp.GetID() == b.GetID()
                                     for group in self.native_bps.values() for b in group):
                 # Read the hit location first: LLDB derives it from the live site owners,
                 # so it reads as 0 once the location has been disabled.
-                location = bp.FindLocationByID(thread.GetStopReasonDataAtIndex(1))
+                location = bp.FindLocationByID(location_id)
                 self._drop_glue_locations(bp)
                 if ((location.IsValid() and not location.IsEnabled())
                         or self._is_same_line_rehit(thread)):
@@ -372,7 +381,7 @@ class StopsMixin:
                 return
         returned = False
         if (self.stepout is not None and reason == lldb.eStopReasonBreakpoint
-                and thread.GetStopReasonDataAtIndex(0) == self.stepout["bp"].GetID()):
+                and bp_id == self.stepout["bp"].GetID()):
             if thread.GetFrameAtIndex(0).GetSP() < self.stepout["sp"]:
                 # The same return address, deeper in the stack (recursion): not ours yet.
                 self._new_stop()

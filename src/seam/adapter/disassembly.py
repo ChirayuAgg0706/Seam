@@ -78,7 +78,8 @@ class DisassemblyMixin:
                     break
                 where = self.target.ResolveLoadAddress(address - back * 4)
                 section = where.GetSection()
-                if not section.IsValid() or not section.GetPermissions() & lldb.ePermissionsExecutable:
+                if (not section.IsValid()
+                        or not section.GetPermissions() & lldb.ePermissionsExecutable):
                     break
                 found = self.target.ReadInstructions(where, 1)
                 if found.GetSize() != 1 or found.GetInstructionAtIndex(0).GetByteSize() != 4:

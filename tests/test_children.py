@@ -120,6 +120,41 @@ def test_fork_made_by_native_code(dap, capi):
     assert code == 0 and "parent: work 4 6" in dap.output
 
 
+def test_user_function_breakpoint_on_fork_is_not_hidden(dap, capi):
+    launch(dap, capi, "fork")
+    dap.request("setFunctionBreakpoints", {"breakpoints": [{"name": "fork"}]})
+    dap.cont()
+    stopped = dap.wait_stopped()
+    assert stopped["reason"] == "breakpoint", stopped
+    assert "fork" in dap.stack(stopped["threadId"])[0]["name"]
+    dap.request("setFunctionBreakpoints", {"breakpoints": []})
+    dap.cont()
+    assert dap.wait_exit() == 0
+    assert "fork child: exit 7" in dap.output, dap.output
+
+
+def test_native_step_over_fork_preserves_the_child(dap, capi, tmp_path):
+    script = tmp_path / "native_fork.py"
+    script.write_text("import os, seamtest\n"
+                      "pid = seamtest.fork_child()\n"
+                      "assert pid > 0\n"
+                      "assert os.waitpid(pid, 0)[1] == 7 << 8\n"
+                      "print('native child exited normally', flush=True)\n")
+    dap.launch(str(script), dap.python, env=capi.env,
+               breakpoints={CAPI_SRC: [marker_line(CAPI_SRC, "native-fork-call")]})
+    tid = dap.wait_stopped()["threadId"]
+    stop = dap.step("next", tid)
+    assert stop["reason"] == "step", stop
+    frame = dap.stack(tid)[0]
+    assert frame["name"] == "st_fork_child", frame
+    if capi.opt == "O0":
+        assert frame["line"] == marker_line(CAPI_SRC, "native-fork-after"), frame
+    dap.set_breakpoints(CAPI_SRC, [])
+    dap.cont()
+    assert dap.wait_exit() == 0, dap.output
+    assert "native child exited normally" in dap.output
+
+
 def test_subprocess_system_and_posix_spawn(dap, capi):
     tid = launch(dap, capi, "spawn")
     # `execve` is what a new child itself calls, in memory it shares with the parent
