@@ -623,13 +623,20 @@ class StopsMixin:
                      self.process.GetStopID(), "resumed from", self.last_resume_stop_id)
             # Older Apple LLDB can immediately resume SendAsyncInterrupt's SIGINT
             # when the program's signal policy passes SIGINT. Halt forces a stop.
-            # Continue is asynchronous. A configuration request can arrive before
-            # its running state is public; Halt rejects that stale stopped state.
+            # Continue is asynchronous and LLDB updates the public state when its
+            # event is removed from our listener. Drain the queued resume event:
+            # polling GetState alone cannot make the stale stopped state advance.
             deadline = time.monotonic() + 1
+            resume_event = lldb.SBEvent()
             while (self.process.GetState() == lldb.eStateStopped
                    and self.process.GetStopID() == getattr(self, "last_resume_stop_id", None)
                    and time.monotonic() < deadline):
-                time.sleep(0.01)
+                if self.listener.WaitForEvent(1, resume_event):
+                    if (lldb.SBProcess.EventIsProcessEvent(resume_event)
+                            and resume_event.GetType() & (
+                                lldb.SBProcess.eBroadcastBitSTDOUT
+                                | lldb.SBProcess.eBroadcastBitSTDERR)):
+                        self._drain_output()
             if (self.process.GetState() == lldb.eStateStopped
                     and self.process.GetStopID() != getattr(self, "last_resume_stop_id", None)):
                 self.running = False
