@@ -1,4 +1,4 @@
-name: Apple Silicon stage 1
+name: Apple Silicon validation
 
 on:
   push:
@@ -74,13 +74,23 @@ jobs:
             .vscode-test/**/logs/
             ${{ runner.temp }}/mac-editor.log*
   native-features:
-    runs-on: macos-15
+    name: native features (${{ matrix.os }}, ${{ matrix.python }}, ${{ matrix.opt }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, python: '3.12', opt: O0, suite: full}
+          - {os: macos-15, python: '3.13', opt: O0, suite: smoke}
+          - {os: macos-15, python: '3.14', opt: O2, suite: smoke}
+          - {os: macos-14, python: '3.12', opt: O0, suite: smoke}
+          - {os: macos-14, python: '3.14', opt: O2, suite: smoke}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python }}
           architecture: arm64
       - name: Install test toolchains
         run: |
@@ -94,11 +104,13 @@ jobs:
           SEAM_TEST_BUILD: ${{ runner.temp }}/native-build
         run: |
           cd "$GITHUB_WORKSPACE"
-          python -m pytest tests -m smoke --target-python "$(which python)" --maxfail=12 --basetemp="$RUNNER_TEMP/seam-pytest" --junitxml=mac-smoke.xml -ra
+          selection=()
+          if [ '${{ matrix.suite }}' = smoke ]; then selection=(-m smoke); fi
+          python -m pytest tests "${selection[@]}" --target-python "$(which python)" --opt '${{ matrix.opt }}' --maxfail=12 --basetemp="$RUNNER_TEMP/seam-pytest" --junitxml=mac-smoke.xml -ra
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-native-smoke
+          name: native-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.opt }}
           path: |
             mac-smoke.xml
             ${{ runner.temp }}/seam-pytest/
