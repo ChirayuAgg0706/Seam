@@ -21,6 +21,7 @@
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach/arm/thread_status.h>
 #endif
 
 #define SEAM_REQ_CAP (1 << 20)
@@ -419,6 +420,11 @@ struct seam_patch {
 EXPORT struct seam_patch *volatile seam_fork_table = NULL;
 EXPORT volatile long seam_fork_count = 0;
 
+#ifdef __APPLE__
+/* Keep this routine off pages containing helper breakpoints: those pages briefly
+ * lose execute permission while the child's private code is restored. */
+__attribute__((noinline, aligned(16384)))
+#endif
 static void
 fork_child(void)
 {
@@ -429,6 +435,11 @@ fork_child(void)
         return;
     }
 #ifdef __APPLE__
+    arm_debug_state64_t debug_state = {0};
+    thread_t thread = mach_thread_self();
+    thread_set_state(thread, ARM_DEBUG_STATE64, (thread_state_t)&debug_state,
+                     ARM_DEBUG_STATE64_COUNT);
+    mach_port_deallocate(mach_task_self(), thread);
     /* Apple's debugserver leaves software breakpoints in a forked child. Restore
      * their ARM64 instructions in the child's private mapping before user code runs.
      * VM_PROT_COPY requests copy-on-write when the original code mapping is read-only.
@@ -441,18 +452,17 @@ fork_child(void)
         mach_vm_address_t address = table[i].address;
         mach_vm_address_t page = address & ~((mach_vm_address_t)vm_page_size - 1);
         if (mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
-                            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE | VM_PROT_COPY)
+                            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)
                 != KERN_SUCCESS) {
             const char message[] = "Seam: could not make inherited breakpoint code writable\n";
             write(STDERR_FILENO, message, sizeof(message) - 1);
             return;
         }
-        uint32_t instruction = (uint32_t)table[i].original;
-        memcpy((void *)(uintptr_t)address, &instruction, sizeof(instruction));
-        __builtin___clear_cache((char *)(uintptr_t)address,
-                                (char *)(uintptr_t)(address + sizeof(instruction)));
+        *(volatile uint32_t *)(uintptr_t)address = (uint32_t)table[i].original;
         mach_vm_protect(mach_task_self(), page, vm_page_size, FALSE,
                         VM_PROT_READ | VM_PROT_EXECUTE);
+        __builtin___clear_cache((char *)(uintptr_t)address,
+                                (char *)(uintptr_t)(address + sizeof(uint32_t)));
     }
     if (g_fork_debug) {
         const char message[] = "Seam fork cleanup: completed\n";

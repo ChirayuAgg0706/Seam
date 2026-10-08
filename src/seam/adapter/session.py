@@ -23,6 +23,20 @@ from .common import (
 
 
 class SessionMixin:
+    def _pass_macos_fault(self):
+        """On resume, let Darwin deliver the fault instead of stopping on it again."""
+        if sys.platform != "darwin" or not self.fault_stop:
+            return False
+        thread = self.process.GetSelectedThread()
+        if thread.GetStopReason() != lldb.eStopReasonSignal:
+            return False
+        number = thread.GetStopReasonDataAtIndex(0)
+        signals = self.process.GetUnixSignals()
+        signals.SetShouldStop(number, False)
+        signals.SetShouldNotify(number, False)
+        self.macos_passed_fault = number
+        return True
+
     def _watch_macos_children(self):
         """Apple debugserver lacks fork packets; observe the native spawn calls instead."""
         if sys.platform != "darwin" or hasattr(self, "mac_child_entries"):

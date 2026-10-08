@@ -255,6 +255,12 @@ class StopsMixin:
         self.event("stopped", body)
 
     def _on_stop(self):
+        passed = getattr(self, "macos_passed_fault", None)
+        if passed is not None:
+            signals = self.process.GetUnixSignals()
+            signals.SetShouldStop(passed, True)
+            signals.SetShouldNotify(passed, True)
+            self.macos_passed_fault = None
         self._new_stop()
         # Entry traps come out of the process before anything looks at it; a thread that
         # ran into one is put back on the instruction (see entrytraps.py).
