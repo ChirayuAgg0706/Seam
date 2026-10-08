@@ -414,7 +414,7 @@ def test_a_child_that_outlives_the_program_and_the_session(dap, capi, tmp_path):
 
 
 @pytest.mark.parametrize("how", ["terminate", "disconnect", "lldb killed"])
-def test_stopping_the_session_ends_the_children_in_the_programs_group(dap, capi, how):
+def test_stopping_the_session_ends_the_children_in_the_programs_group(dap, capi, how, iteration):
     launch(dap, capi, "linger")
     program = dap.status()["pid"]
     dap.cont()
@@ -427,7 +427,7 @@ def test_stopping_the_session_ends_the_children_in_the_programs_group(dap, capi,
             dap.wait_event("terminated")
         elif how == "lldb killed":
             lldb = subprocess.run(["pgrep", "-P", str(dap.proc.pid)],
-                                  capture_output=True, text=True).stdout.split()
+                                  capture_output=True, text=True, timeout=5).stdout.split()
             os.kill(int(lldb[0]), signal.SIGKILL)
             dap.wait_event("terminated", 20)
         dap.close()

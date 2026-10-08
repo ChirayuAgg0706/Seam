@@ -2,18 +2,25 @@ name: Apple Silicon validation
 
 on:
   push:
-    branches: [codex/macos-stage1]
+    branches: [main, codex/macos-stage1]
   workflow_dispatch:
+    inputs:
+      only:
+        description: Which validation jobs to run
+        type: choice
+        default: all
+        options: [all, real-projects-and-scale, debugger-exit-regressions]
 
 permissions:
   contents: read
 
 concurrency:
-  group: apple-silicon-${{ github.ref }}
+  group: apple-silicon-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'auto' }}
   cancel-in-progress: true
 
 jobs:
   mac14-attach-regressions:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     runs-on: macos-14
     timeout-minutes: 10
     steps:
@@ -38,6 +45,7 @@ jobs:
             mac14-focused.xml
             ${{ runner.temp }}/mac14-focused/
   optimized-regressions:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     runs-on: macos-15
     timeout-minutes: 15
     steps:
@@ -62,6 +70,7 @@ jobs:
             optimized-focused.xml
             ${{ runner.temp }}/optimized-focused/
   fork-and-fault-regressions:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -85,6 +94,7 @@ jobs:
             mac-focused.xml
             ${{ runner.temp }}/seam-focused/
   packaged-editor:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     runs-on: macos-15
     timeout-minutes: 25
     steps:
@@ -135,6 +145,7 @@ jobs:
             ${{ runner.temp }}/mac-editor.log*
             ${{ runner.temp }}/mac-neovim.log*
   native-features:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     name: native features (${{ matrix.os }}, ${{ matrix.python }}, ${{ matrix.opt }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -176,6 +187,7 @@ jobs:
             mac-smoke.xml
             ${{ runner.temp }}/seam-pytest/
   installed-adapter:
+    if: ${{ !inputs.only || inputs.only == 'all' }}
     runs-on: macos-15
     timeout-minutes: 15
     strategy:
@@ -216,6 +228,7 @@ jobs:
             dist/*.whl
 
   debugger-exit-regressions:
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'debugger-exit-regressions' }}
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -235,3 +248,37 @@ jobs:
         with:
           name: debugger-exit-checks
           path: ${{ runner.temp }}/exit-checks/
+
+  real-projects-and-scale:
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'real-projects-and-scale' }}
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - run: python -m pip install pytest pybind11 nanobind cython uv
+      - name: Build real extension projects with debug information
+        env:
+          SEAM_SCALE_DIR: ${{ runner.temp }}/scale
+        run: |
+          bash tools/build_projects.sh regex msgpack contourpy pydantic_core
+          find "$SEAM_SCALE_DIR/venv" -name '*.so' -exec dsymutil {} \;
+      - name: Real project sessions and 15000-function module
+        env:
+          SEAM_LLDB: /usr/bin/lldb
+          SEAM_TEST_SCALE: '1'
+          SEAM_TEST_PROJECTS: '1'
+          SEAM_SCALE_DIR: ${{ runner.temp }}/scale
+        run: |
+          python -m pytest tests/test_projects.py tests/test_scale.py -k 'not pydantic_core_step_in_lands' --target-python "$SEAM_SCALE_DIR/venv/bin/python" --basetemp="$RUNNER_TEMP/real-checks" --junitxml=real-checks.xml -o faulthandler_timeout=120 -vv -s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-real-projects-and-scale
+          path: |
+            real-checks.xml
+            ${{ runner.temp }}/real-checks/
+            ${{ runner.temp }}/scale/report-*.md

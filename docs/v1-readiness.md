@@ -1,4 +1,7 @@
-# First-release readiness
+# First-release readiness record
+
+This records the original Linux release. Apple Silicon validation is recorded in
+[the Mac port checks](macos-stage1.md). Current requirements are in the README.
 
 Reviewed 2026-10-05–07, starting at `24d5b78`, with the local fixes below.
 

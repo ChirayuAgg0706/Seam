@@ -552,7 +552,8 @@ the program's output sat in the Terminal tab behind it. The extension sets
 `internalConsoleOptions` to `neverOpen` unless the configuration says otherwise. Seam's
 own messages and logpoint output are still in the Debug Console for whoever opens it.
 
-**The attach picker reads `/proc`.** The extension only runs on Linux. A process counts
+**The original attach picker reads `/proc` on Linux.** macOS support later adds
+libproc and sysctl through `seam._mac_processes`. A process counts
 as Python by the name of its executable or of `argv[0]`. Seam's own launcher and terminal
 holder are left out. The picker returns text, because VS Code substitutes
 `${command:...}` as text; the extension turns it into a number, and the adapter accepts

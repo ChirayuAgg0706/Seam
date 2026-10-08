@@ -1,8 +1,9 @@
 # Seam in Neovim
 
 Debug Python and native code in one nvim-dap session.
-Use CPython 3.12, 3.13 or 3.14 and LLDB with Python scripting support. LLDB 19 or 20
-avoids LLDB 18's threaded-child-process failure.
+Use CPython 3.12, 3.13 or 3.14 and LLDB with Python scripting support.
+On Linux, LLDB 19 or 20 avoids LLDB 18's threaded-child-process failure.
+On macOS, use Apple's command-line tools and an ARM64 interpreter.
 
 ## Install
 
@@ -12,13 +13,17 @@ On Ubuntu 24.04:
 sudo apt-get update
 sudo apt-get install -y lldb-19 python3-venv
 python3 -m venv ~/.venvs/seam
-~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.0
+~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.1
 ~/.venvs/seam/bin/seam doctor --python python3
 ```
 
+On macOS, run `xcode-select --install`, then create the virtual environment with
+an ARM64 CPython 3.12+ interpreter and run the pip and doctor commands above.
+Skip the `apt-get` commands.
+
 The wheel includes Seam's compiled helper. Install LLDB separately. You can also
 install the wheel from the
-[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0).
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.1).
 Add `~/.venvs/seam/bin` to PATH, or use the full executable path in the configuration.
 The program can use a different environment from Seam. Read the
 [requirements](../README.md#requirements) and [limitations](../README.md#limitations).

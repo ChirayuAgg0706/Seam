@@ -261,7 +261,7 @@ def target(name):
 def pid_alive(pid):
     if sys.platform == "darwin":
         state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
-                               capture_output=True, text=True).stdout.strip()
+                               capture_output=True, text=True, timeout=5).stdout.strip()
         return bool(state) and not state.startswith("Z")
     try:
         with open("/proc/%d/stat" % pid) as fh:
@@ -301,5 +301,5 @@ def make_client(tmp_path, python):
 
 
 def _children(pid):
-    out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout
+    out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, timeout=5).stdout
     return [int(p) for p in out.split()]

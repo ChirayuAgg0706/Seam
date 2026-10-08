@@ -2,9 +2,10 @@
 
 ## Set up
 
-Develop and test Seam on Linux x86-64, including WSL. Use LLDB with Python bindings,
-gcc/g++, CPython headers and [uv](https://docs.astral.sh/uv/). PyO3 tests also need a
-Rust toolchain. LLDB 18, 19 and 20 are tested; use 19 or 20 for new installations.
+Develop and test Seam on Linux x86-64 or Apple Silicon macOS 14+. WSL works on
+Windows. Use LLDB with Python bindings, a C/C++ compiler, CPython headers and [uv](https://docs.astral.sh/uv/). PyO3 tests also need a
+Rust toolchain. On Linux, use LLDB 19 or 20 for new installations. On macOS, install
+Apple's command-line tools and use an ARM64 interpreter.
 
 ```bash
 scripts/test.sh -q                 # the whole suite against /usr/bin/python3.12
@@ -75,7 +76,8 @@ extension inside a real VS Code, and the documented configuration in a headless 
 It is split this way because the repository lives on GitHub's free tier; use `[ci full]`
 for changes to the adapter's core, to stepping, or to anything version-specific, and
 `[skip ci]` for changes that touch only documentation. A missing toolchain fails CI
-rather than skipping. Pushes to branches other than `main` start nothing.
+rather than skipping. The Apple Silicon workflow tests macOS 14 and 15 with CPython 3.12 through 3.14.
+It can also be started from the Actions page.
 
 To run one CI job or repeat a test group under load:
 

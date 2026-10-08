@@ -1,5 +1,7 @@
 # Seam extension 0.1.1
 
+Historical release. These packages support Linux only. See the [current installation instructions](../../README.md#install) for newer packages.
+
 This package adds the Joined S icon to the VS Code extension.
 It includes the released Seam debugger 0.1.0. The Python package version is unchanged.
 

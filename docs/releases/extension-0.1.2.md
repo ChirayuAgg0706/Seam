@@ -1,5 +1,7 @@
 # Seam extension 0.1.2
 
+Historical release. These packages support Linux only. See the [current installation instructions](../../README.md#install) for newer packages.
+
 Debug Python and C, C++ or Rust in one session on Linux x86-64, including WSL.
 
 This update combines the Joined S icon, a recorded Python-to-Rust demo GIF,

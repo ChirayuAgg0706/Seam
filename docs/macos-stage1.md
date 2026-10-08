@@ -1,64 +1,61 @@
-# Apple Silicon feasibility, stage 1
+# Apple Silicon validation
 
-This is an opt-in experiment on `codex/macos-stage1`. Released Seam still supports
-Linux x86-64, including WSL. No macOS package has been published.
+Seam's Mac port uses Apple's LLDB and native ARM64 CPython. The release targets
+macOS 14 and newer. Intel Macs and Python running through Rosetta are unsupported.
+The initial experiment required `SEAM_EXPERIMENTAL_MACOS=1`; current builds work
+without that flag.
 
-## What passed
+## What the checks cover
 
-GitHub's `macos-15` ARM64 runners built and installed the wheel with Python 3.12.10,
-3.13.15 and 3.14.7. The helper contains an ARM64 Mach-O bundle. Apple LLDB
-`lldb-1700.0.9.502` launched the ARM64 interpreter and ran the injected helper.
+The Apple Silicon workflow runs on actual macOS 14 and 15 ARM64 runners with
+CPython 3.12, 3.13 and 3.14. It exercises the existing debugger behavior, including
+Python and native stepping, C API, PyO3, pybind11, nanobind, Cython, mixed stacks,
+variables, breakpoints, exceptions, attach, async code, threads, child processes,
+terminal input, crash handling and disassembly. Optimized native builds run as well
+as debug builds.
 
-[The first successful run](https://github.com/ChirayuAgg0706/Seam/actions/runs/37721537663)
-passed five complete sessions per Python version. Each session checked a Python
-source breakpoint, stack file and line, integer and string locals, expression
-evaluation, stepping to the next line, the updated local, output, exit status and
-termination. The client launched the installed wheel, not the source checkout.
-Launch through the first breakpoint took 1.73 to 4.25 seconds in these small tests.
-These timings do not establish performance on large projects.
+Separate jobs install freshly built wheels, repeat complete debug sessions, and
+run the packaged extension in real VS Code. The Python extension interpreter
+selection and Neovim's documented nvim-dap configuration are checked too.
 
-The workflow also checks that ARM64 requires the experimental flag and that the
-flag does not enter the debugged program's environment. Artifacts contain the
-wheel, protocol logs, LLDB output and a JSON report for each Python version.
+[The port validation on 7c32b9c](https://github.com/ChirayuAgg0706/Seam/actions/runs/37762461119)
+passed the full CPython 3.12 suite, the Mac 14 smoke checks, Mac 15 CPython 3.13,
+optimized regressions, installed-wheel sessions, and packaged editor checks.
+Mac 14 attach tests passed but their artifact upload failed. A Mac 15 optimized
+run stalled during a debugger-exit test; subsequent runs include Python stack
+capture and a focused repeat check. Final validation is recorded in the readiness
+and publication records.
 
-No extra signing, entitlement changes, `sudo` commands or system security changes
-were needed on these runners. That establishes permissions for the tested runner
-and Python distributions, not every user's Mac or every signed executable.
+## Port changes
 
-On Linux, 36 focused regression scenarios passed with LLDB 20 and Python 3.12.
-They cover Python debugging, interpreter rejection, mixed Python/C debugging,
-exceptions and native entry breakpoints.
+- Read ARM64 arguments and program counters through their native registers.
+- Follow framework Python's launcher exec to the interpreter entry point.
+- Use libproc and sysctl for process discovery instead of `/proc`.
+- Restore inherited software and hardware breakpoints in forked children.
+- Keep optimized frameless and inline native functions in the mixed stack.
+- Pass faults through macOS signal handlers before resuming the program.
+- Package a thin ARM64 helper with a macOS 14 deployment target.
 
-## Changes needed
+## Limits
 
-- Read ARM64 function arguments from `x0`, `x1` and `x2` rather than x86 registers.
-- Read the ARM64 program counter from `pc`.
-- Allow missing fork stop constants in Apple's LLDB Python bindings.
-- Continue the macOS framework Python launcher's `exec` stop until `Py_RunMain`.
-- Disable Seam's Linux `/proc` and x86 instruction-patching optimization on macOS.
-  Ordinary LLDB breakpoints remain available.
-- Require `SEAM_EXPERIMENTAL_MACOS=1` for the ARM64 experiment.
+The Linux entry-trap shortcut writes `/proc/<pid>/mem` and cannot run on macOS.
+Mac Step Into excludes modules with more than 20,000 functions; source and function
+breakpoints remain available. LLVM can omit an interrupted native frame under a
+signal handler. Seam keeps Python callers and reports native unwind problems.
 
-## Run it again
+The CI checks needed no signing changes, `sudo`, or system security changes.
+That proves permissions for the tested runners and interpreters. It does not give
+Seam permission to attach to protected system processes or every signed executable.
 
-Push this branch to trigger `.github/workflows/macos-stage1.yml`. It uses actual
-ARM64 runners and installs a freshly built wheel into a virtual environment.
-The workflow does not publish packages or change the released extension.
+## Run the checks
 
-On an Apple Silicon machine with Xcode command-line tools and CPython 3.12 or newer,
-build and install the branch's wheel into a virtual environment, then run:
+Dispatch `.github/workflows/macos-stage1.yml` from the Actions page. It tests the
+selected commit without publishing packages.
+
+After installing a wheel on an Apple Silicon machine:
 
 ```sh
-SEAM_LLDB=/usr/bin/lldb SEAM_EXPERIMENTAL_MACOS=1 \
-  python scripts/macos-stage1-check.py --output stage1-results --repeat 5
+SEAM_LLDB=/usr/bin/lldb python scripts/macos-stage1-check.py --output mac-results --repeat 5
 ```
 
-## What this does not establish
-
-Stage 1 proves the helper and basic adapter path work on Apple Silicon. Full
-Python-to-Rust/C/C++ stepping, native stops and raw Python inspection there,
-attach, threads, async programs, child processes, terminal interaction,
-disassembly, large modules and other Python distributions still need Mac tests.
-The current `seam doctor`, VS Code bundle and release workflows also need macOS
-support before a public release. A manual VS Code install check on a user's Mac
-remains useful after those automated tests pass.
+The script drives the installed adapter rather than importing it from the checkout.

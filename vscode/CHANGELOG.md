@@ -1,5 +1,13 @@
 # Seam extension changelog
 
+## 0.1.3. 2026-10-08
+
+- Bundle Seam debugger 0.1.1 with Apple Silicon macOS support.
+- List macOS Python processes in the attach picker and select their interpreters.
+- Publish platform packages for Linux x64 and macOS ARM64.
+- Update installation instructions and requirements.
+
+
 ## 0.1.2. 2026-10-08
 
 - Add a recorded Python-to-Rust demo GIF.

@@ -16,19 +16,21 @@ receives `30`. The recording starts at a Python breakpoint.
 
 ## Requirements
 
-- Linux x86-64 with glibc. On Windows, run Seam in WSL.
+- Apple Silicon macOS 14 or newer, or Linux x86-64 with glibc. On Windows, run Seam in WSL.
 - CPython 3.12, 3.13 or 3.14 for your program. Python 3.15.0rc3 passed the release
   tests; later 3.15 builds have not been validated for this release. Virtual
   environments and interpreters without debug information are supported.
-- LLDB with Python scripting support. Versions 18, 19 and 20 are tested. Use 19 or 20
+- LLDB with Python scripting support. On macOS, use the LLDB supplied with Xcode's
+  command-line tools. On Linux, versions 18, 19 and 20 are tested. Use 19 or 20
   for new installations because LLDB 18 can lose sessions when threaded programs
   start child processes. Seam chooses `lldb-20`, then `lldb-19`, then `lldb`.
   `SEAM_LLDB` overrides that choice.
 - Build your native extension with debug information for source stepping. Use `-g`
   for C and C++, a Rust debug build, or `[profile.release] debug = true` for Rust
   release builds.
-- Permission to trace the program with `ptrace`. Launching your own program normally
-  has this permission. Attach has additional restrictions.
+- Permission to debug the program. Linux attach needs `ptrace` permission. macOS
+  attach needs a target that allows debugging. Launching your own Python program
+  normally works; protected system processes are outside the supported scope.
 
 The published wheel and VS Code extension include Seam's compiled helper. You do
 not need a compiler to install Seam. Building from source needs a C compiler and
@@ -46,14 +48,23 @@ sudo apt-get update
 sudo apt-get install -y lldb-19
 ```
 
-1. Open your project in a Linux VS Code window. On Windows, open it in WSL.
+On macOS, install Apple's command-line tools:
+
+```bash
+xcode-select --install
+```
+
+Use a native ARM64 CPython 3.12, 3.13 or 3.14 interpreter. macOS's bundled system
+Python is too old. Intel Python running through Rosetta is unsupported.
+
+1. Open your project in VS Code. On Windows, open it in WSL.
 2. Install [Seam from the Marketplace](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger).
    In WSL, install the extension on the WSL side.
 3. Open the Command Palette and run **Seam: Check This Machine**.
    Fix any problems it reports before starting a session.
 
 The extension includes the debugger. A separate pip installation is not needed.
-You can also install a Linux x64 VSIX from
+You can also install the Linux x64 or macOS ARM64 VSIX from
 [GitHub Releases](https://github.com/ChirayuAgg0706/Seam/releases) with
 **Extensions: Install from VSIX...**. Then follow [Quick start](#quick-start).
 
@@ -65,13 +76,17 @@ On Ubuntu 24.04:
 sudo apt-get update
 sudo apt-get install -y lldb-19 python3-venv
 python3 -m venv ~/.venvs/seam
-~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.0
+~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.1
 ~/.venvs/seam/bin/seam --version
 ```
 
-The package comes from [PyPI](https://pypi.org/project/seam-debugger/0.1.0/).
+On macOS, install the command-line tools with `xcode-select --install`, then run
+those virtual environment commands with your ARM64 Python 3.12+ interpreter.
+Skip the `apt-get` commands.
+
+The package comes from [PyPI](https://pypi.org/project/seam-debugger/0.1.1/).
 You can also download the wheel from the
-[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.0) and install
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.1) and install
 that file with `~/.venvs/seam/bin/pip install /path/to/downloaded.whl`.
 LLDB is a separate system dependency; pip does not install it.
 
@@ -350,14 +365,11 @@ library loading. See [limitations](#limitations).
 
 ## Limitations
 
-Seam supports Linux x86-64 with glibc, including WSL. Native Windows, macOS, ARM,
-free-threaded Python, experimental JIT builds, PyPy and sub-interpreters are outside
-this release\'s validated scope. Remote debugging and managing container connections
-are unsupported. The adapter and program must run on the same machine and in the
-same container.
-
-Windows through WSL is supported because the adapter and program both run on Linux.
-The release wheel targets glibc Linux; Alpine/musl is not part of the validated scope.
+Native Windows, Intel Macs, Rosetta targets, Linux ARM, Alpine/musl, free-threaded
+Python, experimental JIT builds, PyPy and sub-interpreters are outside the validated
+scope. On Windows, the adapter and program run inside WSL. Remote debugging and
+managing container connections are unsupported. The adapter and program must run
+on the same machine and in the same container.
 
 The supported workflows have these limits:
 
@@ -428,13 +440,14 @@ The supported workflows have these limits:
   stack position cannot be distinguished if no watched access happened between them.
 - **Thread names.** Python names are cached at safe stops. Native stops use the last
   cached names; new or renamed threads need a safe stop and a thread-list request first.
-- **Very large extension modules.** The first Step Into of a session looks up every
-  function of each large module once: about 0.4 s for 15,000 functions, about 4 s for
-  pydantic-core (123,000 functions and inlined instances; the debug console says so).
-  Later steps take the usual few hundredths of a second. This uses `/proc/<pid>/mem`;
-  where that cannot be written, modules with more than 20,000 functions are excluded
-  from step-in from Python, as before. `SEAM_ENTRY_TRAPS=off` in the environment of
-  `seam dap` switches the mechanism off.
+- **Very large extension modules.** On Linux, Seam looks up each large module's
+  functions once per session. The measured first Step Into cost is about 0.4 s for
+  15,000 functions and about 4 s for pydantic-core with 123,000 functions and inline
+  instances. Later steps take the usual few hundredths of a second. This shortcut
+  writes `/proc/<pid>/mem`. On macOS, or where that write is unavailable, Seam uses
+  LLDB breakpoints and excludes modules with more than 20,000 functions from Step
+  Into from Python. Source and function breakpoints still work in those modules.
+  `SEAM_ENTRY_TRAPS=off` disables the Linux shortcut.
 - **Programs with busy Python threads.** If a request Seam runs in the program cannot
   finish on its own thread because another thread holds an interpreter lock, the other
   threads are let run for the moment it takes (after one second).
@@ -459,7 +472,9 @@ The supported workflows have these limits:
   [docs/decisions.md](https://github.com/ChirayuAgg0706/Seam/blob/main/docs/decisions.md) §4d and §12); the workaround calls `getpid()` in
   the target. Where LLDB cannot unwind a function (LLDB 20 through nanobind's
   optimised library code), native frames below it are missing; Seam says so in the debug
-  console and still shows every Python frame.
+  console and still shows every Python frame. On macOS, a signal handler can also
+  hide the interrupted native frame from LLDB's unwinder, including at a second
+  fault after Python's faulthandler runs.
 
 ## Building from source
 
@@ -471,6 +486,9 @@ git clone https://github.com/ChirayuAgg0706/Seam.git
 python3 -m venv ~/.venvs/seam
 ~/.venvs/seam/bin/pip install ./Seam
 ```
+
+On macOS, install the command-line tools and use an ARM64 Python 3.12+ interpreter,
+then run the clone and pip commands above.
 
 To build a VSIX, run `scripts/build-vsix.sh` from the checkout; Node.js and the Python
 headers are required. See [CONTRIBUTING.md](https://github.com/ChirayuAgg0706/Seam/blob/main/CONTRIBUTING.md)

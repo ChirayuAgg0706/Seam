@@ -15,9 +15,7 @@ receives `30`. The recording starts at a Python breakpoint.
 
 ## Install
 
-Seam runs on Linux x86-64 with glibc. On Windows, open your project in WSL and
-install Seam on the WSL side. Native Windows, macOS and ARM are outside the
-supported scope.
+On Windows, open your project in WSL and install Seam on the WSL side.
 
 On Ubuntu 24.04, install LLDB in a Linux or WSL terminal:
 
@@ -26,24 +24,33 @@ sudo apt-get update
 sudo apt-get install -y lldb-19
 ```
 
+On macOS, install Apple's command-line tools:
+
+```bash
+xcode-select --install
+```
+
 Install [Seam from the Marketplace](https://marketplace.visualstudio.com/items?itemName=chirayuagg0706.seam-debugger),
 then open the Command Palette and run **Seam: Check This Machine**.
 It checks dependencies and the project interpreter, runs a debug session,
 and reports what to fix.
 
 The extension includes the debugger and compiled helper. You do not need to
-install Seam with pip or compile it. A Linux x64 VSIX is also available from
+install Seam with pip or compile it. Linux x64 and macOS ARM64 VSIX files are also available from
 [GitHub Releases](https://github.com/ChirayuAgg0706/Seam/releases).
-Install it with **Extensions: Install from VSIX...** in a Linux or WSL window.
+Choose the file for your platform and run **Extensions: Install from VSIX...**.
 
 ## Requirements
 
-- LLDB with Python scripting support. Versions 18, 19 and 20 are tested.
+- Apple Silicon macOS 14 or newer, or Linux x86-64 with glibc. Windows uses WSL.
+- LLDB with Python scripting support. Use Apple's command-line tools on macOS.
+  On Linux, versions 18, 19 and 20 are tested.
   Use 19 or 20 for new installations. Seam chooses `lldb-20`, then `lldb-19`,
   then `lldb`. Set `SEAM_LLDB` to override that choice. The machine check warns
   about LLDB 18's threaded-child-process session failure.
 - CPython 3.12, 3.13 or 3.14 for your program. Python 3.15.0rc3 also passes the
-  compatibility tests; later 3.15 builds have not been validated for this release.
+  Linux compatibility tests; later 3.15 builds have not been validated. Use a native
+  ARM64 interpreter on macOS. The system Python and Rosetta targets are unsupported.
 - Build your native extension with debug information for source stepping. Use
   `-g` for C and C++, a Rust debug build, or `[profile.release] debug = true`
   for Rust release builds. Building your extension still needs its toolchain.
@@ -93,8 +100,9 @@ one explicitly. The Seam output channel records the choice.
 
 The picker lists your Python processes with their process IDs, interpreters and
 working directories, newest first. You can also set `"pid"` to a number. Attach needs
-ptrace permission. For a process that is not a child, `ptrace_scope` must be 0,
-or the process must allow tracing. The main thread must be able to load Seam's helper.
+debugging permission. On Linux, a non-child process needs `ptrace_scope` set to 0
+or explicit tracing permission. On macOS, the target must allow debugging; protected
+system processes cannot be attached. The main thread must be able to load Seam's helper.
 
 ## Inspect the program
 
@@ -124,9 +132,8 @@ The [main README](https://github.com/ChirayuAgg0706/Seam#readme) lists every lau
 
 ## Limitations
 
-- Linux x86-64 is the supported platform, including WSL. Native Windows, macOS,
-  ARM, Alpine/musl, free-threaded Python, PyPy and the experimental JIT are outside
-  the validated scope.
+- Native Windows, Intel Macs, Rosetta targets, Linux ARM, Alpine/musl,
+  free-threaded Python, PyPy and the experimental JIT are outside the validated scope.
 - At native stops, Python values are read from memory. Simple built-in types show
   values; other objects show their type and address. Python evaluation, object
   expansion and mutation require a safe Python stop.
@@ -140,6 +147,9 @@ The [main README](https://github.com/ChirayuAgg0706/Seam#readme) lists every lau
   attach and remote debugging are outside the supported scope.
 - Disassembly breakpoints are not supported. Thread-heavy workloads can run about
   twice as slowly; there is no universal low-overhead guarantee.
+- On macOS, Step Into from Python excludes native modules with more than 20,000
+  functions. Set a source or function breakpoint to enter them. LLDB can omit the
+  interrupted native frame when a signal handler runs; Python callers remain visible.
 
 See the [complete limitations](https://github.com/ChirayuAgg0706/Seam#limitations).
 
@@ -163,6 +173,6 @@ Check logs for private paths and values before sharing them.
 
 ## Building from source
 
-Run `scripts/build-vsix.sh` from the repository to build a Linux x64 VSIX.
+Run `scripts/build-vsix.sh` from the repository. It builds the VSIX for the host platform.
 Passing a wheel path uses the adapter and helper from that wheel. See the
 [contributor guide](https://github.com/ChirayuAgg0706/Seam/blob/main/CONTRIBUTING.md).

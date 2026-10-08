@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1. 2026-10-08
+
+- Support Apple Silicon macOS 14 and newer with Apple's LLDB and CPython 3.12, 3.13 and 3.14.
+- Preserve native frames and globals when optimized ARM64 functions share their caller's stack pointer.
+- Step across inline functions and gaps in optimized source line tables.
+- Keep forked children running after inherited native breakpoints and internal step breakpoints.
+- Deliver native crash signals through macOS signal handlers.
+- Batch function breakpoint updates in one pause during attach.
+- Build macOS ARM64 wheels and VSIX files alongside Linux packages.
+
+
 Seam follows semantic versioning; until 1.0 any release may change behaviour.
 
 ## Unreleased
