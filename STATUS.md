@@ -1,6 +1,7 @@
 # Seam status
 
-Debugger 0.1.1 and extension 0.1.3 are ready for the Apple Silicon release build.
+Debugger 0.1.1 shipped Apple Silicon support. Debugger 0.1.2 and extension 0.1.4
+clarify attach permissions and keep that behavior.
 The existing product works on macOS 14+ with ARM64 CPython 3.12, 3.13 and 3.14.
 The final native matrix, installed wheels and packaged editor checks pass, as do
 12 real-project/scale cases and the final 300-case Linux suite. See the

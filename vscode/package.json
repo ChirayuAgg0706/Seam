@@ -2,8 +2,8 @@
   "name": "seam-debugger",
   "displayName": "Seam: Python + native debugger",
   "description": "Debug Python and C, C++ or Rust in one session.",
-  "version": "0.1.3",
-  "seamAdapterVersion": "0.1.1",
+  "version": "0.1.4",
+  "seamAdapterVersion": "0.1.2",
   "publisher": "chirayuagg0706",
   "icon": "images/icon.png",
   "license": "Apache-2.0",
@@ -15,7 +15,14 @@
   "bugs": {
     "url": "https://github.com/ChirayuAgg0706/Seam/issues"
   },
-  "keywords": ["python", "rust", "native", "lldb", "dap", "wsl"],
+  "keywords": [
+    "python",
+    "rust",
+    "native",
+    "lldb",
+    "dap",
+    "wsl"
+  ],
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
@@ -41,18 +48,30 @@
       }
     ],
     "breakpoints": [
-      { "language": "python" },
-      { "language": "c" },
-      { "language": "cpp" },
-      { "language": "rust" },
-      { "language": "cython" }
+      {
+        "language": "python"
+      },
+      {
+        "language": "c"
+      },
+      {
+        "language": "cpp"
+      },
+      {
+        "language": "rust"
+      },
+      {
+        "language": "cython"
+      }
     ],
     "configuration": {
       "title": "Seam",
       "properties": {
         "seam.adapterCommand": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Leave empty to use the included debugger. To use another installation, set its command, such as [\"/path/to/venv/bin/seam\", \"dap\"]."
         },
@@ -67,7 +86,13 @@
       {
         "type": "seam",
         "label": "Seam: Python + native",
-        "languages": [ "python", "c", "cpp", "rust", "cython" ],
+        "languages": [
+          "python",
+          "c",
+          "cpp",
+          "rust",
+          "cython"
+        ],
         "variables": {
           "pickProcess": "seam.pickProcess"
         },
@@ -85,7 +110,9 @@
               },
               "args": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Arguments for the script or module.",
                 "default": []
               },
@@ -95,7 +122,9 @@
               },
               "pythonArgs": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Arguments for the interpreter itself, before the script.",
                 "default": []
               },
@@ -106,13 +135,19 @@
               },
               "env": {
                 "type": "object",
-                "additionalProperties": { "type": "string" },
+                "additionalProperties": {
+                  "type": "string"
+                },
                 "description": "Extra environment variables.",
                 "default": {}
               },
               "console": {
                 "type": "string",
-                "enum": [ "integratedTerminal", "internalConsole", "externalTerminal" ],
+                "enum": [
+                  "integratedTerminal",
+                  "internalConsole",
+                  "externalTerminal"
+                ],
                 "enumDescriptions": [
                   "Run the program in VS Code's integrated terminal. It can read from the keyboard.",
                   "Show the program's output in the Debug Console. The program cannot read input.",
@@ -128,9 +163,17 @@
               },
               "stopOnSignals": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Signals that stop the debugger. Every other signal is delivered to the program without stopping.",
-                "default": [ "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT" ]
+                "default": [
+                  "SIGSEGV",
+                  "SIGBUS",
+                  "SIGILL",
+                  "SIGFPE",
+                  "SIGABRT"
+                ]
               },
               "justMyCode": {
                 "type": "boolean",
@@ -149,17 +192,31 @@
               },
               "frameworkPaths": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Native source-path fragments to treat as binding glue when stepping, such as \"/third_party/\".",
                 "default": []
               },
               "sourceMap": {
                 "description": "Map native build paths to source directories on this machine. For example, { \"/io\": \"${workspaceFolder}\" } maps a CI build path to your checkout. Use \".\" for relative debug paths. Seam tries entries in order and uses the first where the file exists.",
                 "anyOf": [
-                  { "type": "object", "additionalProperties": { "type": "string" } },
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
                   {
                     "type": "array",
-                    "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 }
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
                   }
                 ],
                 "default": {}
@@ -167,10 +224,15 @@
             }
           },
           "attach": {
-            "required": [ "pid" ],
+            "required": [
+              "pid"
+            ],
             "properties": {
               "pid": {
-                "type": [ "number", "string" ],
+                "type": [
+                  "number",
+                  "string"
+                ],
                 "description": "Process ID of a supported CPython program. Use \"${command:seam.pickProcess}\" to choose from your running Python processes.",
                 "default": "${command:seam.pickProcess}"
               },
@@ -186,9 +248,17 @@
               },
               "stopOnSignals": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Signals that stop the debugger. Every other signal is delivered to the program without stopping.",
-                "default": [ "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT" ]
+                "default": [
+                  "SIGSEGV",
+                  "SIGBUS",
+                  "SIGILL",
+                  "SIGFPE",
+                  "SIGABRT"
+                ]
               },
               "showGlueFrames": {
                 "type": "boolean",
@@ -197,17 +267,31 @@
               },
               "frameworkPaths": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Native source-path fragments to treat as binding glue when stepping, such as \"/third_party/\".",
                 "default": []
               },
               "sourceMap": {
                 "description": "Map native build paths to source directories on this machine. For example, { \"/io\": \"${workspaceFolder}\" } maps a CI build path to your checkout. Use \".\" for relative debug paths. Seam tries entries in order and uses the first where the file exists.",
                 "anyOf": [
-                  { "type": "object", "additionalProperties": { "type": "string" } },
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
                   {
                     "type": "array",
-                    "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 }
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
                   }
                 ],
                 "default": {}

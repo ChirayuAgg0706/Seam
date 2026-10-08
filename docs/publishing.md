@@ -1,7 +1,7 @@
 # Publishing Seam
 
-The current package versions are debugger 0.1.1 and extension 0.1.3.
-The extension bundles debugger 0.1.1. Use this description on each listing:
+The current package versions are debugger 0.1.2 and extension 0.1.4.
+The extension bundles debugger 0.1.2. Use this description on each listing:
 
 > Debug Python and C, C++ or Rust in one session.
 
@@ -17,9 +17,9 @@ Use CPython 3.12, 3.13 or 3.14. Linux also has compatibility evidence for 3.15.0
    It checks installed packages and metadata before combining checksums.
 3. Download `seam-combined-release`. Keep the exact files from that workflow.
    Each VSIX filename includes publisher `chirayuagg0706` and its platform.
-4. Create tag `v0.1.1` at the verified commit. Upload the verified files and
-   `SHA256SUMS` to the GitHub release with [these notes](releases/0.1.1.md).
-5. Dispatch `publish-pypi.yml` with tag `v0.1.1`. It verifies the GitHub assets and
+4. Create tag `v0.1.2` at the verified commit. Upload the verified files and
+   `SHA256SUMS` to the GitHub release with [these notes](releases/0.1.2.md).
+5. Dispatch `publish-pypi.yml` with tag `v0.1.2`. It verifies the GitHub assets and
    publishes those exact Python distributions through Trusted Publishing.
 6. Install the public wheel in a fresh environment on each platform and run
    `seam doctor --python /path/to/project/python`. Compare PyPI hashes with the
@@ -38,7 +38,7 @@ manual upload, so there is no `VSCE_PAT` repository secret.
 2. Open [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage)
    and select publisher `chirayuagg0706` and the existing Seam extension.
 3. Use its update/upload action to upload the Linux x64 and macOS ARM64 packages
-   for version 0.1.3. Both belong to the same extension listing.
+   for version 0.1.4. Both belong to the same extension listing.
 4. Wait for validation, then test Marketplace installation on each platform.
    A successful GitHub build does not establish Marketplace availability.
 

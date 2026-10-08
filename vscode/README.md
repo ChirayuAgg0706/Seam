@@ -143,7 +143,7 @@ The [main README](https://github.com/ChirayuAgg0706/Seam#readme) lists every lau
   threaded-child-process session failure.
 - An evaluated expression that crashes or times out can damage the program.
   Restart the session before evaluating again.
-- Attach needs ptrace permission and a responsive interpreter; blocked-process
+- Attach needs debugging permission and a responsive interpreter; blocked-process
   attach and remote debugging are outside the supported scope.
 - Disassembly breakpoints are not supported. Linux thread-heavy workloads measured about
   twice as slowly; there is no universal low-overhead guarantee.

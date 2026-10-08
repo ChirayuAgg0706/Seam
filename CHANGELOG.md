@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2. 2026-10-08
+
+- Clarify that Linux ptrace settings do not apply to macOS attach.
+- Keep the debugger behavior from 0.1.1.
+
 ## 0.1.1. 2026-10-08
 
 - Support Apple Silicon macOS 14 and newer with Apple's LLDB and CPython 3.12, 3.13 and 3.14.

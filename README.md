@@ -76,7 +76,7 @@ On Ubuntu 24.04:
 sudo apt-get update
 sudo apt-get install -y lldb-19 python3-venv
 python3 -m venv ~/.venvs/seam
-~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.1
+~/.venvs/seam/bin/pip install --only-binary=:all: seam-debugger==0.1.2
 ~/.venvs/seam/bin/seam --version
 ```
 
@@ -84,9 +84,9 @@ On macOS, install the command-line tools with `xcode-select --install`, then run
 those virtual environment commands with your ARM64 Python 3.12+ interpreter.
 Skip the `apt-get` commands.
 
-The package comes from [PyPI](https://pypi.org/project/seam-debugger/0.1.1/).
+The package comes from [PyPI](https://pypi.org/project/seam-debugger/0.1.2/).
 You can also download the wheel from the
-[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.1) and install
+[GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.2) and install
 that file with `~/.venvs/seam/bin/pip install /path/to/downloaded.whl`.
 LLDB is a separate system dependency; pip does not install it.
 
@@ -184,8 +184,9 @@ exceptions" does not fire.
 In VS Code `${command:seam.pickProcess}` shows your running Python processes to choose
 from. `pid` can also be a number.
 
-Attaching needs ptrace permission for a non-child process
-(`/proc/sys/kernel/yama/ptrace_scope` must be 0, or the program must allow it). See
+On Linux, attaching to a non-child process needs `ptrace_scope` set to 0 or explicit
+tracing permission from the program. On macOS, the target must allow debugging;
+protected system processes cannot be attached. See
 [Limitations](#limitations) for what attach can and cannot do on each Python version.
 
 ### Breakpoints

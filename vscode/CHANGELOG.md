@@ -1,5 +1,10 @@
 # Seam extension changelog
 
+## 0.1.4. 2026-10-08
+
+- Bundle debugger 0.1.2 and clarify attach permissions.
+- Keep the debugger behavior from extension 0.1.3.
+
 ## 0.1.3. 2026-10-08
 
 - Bundle Seam debugger 0.1.1 with Apple Silicon macOS support.
