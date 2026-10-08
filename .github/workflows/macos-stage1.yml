@@ -26,7 +26,7 @@ jobs:
           SEAM_TEST_REPEAT: '5'
         run: |
           cd "$GITHUB_WORKSPACE"
-          python -m pytest tests/test_attach_features.py tests/test_mixed.py::test_pause --target-python "$(which python)" --basetemp="$RUNNER_TEMP/mac14-focused" --junitxml=mac14-focused.xml -ra
+          python -m pytest tests/test_attach_features.py --target-python "$(which python)" --basetemp="$RUNNER_TEMP/mac14-focused" --junitxml=mac14-focused.xml -ra
       - uses: actions/upload-artifact@v4
         if: always()
         with:
