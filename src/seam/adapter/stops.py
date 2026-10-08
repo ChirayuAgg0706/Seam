@@ -1,4 +1,5 @@
 """Process events: deciding what a stop is, and reporting it or carrying on."""
+import signal
 import struct
 import sys
 import time
@@ -63,6 +64,13 @@ class StopsMixin:
         state = lldb.SBProcess.GetStateFromEvent(ev)
         self.log("event: state", state, "restarted", lldb.SBProcess.GetRestartedFromEvent(ev),
                  "running", self.running, "stop-id", self.process.GetStopID())
+        if state == lldb.eStateRunning and getattr(self, "internal_signal_policy", None):
+            number, stop, notify, suppress = self.internal_signal_policy
+            signals = self.process.GetUnixSignals()
+            signals.SetShouldStop(number, stop)
+            signals.SetShouldNotify(number, notify)
+            signals.SetShouldSuppress(number, suppress)
+            self.internal_signal_policy = None
         if state == lldb.eStateExited:
             self._on_exit()
         elif state == lldb.eStateStopped:
@@ -642,8 +650,24 @@ class StopsMixin:
                 self.running = False
                 self.traps.stopped()
                 return False
+            # Apple debugserver uses SIGINT for its interrupt. Force this one stop
+            # and swallow the debugger-generated signal; restore the user's policy
+            # after the subsequent resume is observed.
+            number = int(signal.SIGINT)
+            signals = self.process.GetUnixSignals()
+            self.internal_signal_policy = (
+                number, signals.GetShouldStop(number), signals.GetShouldNotify(number),
+                signals.GetShouldSuppress(number))
+            signals.SetShouldStop(number, True)
+            signals.SetShouldNotify(number, True)
+            signals.SetShouldSuppress(number, True)
             error = self.process.Stop()
             if not error.Success():
+                _, stop, notify, suppress = self.internal_signal_policy
+                signals.SetShouldStop(number, stop)
+                signals.SetShouldNotify(number, notify)
+                signals.SetShouldSuppress(number, suppress)
+                self.internal_signal_policy = None
                 raise DapError("could not interrupt the process: %s" % error.GetCString())
         else:
             self.process.SendAsyncInterrupt()
