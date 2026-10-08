@@ -187,7 +187,19 @@ class SteppingMixin:
         self._discard_plans(thread)
         bp = self.target.BreakpointCreateByAddress(address)
         bp.SetThreadID(thread.GetThreadID())
-        self.stepout = {"bp": bp, "sp": target.GetSP()}
+        expected_sp = target.GetSP()
+        if expected_sp in (0, lldb.LLDB_INVALID_ADDRESS):
+            # Artificial tail-call frames can have a valid return PC but no SP.
+            # Use the closest younger physical frame as the recursion bound. An
+            # invalid address would reject every genuine hit and run to exit.
+            expected_sp = next((frame.GetSP() for frame in reversed(natives[:inner])
+                                if frame.GetSP() not in (0, lldb.LLDB_INVALID_ADDRESS)), None)
+            if expected_sp is None:
+                self.target.BreakpointDelete(bp.GetID())
+                raise DapError("cannot step out: LLDB did not recover the caller's stack depth")
+            self.log("step-out caller has no stack pointer; using younger frame bound",
+                     hex(expected_sp))
+        self.stepout = {"bp": bp, "sp": expected_sp}
         self.log("running until return to", target.GetFunctionName(), hex(address))
         self._sync_fork_cleanup()
         err = self.process.Continue()
@@ -419,6 +431,13 @@ class SteppingMixin:
             thread.StepOver()
         elif mode == "in":
             thread.StepInto()
+        elif (host == 0 and len(natives) > 1
+              and self._same_function_body(natives[0], natives[1])
+              and natives[0].GetFunctionName() != natives[0].GetFunction().GetName()
+              and self._classify_frame(natives[1]) == "user"):
+            # Leave a user inline function for its user host. The custom return-PC
+            # plan is for physical returns; using it here skips the whole host.
+            thread.StepOutOfFrame(natives[0])
         else:
             # Step out to the next frame worth showing: skip binding glue.
             self._step_out_of_glue(thread, above=host)

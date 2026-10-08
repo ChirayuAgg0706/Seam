@@ -177,7 +177,8 @@ def test_optimized_locals_have_an_explanation(dap, inspection):
 def test_help_points_to_requirements_editors_and_docs(python):
     env = dict(os.environ, PYTHONPATH=os.path.join(os.path.dirname(EXT), "..", "src"))
     help_text = subprocess.check_output([python, "-m", "seam", "--help"], env=env, text=True)
-    for text in ("LLDB", "Python scripting support", "CPython 3.12+", "VS Code", "Neovim", "#readme", "doctor"):
+    for text in ("LLDB", "Python scripting support", "CPython 3.12+", "VS Code",
+                 "Neovim", "#readme", "doctor"):
         assert text in help_text
 
 
