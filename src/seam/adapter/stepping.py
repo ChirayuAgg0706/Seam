@@ -20,12 +20,17 @@ class SteppingMixin:
     def _native_source_location(self, frame):
         entry = frame.GetLineEntry()
         path, line = entry.GetFileSpec().fullpath, entry.GetLine()
+        if not path or not line:
+            # An optimized inline host's synthetic frame can lack a line entry
+            # even though the actual PC still has one in the line table.
+            entry = frame.GetPCAddress().GetLineEntry()
+            path, line = entry.GetFileSpec().fullpath, entry.GetLine()
         physical = frame.GetFunction()
         own_frame = (physical.IsValid()
                      and frame.GetFunctionName() == physical.GetName())
         # Some LLDB builds report IsInlined for the PC's scope even on the physical
         # host frame. Its own name matching the physical function is the reliable test.
-        if path and self._is_glue_path(path) and own_frame:
+        if own_frame and (not path or not line or self._is_glue_path(path)):
             caller = self._inline_user_callsite(frame.GetPCAddress())
             if caller is not None:
                 return caller
@@ -67,11 +72,9 @@ class SteppingMixin:
             return "system"  # libc and friends, even when their debug info is installed
         # Judge the frame by its own name and line, not by whatever is innermost at its
         # PC: with inlining several frames share one PC and they are not the same thing.
-        entry = frame.GetLineEntry()
-        spec = entry.GetFileSpec()
-        if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
+        path, line = self._native_source_location(frame)
+        if not path or not line:
             return "nodebug"
-        path, _ = self._native_source_location(frame)
         if self._is_glue_path(path or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or ""):
