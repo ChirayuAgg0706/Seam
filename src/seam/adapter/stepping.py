@@ -20,7 +20,10 @@ class SteppingMixin:
     def _native_source_location(self, frame):
         entry = frame.GetLineEntry()
         path, line = entry.GetFileSpec().fullpath, entry.GetLine()
-        if path and self._is_glue_path(path) and not frame.IsInlined():
+        physical = frame.GetFunction()
+        own_frame = (physical.IsValid()
+                     and frame.GetFunctionName() == physical.GetName())
+        if path and self._is_glue_path(path) and not frame.IsInlined() and own_frame:
             caller = self._inline_user_callsite(frame.GetPCAddress())
             if caller is not None:
                 return caller
@@ -32,12 +35,7 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        path = spec.fullpath or ""
-        if self._is_glue_path(path):
-            caller = self._inline_user_callsite(address)
-            if caller is not None:
-                path = caller[0]
-        if self._is_glue_path(path):
+        if self._is_glue_path(spec.fullpath or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(self._function_name(address)):
             return "framework"
