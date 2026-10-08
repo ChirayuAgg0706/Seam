@@ -6,6 +6,7 @@ import shutil
 import signal
 import socket
 import struct
+import sys
 import tempfile
 import termios
 import threading
@@ -248,6 +249,11 @@ class SessionMixin:
 
     def _require_x86_64(self):
         triple = self.target.GetTriple() or ""
+        # Stage 1 is an explicitly opted-in feasibility experiment, not released support.
+        if (sys.platform == "darwin" and triple.startswith(("arm64", "aarch64"))
+                and os.environ.get("SEAM_EXPERIMENTAL_MACOS") == "1"):
+            self.log("experimental Apple Silicon target:", triple)
+            return
         if triple and not triple.startswith("x86_64"):
             raise DapError("Seam supports x86-64 Linux programs only; this one is %s" % triple)
 

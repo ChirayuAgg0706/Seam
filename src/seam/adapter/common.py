@@ -10,7 +10,7 @@ CONSOLES = ("internalConsole", "integratedTerminal", "externalTerminal")
 # Signals the terminal holder may pass on to the program (Ctrl-C, Ctrl-\, hang-up).
 TERMINAL_SIGNALS = (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP)
 # Seam's own plumbing between `seam dap` and the adapter; not the program's business.
-PRIVATE_ENV = ("SEAM_DAP_FD", "SEAM_NOTE_FD", "SEAM_PYTHON")
+PRIVATE_ENV = ("SEAM_DAP_FD", "SEAM_NOTE_FD", "SEAM_PYTHON", "SEAM_EXPERIMENTAL_MACOS")
 PY_SUFFIXES = (".py", ".pyw", ".pyi")
 EVAL_FRAME = "_PyEval_EvalFrameDefault"
 

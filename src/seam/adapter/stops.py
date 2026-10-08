@@ -10,10 +10,24 @@ from .common import (
 )
 
 # What a thread that has just started a child process reports. Never a stop to show.
-FORK_STOPS = (lldb.eStopReasonFork, lldb.eStopReasonVFork, lldb.eStopReasonVForkDone)
+FORK_STOPS = tuple(getattr(lldb, name) for name in
+                   ("eStopReasonFork", "eStopReasonVFork", "eStopReasonVForkDone")
+                   if hasattr(lldb, name))
 
 
 class StopsMixin:
+    def _entry_argument(self, frame, index):
+        """Integer/pointer argument at a function's entry, before its prologue runs."""
+        triple = self.target.GetTriple() or ""
+        name = ("x%d" % index if triple.startswith(("arm64", "aarch64"))
+                else ("rdi", "rsi", "rdx", "rcx", "r8", "r9")[index])
+        register = frame.FindRegister(name)
+        error = lldb.SBError()
+        value = register.GetValueAsUnsigned(error)
+        if not register.IsValid() or not error.Success():
+            raise DapError("cannot read argument register %s: %s" % (name, error.GetCString()))
+        return value
+
     def _on_event(self, ev):
         if lldb.SBBreakpoint.EventIsBreakpointEvent(ev):
             self._refresh_native_bp_status()
@@ -99,7 +113,9 @@ class StopsMixin:
         frame list does not. Right after a stop the register can be unreadable for a
         moment (it reads as zero); then the frame's own PC is the best there is."""
         frame = thread.GetFrameAtIndex(0)
-        rip = frame.FindRegister("rip")
+        register = "pc" if frame.GetThread().GetProcess().GetTarget().GetTriple().startswith(
+            ("arm64", "aarch64")) else "rip"
+        rip = frame.FindRegister(register)
         if rip.IsValid():
             error = lldb.SBError()
             value = rip.GetValueAsUnsigned(error)
@@ -164,7 +180,7 @@ class StopsMixin:
             frame = thread.GetFrameAtIndex(0)
             return "reason %s (%s) frame pc %#x rip %#x" % (
                 thread.GetStopReason(), thread.GetStopDescription(60), frame.GetPC(),
-                frame.FindRegister("rip").GetValueAsUnsigned())
+                self._pc(thread))
 
         for thread in self.process:
             # Only a PC register that can be read, and differs, shows a stale list. Right
@@ -183,7 +199,7 @@ class StopsMixin:
 
     def _on_trap(self, thread):
         frame = thread.GetFrameAtIndex(0)
-        reason = frame.FindRegister("rdx").GetValueAsUnsigned()
+        reason = self._entry_argument(frame, 2)
         tid = thread.GetThreadID()
         self.safe_tid = tid
         self.stop_is_trap = True
@@ -419,7 +435,7 @@ class StopsMixin:
         symbol ("typeinfo for T"); failing that, the mangled name it points to.
         """
         frame = thread.GetFrameAtIndex(0)
-        tinfo = frame.FindRegister("rsi").GetValueAsUnsigned()
+        tinfo = self._entry_argument(frame, 1)
         symbol = self.target.ResolveLoadAddress(tinfo).GetSymbol().GetName() or ""
         mangled = ""
         if not symbol.startswith("typeinfo for "):
@@ -461,8 +477,8 @@ class StopsMixin:
         This evaluates a native method, never Python (decisions §32).
         """
         frame = thread.GetFrameAtIndex(0)
-        pointer = frame.FindRegister("rdi").GetValueAsUnsigned()
-        info = frame.FindRegister("rsi").GetValueAsUnsigned()
+        pointer = self._entry_argument(frame, 0)
+        info = self._entry_argument(frame, 1)
         seen = set()
         try:
             while info and info not in seen and len(seen) < 32:

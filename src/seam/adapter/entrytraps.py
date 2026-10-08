@@ -28,6 +28,7 @@ import array
 import os
 import signal
 import struct
+import sys
 import time
 
 import lldb
@@ -62,6 +63,10 @@ class EntryTraps:
         setting = os.environ.get("SEAM_ENTRY_TRAPS", "").strip().lower()
         self.min_symbols = None if setting == "off" else (
             int(setting) if setting.isdigit() else MIN_SYMBOLS)
+        # This optimization patches x86 instructions through Linux /proc. Other hosts
+        # must use LLDB's normal breakpoints, even when SEAM_ENTRY_TRAPS forces it on.
+        if not sys.platform.startswith("linux"):
+            self.min_symbols = None
         self.fd = None              # /proc/<pid>/mem of the debugged process
         self.unavailable = None     # why this session cannot have entry traps, once known
         self.resolver = None        # a target without a process, to resolve functions in
