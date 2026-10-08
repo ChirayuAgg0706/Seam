@@ -199,9 +199,8 @@ class SteppingMixin:
     def _same_function_body(frame, other):
         """True if two frames of a thread are one function's code, one inlined into the other.
 
-        They share the stack pointer; a real caller's is always higher. Their PCs differ
-        in general: LLDB gives the function a frame was inlined into the address where the
-        inlined code starts, and the two only coincide on its first instruction.
+        They share SP and the physical function's identity. SP alone is not enough:
+        an ARM64 leaf can share it with its real caller. Inlined frames' PCs can differ.
         """
         if frame.GetSP() != other.GetSP() or frame.GetModule() != other.GetModule():
             return False

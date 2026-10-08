@@ -1,5 +1,6 @@
 """Process events: deciding what a stop is, and reporting it or carrying on."""
 import struct
+import sys
 import time
 
 import lldb
@@ -594,7 +595,14 @@ class StopsMixin:
         """Stop a running process for internal work. Returns False if it stopped by itself."""
         # Not SBProcess.Stop(): on LLDB 18 the stop it produces leaves the thread's frame
         # list cached, so the *next* stop shows the frames of this one.
-        self.process.SendAsyncInterrupt()
+        if sys.platform == "darwin":
+            # Older Apple LLDB can immediately resume SendAsyncInterrupt's SIGINT
+            # when the program's signal policy passes SIGINT. Halt forces a stop.
+            error = self.process.Stop()
+            if not error.Success():
+                raise DapError("could not interrupt the process: %s" % error.GetCString())
+        else:
+            self.process.SendAsyncInterrupt()
         state = self._wait_stop(10)
         if state != lldb.eStateStopped:
             self._on_exit()
