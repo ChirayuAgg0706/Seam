@@ -24,12 +24,10 @@ class BreakpointsMixin:
                     and CYTHON_GLUE.search(self._function_name(location.GetAddress()))):
                 location.SetEnabled(False)
 
-    @staticmethod
-    def _line_key(frame):
+    def _line_key(self, frame):
         """Identity of "this invocation of this function, on this line"."""
-        entry = frame.GetLineEntry()
-        return (frame.GetCFA(), frame.GetFunctionName(), entry.GetFileSpec().fullpath,
-                entry.GetLine())
+        path, line = self._native_source_location(frame)
+        return frame.GetCFA(), frame.GetFunctionName(), path, line
 
     def _is_same_line_rehit(self, thread):
         """True if a breakpoint hit is just another address range of the line we were on.

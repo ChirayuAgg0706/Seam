@@ -7,13 +7,37 @@ from .common import DapError, FRAMEWORK_FUNCTIONS, GLUE, MAX_STEP_IN_LOCATIONS, 
 
 
 class SteppingMixin:
+    def _inline_user_callsite(self, address):
+        block = address.GetBlock().GetContainingInlinedBlock()
+        while block.IsValid():
+            caller = block.GetInlinedCallSiteFile().fullpath
+            caller_line = block.GetInlinedCallSiteLine()
+            if caller and caller_line and not self._is_glue_path(caller):
+                return caller, caller_line
+            block = block.GetParent().GetContainingInlinedBlock()
+        return None
+
+    def _native_source_location(self, frame):
+        entry = frame.GetLineEntry()
+        path, line = entry.GetFileSpec().fullpath, entry.GetLine()
+        if path and self._is_glue_path(path) and not frame.IsInlined():
+            caller = self._inline_user_callsite(frame.GetPCAddress())
+            if caller is not None:
+                return caller
+        return path, line
+
     def _classify_address(self, address):
         """'user', 'framework' (binding glue) or 'nodebug' for a code address."""
         entry = address.GetLineEntry()
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        if self._is_glue_path(spec.fullpath or ""):
+        path = spec.fullpath or ""
+        if self._is_glue_path(path):
+            caller = self._inline_user_callsite(address)
+            if caller is not None:
+                path = caller[0]
+        if self._is_glue_path(path):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(self._function_name(address)):
             return "framework"
@@ -47,7 +71,8 @@ class SteppingMixin:
         spec = entry.GetFileSpec()
         if not entry.IsValid() or not spec.IsValid() or not entry.GetLine():
             return "nodebug"
-        if self._is_glue_path(spec.fullpath or ""):
+        path, _ = self._native_source_location(frame)
+        if self._is_glue_path(path or ""):
             return "framework"
         if FRAMEWORK_FUNCTIONS.search(frame.GetFunctionName() or ""):
             return "framework"
@@ -83,9 +108,8 @@ class SteppingMixin:
                 if self._classify_frame(candidate) == "user":
                     frame = candidate
                     break
-        entry = frame.GetLineEntry()
-        return (frame.GetFunctionName(), entry.GetFileSpec().fullpath, entry.GetLine(),
-                frame.GetSP())
+        path, line = self._native_source_location(frame)
+        return (frame.GetFunctionName(), path, line, frame.GetSP())
 
     def _user_modules(self):
         """Loaded modules that carry debug info and are not the interpreter or system libs."""

@@ -185,13 +185,11 @@ class SourcesMixin:
         object instead, so that the call stack still says which library it is in.
         """
         cls = self._classify_frame(frame)
-        entry = frame.GetLineEntry()
-        spec = entry.GetFileSpec()
-        named = spec.fullpath if spec.IsValid() else None
+        named, line = self._native_source_location(frame)
         path = self._local_source(named) if named else None
         record = {"kind": "native", "tid": tid, "index": index, "cls": cls,
                   "name": frame.GetFunctionName() or "%#x" % frame.GetPC(),
-                  "path": path, "line": entry.GetLine() if named else 0,
+                  "path": path, "line": line if named else 0,
                   "at": (frame.GetPC(), sp)}
         if path is None:
             record["name"] = self._library_name(frame)

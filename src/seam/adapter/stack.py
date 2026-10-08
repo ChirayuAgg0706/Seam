@@ -127,6 +127,12 @@ class StackMixin:
             found = None
             if entry is not None:
                 for i in range(search_from, len(natives)):
+                    # A frameless native leaf can share SP with the eval loop that
+                    # called it, notably with Clang on ARM64. The Python entry frame
+                    # belongs to the interpreter, not that leaf. Replacing the leaf
+                    # with Python frames would hide the actual native stop entirely.
+                    if natives[i].GetModule().GetFileSpec().fullpath != self.interp_module:
+                        continue
                     # The oldest frame has no known upper bound, so it never matches:
                     # if the backtrace was cut short it would claim every older group.
                     if uppers[i] is not None and sps[i] <= entry < uppers[i]:
