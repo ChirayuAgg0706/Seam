@@ -33,6 +33,7 @@ jobs:
         env:
           SEAM_LLDB: /usr/bin/lldb
           SEAM_EXPERIMENTAL_MACOS: '1'
+          SEAM_LOG: ${{ runner.temp }}/mac-editor.log
         run: |
           node vscode/test/unit.js --adapter
           export SEAM_VSIX="$(find "$GITHUB_WORKSPACE/vscode" -maxdepth 1 -name '*.vsix')"
@@ -46,7 +47,8 @@ jobs:
           path: |
             vscode/*.vsix
             dist/*.whl
-            vscode/test/.vscode-test/**/logs/
+            .vscode-test/**/logs/
+            ${{ runner.temp }}/mac-editor.log*
   native-features:
     runs-on: macos-15
     timeout-minutes: 25

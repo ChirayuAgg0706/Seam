@@ -39,7 +39,8 @@ const SETTINGS = {
 };
 
 function makeProject(demo) {
-  const project = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "seam-check-")), "orders");
+  const project = path.join(fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "seam-check-"))), "orders");
   fs.mkdirSync(project);
   fs.copyFileSync(path.join(__dirname, "project", "app.py"), path.join(project, "app.py"));
   fs.copyFileSync(path.join(demo, "seam_demo.so"), path.join(project, "seam_demo.so"));
