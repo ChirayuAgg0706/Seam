@@ -29,14 +29,15 @@ jobs:
           SEAM_TEST_STRICT: '1'
           SEAM_TEST_BUILD: ${{ runner.temp }}/native-build
         run: |
-          python -m pytest -m smoke --target-python "$(which python)" --maxfail=12 --junitxml=mac-smoke.xml -ra
+          cd "$GITHUB_WORKSPACE"
+          python -m pytest tests -m smoke --target-python "$(which python)" --maxfail=12 --basetemp="$RUNNER_TEMP/seam-pytest" --junitxml=mac-smoke.xml -ra
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: macos-native-smoke
           path: |
             mac-smoke.xml
-            /private/var/folders/**/pytest-of-runner/**/seam*.log*
+            ${{ runner.temp }}/seam-pytest/
   installed-adapter:
     runs-on: macos-15
     timeout-minutes: 15

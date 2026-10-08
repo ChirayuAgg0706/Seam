@@ -2,11 +2,12 @@
 import os
 import signal
 import subprocess
+import sys
 import sysconfig
 
 import pytest
 
-from conftest import CAPI_SRC, EXT, _run, marker_line, target
+from conftest import CAPI_SRC, EXT, SHARED_FLAGS, _run, marker_line, target
 
 pytestmark = pytest.mark.smoke
 
@@ -43,9 +44,9 @@ def stripped(tmp_path_factory):
     """The no-source test extension: optimised, no debug info, stripped."""
     out = str(tmp_path_factory.mktemp("nosource"))
     library = os.path.join(out, LIBRARY)
-    _run(["gcc", "-shared", "-fPIC", "-O2", "-I", sysconfig.get_paths()["include"],
+    _run(["gcc", *SHARED_FLAGS, "-O2", "-I", sysconfig.get_paths()["include"],
           os.path.join(EXT, "nosource", "seam_nosource.c"), "-o", library])
-    _run(["strip", library])
+    _run(["strip", *(["-x"] if sys.platform == "darwin" else []), library])
     return {"PYTHONPATH": out}
 
 

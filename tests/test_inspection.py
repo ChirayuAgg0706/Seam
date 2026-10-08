@@ -5,7 +5,7 @@ import subprocess
 import pybind11
 import pytest
 
-from conftest import EXT, Extension, _run, marker_line, target
+from conftest import EXT, SHARED_FLAGS, Extension, _run, marker_line, target
 
 pytestmark = pytest.mark.smoke
 SCRIPT = target("inspection.py")
@@ -16,7 +16,7 @@ SOURCE = os.path.join(EXT, "pybind11", "inspection.cpp")
 def inspection(tmp_path_factory, pyinfo, request):
     directory = str(tmp_path_factory.mktemp("inspection"))
     opt = request.config.getoption("--opt")
-    _run(["g++", "-shared", "-fPIC", "-g", "-" + opt, "-std=c++17",
+    _run(["g++", *SHARED_FLAGS, "-g", "-" + opt, "-std=c++17",
           "-I", pyinfo["include"], "-I", pybind11.get_include(), SOURCE,
           "-o", os.path.join(directory, "seam_inspection.so")])
     return Extension(directory, opt, SOURCE, "seam_inspection", "pybind11")

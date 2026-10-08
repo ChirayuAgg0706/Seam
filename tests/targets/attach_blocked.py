@@ -6,7 +6,8 @@ import time
 
 # Let a non-ancestor debugger attach even where Yama restricts ptrace (e.g. CI runners).
 PR_SET_PTRACER = 0x59616D61
-ctypes.CDLL(None).prctl(PR_SET_PTRACER, ctypes.c_ulong(-1), 0, 0, 0)
+if sys.platform.startswith("linux"):
+    ctypes.CDLL(None).prctl(PR_SET_PTRACER, ctypes.c_ulong(-1), 0, 0, 0)
 
 ticks = 0
 
