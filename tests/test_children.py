@@ -265,7 +265,7 @@ def test_fork_while_other_threads_run(dap, capi):
                                    marker_line(CHILDREN, "threads-stop")])
     if lldb_major(dap) >= 19:
         dap.set_breakpoints(CAPI_SRC, [{"line": marker_line(CAPI_SRC, "add-impl-return"),
-                                        "condition": "a == 5"}])
+                                        "condition": "sum == 6"}])
     # else: LLDB 18 breaks when a thread reaches a breakpoint at the moment another one
     # starts a child with vfork. It cannot evaluate the condition then ("Couldn't
     # allocate space for the stack frame"), stops, and from there on evaluates nothing
@@ -371,7 +371,7 @@ def test_logpoints_are_the_parents_only(dap, capi):
     dap.set_breakpoints(CHILDREN, [{"line": marker_line(CHILDREN, "work-add"),
                                     "logMessage": "work on {n}"}])
     dap.set_breakpoints(CAPI_SRC, [{"line": marker_line(CAPI_SRC, "add-impl-return"),
-                                    "logMessage": "native {a}"}])
+                                    "logMessage": "native {sum - 1}"}])
     dap.cont()
     stops, code = run_to_exit(dap)
     assert "log child: exit 7" in dap.output, dap.output
