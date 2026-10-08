@@ -47,6 +47,25 @@ are in `vscode/images/`. Open VSX is deferred at the owner's request.
 The `publish-extension.yml` workflow remains available for future token-based
 publication. It verifies the exact asset before uploading and does not rebuild it.
 
+## Apple Silicon publication record, 2026-10-08
+
+- [GitHub release 0.1.2](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.2)
+  contains both platform wheels, the source archive, both extension 0.1.4 VSIX files,
+  companion checksums and the combined checksum list.
+- [Release build 37784619768](https://github.com/ChirayuAgg0706/Seam/actions/runs/37784619768)
+  passed on Linux and macOS. It verified installed wheels, doctor, the bundled adapter,
+  thin ARM64/ELF x86-64 helpers, versions, metadata and package checksums.
+- [PyPI 0.1.2](https://pypi.org/project/seam-debugger/0.1.2/) is public. All three Python
+  distribution downloads match the verified GitHub hashes. A fresh Linux installation
+  passed doctor, and pip selected the Mac ARM64 wheel with the Mac platform tags.
+- [Trusted publication 37785234772](https://github.com/ChirayuAgg0706/Seam/actions/runs/37785234772)
+  passed. Version 0.1.1 introduced Mac support; 0.1.2 clarifies the attach instructions
+  and changes no debugger behavior.
+- Marketplace 0.1.4 is pending the owner's manual upload of both platform VSIX files.
+  Its availability has not been claimed or tested. Open VSX remains deferred.
+
+The final runtime and real-project evidence is in [the Mac validation record](macos-stage1.md).
+
 ## Historical releases
 
 The records below describe the original Linux releases. Their assets, hashes and
