@@ -9,6 +9,34 @@ permissions:
   contents: read
 
 jobs:
+  native-features:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: arm64
+      - name: Install test toolchains
+        run: |
+          python -m pip install pytest pybind11 nanobind cython uv
+          rustc --version
+      - name: Existing smoke scenarios on Apple Silicon
+        env:
+          SEAM_LLDB: /usr/bin/lldb
+          SEAM_EXPERIMENTAL_MACOS: '1'
+          SEAM_TEST_STRICT: '1'
+          SEAM_TEST_BUILD: ${{ runner.temp }}/native-build
+        run: |
+          python -m pytest -m smoke --target-python "$(which python)" --maxfail=12 --junitxml=mac-smoke.xml -ra
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-smoke
+          path: |
+            mac-smoke.xml
+            /private/var/folders/**/pytest-of-runner/**/seam*.log*
   installed-adapter:
     runs-on: macos-15
     timeout-minutes: 15

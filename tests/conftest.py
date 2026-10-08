@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dapclient import ROOT, DapClient  # noqa: E402
 
 TARGETS = os.path.join(ROOT, "tests", "targets")
+SHARED_FLAGS = (["-bundle", "-undefined", "dynamic_lookup"] if sys.platform == "darwin"
+                else ["-shared", "-fPIC"])
 HELPER_SRC = os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.c")
 HELPER_SO = os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.abi3.so")
 CAPI_SRC = os.path.join(ROOT, "tests", "ext", "capi", "seamtest.c")
@@ -58,7 +60,7 @@ def helper():
     if (not os.path.exists(HELPER_SO)
             or os.path.getmtime(HELPER_SO) < os.path.getmtime(HELPER_SRC)):
         subprocess.run(
-            ["gcc", "-shared", "-fPIC", "-O2", "-g", "-Wall", "-Werror",
+            ["gcc", *SHARED_FLAGS, "-O2", "-g", "-Wall", "-Werror",
              "-I", sysconfig.get_paths()["include"], HELPER_SRC, "-o", HELPER_SO],
             check=True)
     return HELPER_SO
@@ -146,7 +148,7 @@ def _build_layer(layer, opt, pyinfo):
     module, source = LAYERS[layer]
     out_dir = os.path.join(BUILD, "%s-%s-%s" % (layer, opt, pyinfo["tag"]))
     out = os.path.join(out_dir, module + ".so")
-    common = ["-shared", "-fPIC", "-g", "-" + opt, "-I", pyinfo["include"]]
+    common = [*SHARED_FLAGS, "-g", "-" + opt, "-I", pyinfo["include"]]
     if layer == "pyo3":
         if not shutil.which("cargo"):
             _unavailable("cargo is not installed")
@@ -160,7 +162,8 @@ def _build_layer(layer, opt, pyinfo):
         _run(cmd, cwd=os.path.dirname(os.path.dirname(source)),
              env=dict(os.environ, CARGO_TARGET_DIR=target_dir, PYO3_NO_PYTHON="1"))
         os.makedirs(out_dir, exist_ok=True)
-        shutil.copy2(os.path.join(target_dir, profile, "libseam_pyo3.so"), out)
+        suffix = ".dylib" if sys.platform == "darwin" else ".so"
+        shutil.copy2(os.path.join(target_dir, profile, "libseam_pyo3" + suffix), out)
         return Extension(out_dir, opt, source, module, layer)
     if not _stale(out, source):
         return Extension(out_dir, opt, source, module, layer)
@@ -224,7 +227,7 @@ def capi(request):
     if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(CAPI_SRC):
         os.makedirs(out_dir, exist_ok=True)
         subprocess.run(
-            ["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-Wall",
+            ["gcc", *SHARED_FLAGS, "-g", "-" + opt, "-Wall",
              "-I", sysconfig.get_paths()["include"], CAPI_SRC, "-o", out], check=True)
     return Extension(out_dir, opt)
 
@@ -256,6 +259,10 @@ def target(name):
 
 
 def pid_alive(pid):
+    if sys.platform == "darwin":
+        state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
+                               capture_output=True, text=True).stdout.strip()
+        return bool(state) and not state.startswith("Z")
     try:
         with open("/proc/%d/stat" % pid) as fh:
             return fh.read().rsplit(")", 1)[1].split()[0] != "Z"
