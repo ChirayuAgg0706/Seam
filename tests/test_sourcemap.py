@@ -14,7 +14,7 @@ import sysconfig
 
 import pytest
 
-from conftest import BUILD, EXT, LAYERS, _run, _unavailable, marker_line, pid_alive, target
+from conftest import BUILD, EXT, LAYERS, SHARED_FLAGS, _run, _unavailable, marker_line, pid_alive, target
 
 pytestmark = pytest.mark.smoke
 
@@ -61,7 +61,7 @@ def build_c(kind, opt, root, sources=None):
     if not sources:
         shutil.copytree(SOURCES, where)
     os.makedirs(out)
-    common = ["-shared", "-fPIC", "-g", "-" + opt, "-I", sysconfig.get_paths()["include"]]
+    common = [*SHARED_FLAGS, "-g", "-" + opt, "-I", sysconfig.get_paths()["include"]]
     files = ["src/mapped.c", os.path.join(where, "vendor", "shim.c")]
     if kind == "moved":
         # Full paths on the compiler's command line, as CMake and Meson pass them.
@@ -111,7 +111,7 @@ def moved_cython(request, tmp_path_factory, pyinfo):
     shutil.copy(LAYERS["cython"][1], where)
     _run([sys.executable, "-m", "cython", "-3", "--line-directives", "seam_cython.pyx",
           "-o", "seam_cython.c"], cwd=where)
-    _run(["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-I", pyinfo["include"],
+    _run(["gcc", *SHARED_FLAGS, "-g", "-" + opt, "-I", pyinfo["include"],
           "seam_cython.c", "-o", os.path.join(out, "seam_cython.so")], cwd=where)
     shutil.rmtree(where)
     return Build(out, where, opt)
@@ -142,7 +142,8 @@ def remapped_rust(request, tmp_path_factory):
          env=dict(os.environ, CARGO_TARGET_DIR=target_dir, PYO3_NO_PYTHON="1"))
     out = str(tmp_path_factory.mktemp("rust"))
     shutil.copy2(os.path.join(target_dir, "debug" if opt == "O0" else "release",
-                              "libseam_pyo3.so"), os.path.join(out, "seam_pyo3.so"))
+                              "libseam_pyo3" + (".dylib" if sys.platform == "darwin" else ".so")),
+                 os.path.join(out, "seam_pyo3.so"))
     shutil.rmtree(crate)
     return Build(out, "/remapped/seam", opt)
 

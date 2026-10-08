@@ -243,7 +243,9 @@ def build(directory, opt="O0", functions=15000, files=30, include=None, jobs=4):
     with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
         results = list(pool.map(compile_one, sources))
     if any(changed for _, changed in results) or not os.path.exists(out):
-        subprocess.run(["gcc", "-shared", "-o", out] + [obj for obj, _ in results], check=True)
+        shared = (["-bundle", "-undefined", "dynamic_lookup"] if sys.platform == "darwin"
+                  else ["-shared"])
+        subprocess.run(["gcc", *shared, "-o", out] + [obj for obj, _ in results], check=True)
     return out_dir
 
 

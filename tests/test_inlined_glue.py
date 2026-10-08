@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from conftest import BUILD, EXT, Extension, marker_line, target
+from conftest import BUILD, EXT, SHARED_FLAGS, Extension, marker_line, target
 
 pytestmark = pytest.mark.smoke
 
@@ -31,7 +31,7 @@ def inline_ext(request, pyinfo):
     out = os.path.join(out_dir, "seam_inline.so")
     if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(SOURCE):
         os.makedirs(out_dir, exist_ok=True)
-        subprocess.run(["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-Wall",
+        subprocess.run(["gcc", *SHARED_FLAGS, "-g", "-" + opt, "-Wall",
                         "-I", pyinfo["include"], SOURCE, "-o", out], check=True)
     return Extension(out_dir, opt, SOURCE, "seam_inline")
 

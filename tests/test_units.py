@@ -8,7 +8,7 @@ import types
 
 import pytest
 
-from conftest import ROOT
+from conftest import ROOT, SHARED_FLAGS
 
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
@@ -104,7 +104,7 @@ def test_helper_built_with_target_headers_can_dispatch_on_python312(python, tmp_
         text=True).strip()
     helper = tmp_path / "_seam_trap.abi3.so"
     subprocess.run([
-        "gcc", "-shared", "-fPIC", "-O2", "-Wall", "-Werror", "-I", include,
+        "gcc", *SHARED_FLAGS, "-O2", "-Wall", "-Werror", "-I", include,
         os.path.join(ROOT, "src", "seam", "_target", "_seam_trap.c"), "-o", str(helper),
     ], check=True)
     # Exercise the real native request/reply buffers, preserving embedded NUL bytes.

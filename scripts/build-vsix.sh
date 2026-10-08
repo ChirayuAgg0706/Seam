@@ -83,7 +83,7 @@ EOF
 # What the helper asks of the machine it will run on.
 if [ "$target" = darwin-arm64 ]; then
   file "$dest/$HELPER" | grep -q 'Mach-O' || fail "the helper is not a Mach-O library"
-  lipo -verify_arch arm64 "$dest/$HELPER" || fail "the helper has no Apple Silicon code"
+  lipo "$dest/$HELPER" -verify_arch arm64 || fail "the helper has no Apple Silicon code"
 elif [ "$target" = linux-x64 ] && command -v objdump >/dev/null; then
   objdump -f "$dest/$HELPER" | grep -q 'elf64-x86-64' ||
     fail "the helper is not a Linux x86-64 library: $(objdump -f "$dest/$HELPER" | grep 'file format')"

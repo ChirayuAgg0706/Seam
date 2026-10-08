@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from conftest import BUILD, EXT, Extension, _unavailable, marker_line, target
+from conftest import BUILD, EXT, SHARED_FLAGS, Extension, _unavailable, marker_line, target
 
 pytestmark = pytest.mark.smoke
 
@@ -35,7 +35,7 @@ def cyraise(request, pyinfo):
         # As a library is built: from the source's own directory, without line directives.
         subprocess.run([sys.executable, "-m", "cython", "-3", os.path.basename(SOURCE),
                         "-o", c_file], cwd=os.path.dirname(SOURCE), check=True)
-        subprocess.run(["gcc", "-shared", "-fPIC", "-g", "-" + opt, "-I", pyinfo["include"],
+        subprocess.run(["gcc", *SHARED_FLAGS, "-g", "-" + opt, "-I", pyinfo["include"],
                         c_file, "-o", out], check=True)
     return Extension(out_dir, opt, SOURCE, "seam_cyraise")
 
