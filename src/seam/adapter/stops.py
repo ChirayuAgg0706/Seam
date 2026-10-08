@@ -124,6 +124,8 @@ class StopsMixin:
         raise DapError("timed out waiting for the process to stop")
 
     def _new_stop(self):
+        if self.process is not None:
+            self.last_resume_stop_id = self.process.GetStopID()
         self.epoch += 1
         self.frames.clear()
         self.stacks.clear()
@@ -598,6 +600,18 @@ class StopsMixin:
         if sys.platform == "darwin":
             # Older Apple LLDB can immediately resume SendAsyncInterrupt's SIGINT
             # when the program's signal policy passes SIGINT. Halt forces a stop.
+            # Continue is asynchronous. A configuration request can arrive before
+            # its running state is public; Halt rejects that stale stopped state.
+            deadline = time.monotonic() + 1
+            while (self.process.GetState() == lldb.eStateStopped
+                   and self.process.GetStopID() == getattr(self, "last_resume_stop_id", None)
+                   and time.monotonic() < deadline):
+                time.sleep(0.01)
+            if (self.process.GetState() == lldb.eStateStopped
+                    and self.process.GetStopID() != getattr(self, "last_resume_stop_id", None)):
+                self.running = False
+                self.traps.stopped()
+                return False
             error = self.process.Stop()
             if not error.Success():
                 raise DapError("could not interrupt the process: %s" % error.GetCString())
