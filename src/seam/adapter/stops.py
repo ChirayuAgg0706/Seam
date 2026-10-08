@@ -80,6 +80,19 @@ class StopsMixin:
                 if self.process.GetState() != lldb.eStateStopped:
                     return
             self.running = False
+            passing = getattr(self, "macos_fault_pass", None)
+            if passing is not None:
+                number, tid = passing
+                thread = self._thread(tid)
+                signals = self.process.GetUnixSignals()
+                signals.SetShouldStop(number, True)
+                signals.SetShouldNotify(number, True)
+                self.macos_fault_pass = None
+                if (thread.GetStopReason() in (lldb.eStopReasonTrace, lldb.eStopReasonPlanComplete)
+                        and not self.pause_requested):
+                    self._discard_plans(thread)
+                    self._continue()
+                    return
             self._on_stop()
 
     def _wait_stop(self, timeout=30):

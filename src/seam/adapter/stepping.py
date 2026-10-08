@@ -285,7 +285,8 @@ class SteppingMixin:
 
     def req_continue(self, args):
         self._require_stopped()
-        self._pass_macos_fault()
+        if self._pass_macos_fault():
+            return {"allThreadsContinued": True}
         self._new_stop()
         self._continue()
         return {"allThreadsContinued": True}
@@ -300,8 +301,6 @@ class SteppingMixin:
     def _step(self, args, mode):
         self._require_stopped()
         if self._pass_macos_fault():
-            self._new_stop()
-            self._continue()
             return None
         thread = self._thread(args["threadId"])
         tid = thread.GetThreadID()

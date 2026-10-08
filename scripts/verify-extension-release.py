@@ -30,11 +30,14 @@ def verify(package, publisher, version):
                 raise ValueError("Unexpected extension " + key)
         xml = ET.fromstring(archive.read("extension.vsixmanifest"))
         identity = xml.find("{*}Metadata/{*}Identity")
+        target = identity.get("TargetPlatform") if identity is not None else None
+        if target not in ("linux-x64", "darwin-arm64"):
+            raise ValueError("Unsupported VSIX platform")
         expected = {
             "Publisher": publisher,
             "Id": "seam-debugger",
             "Version": version,
-            "TargetPlatform": "linux-x64",
+            "TargetPlatform": target,
         }
         if identity is None or any(identity.get(key) != value for key, value in expected.items()):
             raise ValueError("VSIX identity or platform mismatch")
@@ -44,6 +47,14 @@ def verify(package, publisher, version):
             "seamAdapterVersion", version
         ):
             raise ValueError("Bundled debugger version does not match the declared adapter version")
+        helper = archive.read("extension/bundled/seam/_target/_seam_trap.abi3.so")
+        if target == "linux-x64":
+            if (helper[:6] != b"\x7fELF\x02\x01"
+                    or struct.unpack_from("<H", helper, 18)[0] != 62):
+                raise ValueError("Linux VSIX must contain an ELF x86-64 helper")
+        elif (helper[:4] != b"\xcf\xfa\xed\xfe"
+              or struct.unpack_from("<I", helper, 4)[0] != 0x0100000c):
+            raise ValueError("Mac VSIX must contain a Mach-O ARM64 helper")
         if manifest.get("icon"):
             icon = archive.read("extension/" + manifest["icon"])
             if icon[:8] != b"\x89PNG\r\n\x1a\n":
@@ -86,7 +97,7 @@ def verify(package, publisher, version):
             width, height = struct.unpack("<HH", demo[6:10])
             if width < 640 or height < 400 or b"NETSCAPE2.0" not in demo:
                 raise ValueError("Demo must be readable and loop")
-    print(f"Verified {publisher}.seam-debugger {version}, Linux x64, SHA-256 {digest}")
+    print(f"Verified {publisher}.seam-debugger {version}, {target}, SHA-256 {digest}")
 
 
 if __name__ == "__main__":

@@ -32,10 +32,22 @@ class SessionMixin:
         if thread.GetStopReason() != lldb.eStopReasonSignal:
             return False
         number = thread.GetStopReasonDataAtIndex(0)
-        error = self.process.Signal(number)
-        self.log("macOS resume fault signal", number, error.Success(), error.GetCString())
+        signals = self.process.GetUnixSignals()
+        signals.SetShouldStop(number, False)
+        signals.SetShouldNotify(number, False)
+        self.macos_fault_pass = (number, thread.GetThreadID())
+        self._new_stop()
+        # A single instruction gives us control back as soon as a custom handler
+        # starts. Restore the signal policy there so a handler's re-raised signal
+        # remains a real exception stop. With the default handler the process exits.
+        error = lldb.SBError()
+        thread.StepInstruction(False, error)
         if not error.Success():
-            raise DapError("could not deliver the stopped signal: %s" % error.GetCString())
+            signals.SetShouldStop(number, True)
+            signals.SetShouldNotify(number, True)
+            self.macos_fault_pass = None
+            raise DapError("could not resume the stopped signal: %s" % error.GetCString())
+        self.running = True
         return True
 
     def _watch_fork_calls(self):

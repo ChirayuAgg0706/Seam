@@ -52,8 +52,8 @@ jobs:
           version = tag[1:]
           root = Path("release")
           wheels, sources = list(root.glob("*.whl")), list(root.glob("*.tar.gz"))
-          if len(wheels) != 1 or len(sources) != 1:
-              raise SystemExit("Expected exactly one wheel and one source distribution")
+          if not wheels or len(sources) != 1:
+              raise SystemExit("Expected wheels and exactly one source distribution")
           sums = {}
           for line in (root / "SHA256SUMS").read_text().splitlines():
               digest, name = line.split(maxsplit=1)
@@ -61,15 +61,21 @@ jobs:
           for path in wheels + sources:
               if hashlib.sha256(path.read_bytes()).hexdigest() != sums.get(path.name):
                   raise SystemExit("Checksum mismatch: " + path.name)
-          with zipfile.ZipFile(wheels[0]) as archive:
-              names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
-              if len(names) != 1:
-                  raise SystemExit("Expected one wheel metadata file")
-              wheel_metadata = BytesParser().parsebytes(archive.read(names[0]))
+          wheel_metadata = []
+          for wheel in wheels:
+              if not re.fullmatch(r"seam_debugger-" + re.escape(version)
+                                  + r"-cp312-abi3-(manylinux_[a-zA-Z0-9_.]+_x86_64|macosx_14_0_arm64)\.whl",
+                                  wheel.name):
+                  raise SystemExit("Unexpected wheel platform: " + wheel.name)
+              with zipfile.ZipFile(wheel) as archive:
+                  names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+                  if len(names) != 1:
+                      raise SystemExit("Expected one metadata file in each wheel")
+                  wheel_metadata.append(BytesParser().parsebytes(archive.read(names[0])))
           with tarfile.open(sources[0]) as archive:
               info = archive.getmember(f"seam_debugger-{version}/PKG-INFO")
               source_metadata = BytesParser().parsebytes(archive.extractfile(info).read())
-          for metadata in (wheel_metadata, source_metadata):
+          for metadata in [*wheel_metadata, source_metadata]:
               if metadata["Name"] != "seam-debugger" or metadata["Version"] != version:
                   raise SystemExit("Distribution identity does not match release tag")
           Path("dist").mkdir()

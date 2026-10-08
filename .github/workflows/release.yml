@@ -11,6 +11,42 @@ permissions:
   contents: read
 
 jobs:
+  macos:
+    name: Apple Silicon wheel and .vsix
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and check Apple Silicon distributions
+        run: |
+          python tools/check_versions.py
+          python -m pip install build twine
+          ARCHFLAGS='-arch arm64' MACOSX_DEPLOYMENT_TARGET=14.0 _PYTHON_HOST_PLATFORM=macosx-14.0-arm64 python -m build --wheel
+          bash scripts/build-vsix.sh dist/*.whl
+          cp vscode/*.vsix dist/
+          python -m twine check --strict dist/*.whl
+      - name: Check both installed packages
+        run: |
+          python -m venv "$RUNNER_TEMP/mac-wheel"
+          "$RUNNER_TEMP/mac-wheel/bin/pip" install dist/*.whl
+          "$RUNNER_TEMP/mac-wheel/bin/seam" doctor --python python3
+          node vscode/test/unit.js --adapter
+      - name: Release checksums
+        run: |
+          cd dist
+          shasum -a 256 *.whl *.vsix > SHA256SUMS-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seam-macos-release-artifacts
+          path: dist/*
+          if-no-files-found: error
   build:
     name: wheel, sdist and .vsix
     runs-on: ubuntu-24.04
