@@ -79,6 +79,9 @@ jobs:
           python -m venv "$RUNNER_TEMP/mac-wheel"
           "$RUNNER_TEMP/mac-wheel/bin/pip" install dist/*.whl
           "$RUNNER_TEMP/mac-wheel/bin/seam" doctor --python python3
+          printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/intel-target.c"
+          clang -arch x86_64 "$RUNNER_TEMP/intel-target.c" -o "$RUNNER_TEMP/intel-target"
+          "$RUNNER_TEMP/mac-wheel/bin/python" scripts/macos-stage1-check.py --output mac-release-checks --repeat 2 --unsupported-target "$RUNNER_TEMP/intel-target"
           node vscode/test/unit.js --adapter
       - name: Release checksums
         run: |
