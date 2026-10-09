@@ -9,10 +9,15 @@ stack shows both languages in the order they ran.
 Seam supports C API, PyO3, pybind11, nanobind and Cython modules. It works in
 VS Code and Neovim through the Debug Adapter Protocol.
 
-![Step into Rust, inspect its locals, and return to Python](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/vscode/images/python-rust-demo.gif)
+A 10% discount on $100 should leave $90. This example returns $10. Step from its
+Python test into Rust, find the wrong return value, and rerun the test after the fix.
 
-Recorded with the packaged extension. Python calls Rust's `sum_squares` and
-receives `30`. The recording starts at a Python breakpoint.
+[![Find the checkout bug by stepping from Python into Rust with Seam](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/examples/checkout-bug/media/checkout-bug.gif)](https://github.com/ChirayuAgg0706/Seam/tree/main/examples/checkout-bug)
+
+[Try the checkout bug walkthrough](https://github.com/ChirayuAgg0706/Seam/tree/main/examples/checkout-bug)
+or [watch the 44-second video](https://raw.githubusercontent.com/ChirayuAgg0706/Seam/main/examples/checkout-bug/media/checkout-bug.mp4).
+Real debugging footage of a deliberately broken example, edited to remove pauses.
+The walkthrough includes installation, source code, the fix and rebuild commands.
 
 ## Requirements
 

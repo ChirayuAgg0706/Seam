@@ -1,0 +1,19 @@
+[package]
+name = "seam_checkout"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "seam_checkout"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = ">=0.23", features = ["extension-module", "abi3-py312"] }
+
+[build-dependencies]
+pyo3-build-config = ">=0.23"
+
+[profile.dev]
+opt-level = 0
+debug = 2

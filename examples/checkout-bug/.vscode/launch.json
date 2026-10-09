@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "seam",
+      "request": "launch",
+      "name": "Debug checkout",
+      "program": "${workspaceFolder}/checkout.py",
+      "python": "${workspaceFolder}/.venv/bin/python"
+    }
+  ]
+}
