@@ -87,6 +87,16 @@ exited successfully. Cleanup now closes the test PTY and bounds the wait after
 SIGKILL to 15 seconds. Seven focused Linux terminal checks pass with this harness
 change. It changes no released debugger or VSIX file.
 
+Final validation at `7a73b58` passed:
+[Linux CI](https://github.com/ChirayuAgg0706/Seam/actions/runs/38054984740)
+completed the full suite, lint, version and extension checks, and
+[Apple Silicon CI](https://github.com/ChirayuAgg0706/Seam/actions/runs/38054984729)
+passed all 14 jobs, including the previously stalled macOS 14 scenario and the
+packaged-editor regression. The
+[extension 0.1.5 GitHub release](https://github.com/ChirayuAgg0706/Seam/releases/tag/extension-v0.1.5)
+contains the two verified VSIX files and their checksums. Marketplace upload of both
+files remains the owner's action; the public gallery still serves 0.1.4.
+
 ## Apple Silicon publication record, 2026-10-08
 
 - [GitHub release 0.1.2](https://github.com/ChirayuAgg0706/Seam/releases/tag/v0.1.2)
