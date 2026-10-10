@@ -1,7 +1,8 @@
 # Publishing Seam
 
-The current package versions are debugger 0.1.2 and extension 0.1.4.
-The extension bundles debugger 0.1.2. Use this description on each listing:
+The prepared package versions are debugger 0.1.2 and extension 0.1.5.
+Marketplace currently serves extension 0.1.4; uploading 0.1.5 remains a manual step.
+Both extension versions bundle debugger 0.1.2. Use this description on each listing:
 
 > Debug Python and C, C++ or Rust in one session.
 
@@ -38,7 +39,7 @@ manual upload, so there is no `VSCE_PAT` repository secret.
 2. Open [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage)
    and select publisher `chirayuagg0706` and the existing Seam extension.
 3. Use its update/upload action to upload the Linux x64 and macOS ARM64 packages
-   for version 0.1.4. Both belong to the same extension listing.
+   for version 0.1.5. Both belong to the same extension listing.
 4. Wait for validation, then test Marketplace installation on each platform.
    A successful GitHub build does not establish Marketplace availability.
 
@@ -46,6 +47,37 @@ The package includes the logo, real screenshots, demo GIF and README. Screenshot
 are in `vscode/images/`. Open VSX is deferred at the owner's request.
 The `publish-extension.yml` workflow remains available for future token-based
 publication. It verifies the exact asset before uploading and does not rebuild it.
+
+## Machine-check fix, 2026-10-10
+
+Extension 0.1.5 expands `${workspaceFolder}` in `python.defaultInterpreterPath`
+before **Seam: Check This Machine** invokes doctor. The Python debugger remains
+0.1.2. No new Python distribution is published for this editor fix.
+
+Both platform VSIX files and their checksums are in `build/extension-0.1.5/`.
+They reuse the released platform bundles from extension 0.1.4. Each of the 27 bundled
+debugger/helper files is byte-for-byte unchanged. The extension changes are the
+interpreter resolver, version metadata and changelog. Package identity, helper
+architecture, screenshots and checksums pass the publication guard.
+
+The unit regression failed before the fix and passes after it. The installed Linux
+package's machine check passes with an explicit workspace-variable interpreter,
+including a directory containing spaces and literal dollar signs. New Mac execution
+was not performed for this JavaScript-only change; its package structure and retained
+runtime were verified. See [the release notes](releases/extension-0.1.5.md).
+
+The full installed VS Code editor check also passed in a project directory with
+spaces: F5, Python/Rust stepping, exceptions, terminal output, attach/detach,
+disassembly, both machine-check paths and expected startup refusals. Unit checks
+passed 18 cases. The focused machine-check run also passed in a directory containing
+literal `$&`.
+
+The broader check found that VS Code 1.141.0 can corrupt `${file}` substitution when
+the project directory contains literal `$&`. The protocol records the corrupted
+program path before Seam receives it; passing the same path directly to the adapter
+succeeds. The machine check passes in that directory. This separate editor behavior
+is not fixed by 0.1.5; use a directory without `$&` for VS Code variable-based launches.
+Local evidence is in `build/extension-0.1.5/`.
 
 ## Apple Silicon publication record, 2026-10-08
 
@@ -61,8 +93,10 @@ publication. It verifies the exact asset before uploading and does not rebuild i
 - [Trusted publication 37785234772](https://github.com/ChirayuAgg0706/Seam/actions/runs/37785234772)
   passed. Version 0.1.1 introduced Mac support; 0.1.2 clarifies the attach instructions
   and changes no debugger behavior.
-- Marketplace 0.1.4 is pending the owner's manual upload of both platform VSIX files.
-  Its availability has not been claimed or tested. Open VSX remains deferred.
+- The owner subsequently uploaded both Marketplace 0.1.4 packages. On October 9,
+  installation by extension ID into an isolated Linux/WSL VS Code profile passed
+  doctor and Python-to-Rust stepping. Both public platform downloads were verified.
+  Open VSX remains deferred.
 
 The final runtime and real-project evidence is in [the Mac validation record](macos-stage1.md).
 

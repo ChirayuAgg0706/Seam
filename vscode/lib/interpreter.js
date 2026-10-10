@@ -18,12 +18,16 @@ function venvInterpreter(folder, exists = fs.existsSync) {
 
 // The value of python.defaultInterpreterPath as a path. "python" is what the Python
 // extension ships as the default and says nothing about this project, so it counts as
-// unset. Variables such as ${workspaceFolder} are left for VS Code to fill in.
+// unset. Resolve the workspace path here: the machine check does not go through
+// VS Code's debug-configuration variable substitution.
 function settingInterpreter(value, folder, home = os.homedir()) {
   if (typeof value !== "string" || !value.trim() || value.trim() === "python") {
     return undefined;
   }
   value = value.trim();
+  if (folder) {
+    value = value.replace(/\$\{workspaceFolder\}/g, () => folder);
+  }
   if (value === "~" || value.startsWith("~/")) {
     return path.join(home, value.slice(1));
   }

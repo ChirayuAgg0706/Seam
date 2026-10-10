@@ -119,9 +119,20 @@ test("python.defaultInterpreterPath: unset values, ~, relative paths, variables"
   assert.strictEqual(read("/opt/py/bin/python3"), "/opt/py/bin/python3");
   assert.strictEqual(read("python3.13"), "python3.13");
   assert.strictEqual(read("${workspaceFolder}/.venv/bin/python"),
-    "${workspaceFolder}/.venv/bin/python");
+    "/work/project/.venv/bin/python");
   assert.strictEqual(interpreter.settingInterpreter("env/bin/python", undefined),
     "env/bin/python");
+});
+
+test("workspace interpreter paths preserve spaces and literal dollar signs", async () => {
+  const folder = "/work/project $& with spaces";
+  const found = await interpreter.findInterpreter({
+    folder,
+    setting: "${workspaceFolder}/env-b/bin/python",
+    exists: () => true, // a discovered .venv must not override the explicit setting
+  });
+  assert.strictEqual(found.python, path.join(folder, "env-b", "bin", "python"));
+  assert.ok(found.source.includes("python.defaultInterpreterPath"));
 });
 
 test("the interpreter comes from the first source that has one", async () => {

@@ -1,7 +1,8 @@
 # Seam status
 
-Debugger 0.1.2 is public on GitHub and PyPI. Extension 0.1.4 is packaged for Linux
-and macOS; Marketplace awaits the owner's manual upload. Debugger 0.1.1 introduced
+Debugger 0.1.2 is public on GitHub and PyPI. Extension 0.1.4 is public in Marketplace
+for Linux and macOS. Extension 0.1.5 fixes workspace-variable interpreter paths in
+the machine check; its Marketplace upload remains pending. Debugger 0.1.1 introduced
 Apple Silicon support, and 0.1.2 clarifies attach instructions without changing it.
 The existing product works on macOS 14+ with ARM64 CPython 3.12, 3.13 and 3.14.
 The final native matrix, installed wheels and packaged editor checks pass, as do

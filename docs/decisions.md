@@ -1227,6 +1227,21 @@ Process discovery uses libproc, sysctl and lsof. Packaging builds a thin ARM64 h
 with a macOS 14 deployment target. The same Python stable ABI serves CPython 3.12,
 3.13 and 3.14. Validation uses actual ARM64 macOS runners and installed packages.
 
+## 37. Resolve workspace interpreter paths before the machine check
+
+The machine-check command calls `seam doctor` directly, so VS Code does not expand
+debug-configuration variables for it. Extension 0.1.4 passed a literal
+`${workspaceFolder}` from `python.defaultInterpreterPath` and reported a missing
+interpreter even when the environment existed. The shared interpreter resolver now
+substitutes the known workspace directory before either launch or doctor uses it.
+A replacement callback preserves literal dollar signs in directory names.
+
+The editor regression selects `${workspaceFolder}/env-b/bin/python` while a `.venv`
+also exists, then runs the returned doctor command through a real debug session.
+This verifies that the setting is used rather than bypassed with the automatic
+environment fallback. Extension 0.1.5 carries this JavaScript fix and the unchanged
+released debugger 0.1.2.
+
 ## 5. Toolchain for development
 
 `uv` provides virtual environments (the system Python has no `ensurepip`) and stripped

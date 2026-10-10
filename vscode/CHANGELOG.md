@@ -1,5 +1,11 @@
 # Seam extension changelog
 
+## 0.1.5. 2026-10-10
+
+- Fix **Seam: Check This Machine** reporting that Python is missing when
+  `python.defaultInterpreterPath` contains `${workspaceFolder}`.
+- Keep the bundled debugger at 0.1.2.
+
 ## 0.1.4. 2026-10-08
 
 - Bundle debugger 0.1.2 and clarify attach permissions.

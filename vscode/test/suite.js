@@ -285,6 +285,7 @@ async function pressF5() {
   const session = await Promise.race([started, sleep(30000)]);
   assert.ok(session, "F5 on a Python file started a session");
   assert.strictEqual(session.type, "seam");
+  assert.strictEqual(session.configuration.program, app, "F5 debugs the active Python file");
   assert.strictEqual(session.configuration.python, venvPython,
     "the project's virtual environment is what gets debugged");
   assert.strictEqual(session.configuration.console, "integratedTerminal",
@@ -470,12 +471,12 @@ async function attachThroughThePicker() {
 }
 
 // "Seam: Check This Machine" runs the bundled `seam doctor` for the project's interpreter.
-async function checkThisMachine() {
+async function checkThisMachine(expectedPython = venvPython) {
   const doctor = await vscode.commands.executeCommand("seam.checkMachine");
   assert.ok(Array.isArray(doctor), "the command reports what it ran");
   assert.deepStrictEqual(doctor.slice(1),
     ["-I", path.join(vscode.extensions.getExtension(extensionId).extensionPath, "bundled"),
-      "doctor", "--python", venvPython]);
+      "doctor", "--python", expectedPython]);
   // The terminal's text cannot be read from here, so the same command is run again.
   const result = cp.spawnSync(doctor[0], doctor.slice(1), { encoding: "utf8", timeout: 120000 });
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
@@ -483,6 +484,38 @@ async function checkThisMachine() {
   await sleep(3000);  // let the terminal show its copy before the picture
   await shot("9-check-this-machine");
   log("\"Seam: Check This Machine\" runs the bundled doctor for the project's interpreter");
+}
+
+async function checkThisMachineWithWorkspaceSetting() {
+  const file = path.join(project, ".vscode", "settings.json");
+  const previous = fs.existsSync(file) ? fs.readFileSync(file) : undefined;
+  const values = previous ? JSON.parse(previous.toString()) : {};
+  const read = () => vscode.workspace.getConfiguration("python", folder.uri)
+    .get("defaultInterpreterPath");
+  const before = read();
+  const value = "${workspaceFolder}/env-b/bin/python";
+  const waitForSetting = async (expected) => {
+    const deadline = Date.now() + 10000;
+    while (read() !== expected && Date.now() < deadline) {
+      await sleep(100);
+    }
+    assert.strictEqual(read(), expected, "VS Code loaded the interpreter setting");
+  };
+  // Without Microsoft's Python extension, this setting is not registered for the
+  // configuration update API. Edit settings.json as the user does in that setup.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ...values, "python.defaultInterpreterPath": value }));
+  try {
+    await waitForSetting(value);
+    // Choosing env-b proves that the check resolves the setting rather than
+    // silently falling back to the workspace's automatically discovered .venv.
+    await checkThisMachine(path.join(project, "env-b", "bin", "python"));
+    log("the machine check resolves ${workspaceFolder} in the interpreter setting");
+  } finally {
+    if (previous) fs.writeFileSync(file, previous);
+    else fs.unlinkSync(file);
+    await waitForSetting(before);
+  }
 }
 
 // What the user is told when a session cannot start.
@@ -628,12 +661,16 @@ exports.run = async function run() {
   try {
     if (process.env.SEAM_SUITE === "python-extension") {
       await interpreterFromThePythonExtension();
+    } else if (process.env.SEAM_SUITE === "machine-check") {
+      await checkThisMachine();
+      await checkThisMachineWithWorkspaceSetting();
     } else {
       await pressF5();
       await stepInTheDebugConsole();
       await attachThroughThePicker();
       await disassemblyAtTheNativeStop();
       await checkThisMachine();
+      await checkThisMachineWithWorkspaceSetting();
       await refusals();
     }
   } catch (err) {
