@@ -63,8 +63,9 @@ architecture, screenshots and checksums pass the publication guard.
 The unit regression failed before the fix and passes after it. The installed Linux
 package's machine check passes with an explicit workspace-variable interpreter,
 including a directory containing spaces and literal dollar signs. New Mac execution
-was not performed for this JavaScript-only change; its package structure and retained
-runtime were verified. See [the release notes](releases/extension-0.1.5.md).
+also passed the packaged VS Code check on the Apple Silicon runner, including the
+workspace-variable machine-check regression. See
+[the release notes](releases/extension-0.1.5.md).
 
 The full installed VS Code editor check also passed in a project directory with
 spaces: F5, Python/Rust stepping, exceptions, terminal output, attach/detach,
@@ -78,6 +79,13 @@ program path before Seam receives it; passing the same path directly to the adap
 succeeds. The machine check passes in that directory. This separate editor behavior
 is not fixed by 0.1.5; use a directory without `$&` for VS Code variable-based launches.
 Local evidence is in `build/extension-0.1.5/`.
+
+The first full Mac run passed its packaged-editor, real-project and other matrix
+jobs, but the macOS 14 Python 3.12 job reached its time limit. Its traceback showed
+an unbounded wait in the test client's terminal cleanup, after the program had
+exited successfully. Cleanup now closes the test PTY and bounds the wait after
+SIGKILL to 15 seconds. Seven focused Linux terminal checks pass with this harness
+change. It changes no released debugger or VSIX file.
 
 ## Apple Silicon publication record, 2026-10-08
 

@@ -63,12 +63,16 @@ class Terminal:
     def close(self):
         if self.proc is not None and self.proc.poll() is None:
             self.proc.kill()
-            self.proc.wait()
         for fd in (self.master, self.slave):
             try:
                 os.close(fd)
             except OSError:
                 pass
+        if self.proc is not None:
+            try:
+                self.proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                raise DapFailure("the terminal holder did not exit after SIGKILL") from None
 
 
 class DapClient:
